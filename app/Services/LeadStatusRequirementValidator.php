@@ -157,12 +157,7 @@ class LeadStatusRequirementValidator
             ->get()
             ->keyBy('id');
 
-        // Separa TARGET das intermediárias.
-        // As intermediárias são todas menos a última (que é o target).
-        $targetStatusIdFromPath = end($statusIdsToCheck) ?: null;
-        $intermediateStatusIds  = array_slice($statusIdsToCheck, 0, -1);
-
-        // -------- 1) Regras de STATUS (intermediárias + target) --------
+        // -------- 1) Regras de STATUS (inicio -> target, inclusive) --------
         if (!empty($statusIdsToCheck)) {
             $statusRules = StatusRequiredField::with('customField')
                 ->where('required', true)
@@ -175,37 +170,15 @@ class LeadStatusRequirementValidator
             }
         }
 
-        // -------- 2) Regras de SUBSTATUS das etapas intermediárias --------
-        // Quando o lead PULA uma etapa, não sabemos por qual substatus ele
-        // "teria passado", então cobramos a UNIÃO dos obrigatórios de todos
-        // os substatuses dessa etapa intermediária.
-        if (!empty($intermediateStatusIds)) {
-            $intermediateSubs = LeadSubstatus::whereIn('lead_status_id', $intermediateStatusIds)
-                ->orderBy('lead_status_id')
-                ->orderBy('order')
-                ->get();
+        // NOTA: regras de substatus INTERMEDIÁRIOS não são cobradas.
+        // O lead pode ter passado por qualquer substatus (ou nenhum) dentro
+        // de uma etapa — não temos como saber retroativamente. Pedir a
+        // união de todos os obrigatórios de substatus da etapa vira uma
+        // enxurrada pro usuário. Se alguma regra precisa ser realmente
+        // transversal à etapa, o admin deve configurá-la no STATUS e não
+        // no substatus.
 
-            if ($intermediateSubs->isNotEmpty()) {
-                $intermediateSubIds = $intermediateSubs->pluck('id')->all();
-
-                $intermediateSubRules = StatusRequiredField::with('customField')
-                    ->where('required', true)
-                    ->whereIn('lead_substatus_id', $intermediateSubIds)
-                    ->get();
-
-                $subsById = $intermediateSubs->keyBy('id');
-
-                foreach ($intermediateSubRules as $r) {
-                    $sub = $subsById->get($r->lead_substatus_id);
-                    if (!$sub) continue;
-                    $statusName = $statusesMap->get($sub->lead_status_id)?->name;
-                    $r->_stage_label = ($statusName ? $statusName . ' → ' : '') . $sub->name;
-                    $rules->push($r);
-                }
-            }
-        }
-
-        // -------- 3) Regras do SUBSTATUS destino (específico) --------
+        // -------- 2) Regras do SUBSTATUS destino (específico) --------
         if ($targetSubstatusId) {
             $sub = LeadSubstatus::with('status')->find($targetSubstatusId);
             if ($sub) {
@@ -229,10 +202,19 @@ class LeadStatusRequirementValidator
     /**
      * Resolve quais IDs de status devem ser validados.
      *
-     * - Se o lead não tem status atual: valida só o destino.
-     * - Se target.order > current.order: valida todas as etapas no intervalo
-     *   (current.order, target.order].
-     * - Caso contrário (voltando ou ficando na mesma): só o destino.
+     * Estratégia "desde o início": sempre cobra TODAS as etapas com
+     * order <= target.order. Se o campo já estiver preenchido (seja no
+     * próprio lead ou no incomingData), o filtro de `isEmpty` no validate()
+     * ou de `is_filled` no controller garante que ele não será pedido
+     * novamente. Isso cobre os cenários em que:
+     *   - o lead foi importado direto numa etapa avançada;
+     *   - o admin criou regras novas DEPOIS do lead ter passado pela etapa;
+     *   - o lead está voltando de uma etapa adiante e alguma regra antiga
+     *     nunca foi preenchida.
+     *
+     * Quando target.order <= current.order (voltando), ainda assim pegamos
+     * tudo até o destino: os campos ja preenchidos simplesmente nao viram
+     * "missing" e não aparecem no modal.
      */
     private function intermediateAndTargetStatusIds(?int $currentStatusId, ?int $targetStatusId): array
     {
@@ -243,21 +225,8 @@ class LeadStatusRequirementValidator
         $target = LeadStatus::find($targetStatusId);
         if (!$target) return [];
 
-        if (!$currentStatusId) {
-            return [$target->id];
-        }
-
-        $current = LeadStatus::find($currentStatusId);
-        if (!$current) return [$target->id];
-
-        // Indo pra trás ou parando no mesmo → só valida destino
-        if ($target->order <= $current->order) {
-            return [$target->id];
-        }
-
-        // Indo pra frente com (ou sem) salto: pega todas do intervalo (current, target]
-        return LeadStatus::where('order', '>', $current->order)
-            ->where('order', '<=', $target->order)
+        // Todas as etapas do início até o destino (inclusive)
+        return LeadStatus::where('order', '<=', $target->order)
             ->orderBy('order')
             ->pluck('id')
             ->all();
