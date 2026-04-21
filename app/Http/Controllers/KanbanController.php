@@ -6,6 +6,7 @@ use App\Models\Lead;
 use App\Models\LeadStatus;
 use Illuminate\Http\Request;
 use App\Services\AuditService;
+use App\Services\LeadStatusRequirementValidator;
 
 /**
  * @group Kanban
@@ -83,20 +84,62 @@ class KanbanController extends Controller
      *   "message": "Lead not found."
      * }
      */
-    public function move(Request $request, Lead $lead)
+    public function move(Request $request, Lead $lead, LeadStatusRequirementValidator $validator)
 {
     $data = $request->validate([
-        'status_id' => 'required|exists:lead_status,id'
+        'status_id'         => 'required|exists:lead_status,id',
+        'lead_substatus_id' => 'sometimes|nullable|exists:lead_substatus,id',
+
+        // Opcional: valores de custom fields preenchidos junto (pelo modal do frontend)
+        'custom_field_values'         => 'sometimes|array',
+        'custom_field_values.*.slug'  => 'required_with:custom_field_values|string|exists:custom_fields,slug',
+        'custom_field_values.*.value' => 'nullable',
     ]);
+
+    $customValues = $data['custom_field_values'] ?? [];
+    unset($data['custom_field_values']);
+
+    // Valida campos obrigatórios ANTES de mover
+    $validator->validate(
+        $lead,
+        $data['status_id'] ?? null,
+        $data['lead_substatus_id'] ?? null,
+        $data,
+        $customValues
+    );
 
     // pega última posição da nova coluna
     $lastPosition = Lead::where('status_id', $data['status_id'])
         ->max('position');
 
     $lead->update([
-        'status_id' => $data['status_id'],
-        'position' => ($lastPosition ?? 0) + 1
+        'status_id'         => $data['status_id'],
+        'lead_substatus_id' => $data['lead_substatus_id'] ?? $lead->lead_substatus_id,
+        'position'          => ($lastPosition ?? 0) + 1,
     ]);
+
+    // Salva custom values se vieram
+    if (!empty($customValues)) {
+        $slugs  = collect($customValues)->pluck('slug')->unique();
+        $fields = \App\Models\CustomField::whereIn('slug', $slugs)->get()->keyBy('slug');
+
+        foreach ($customValues as $entry) {
+            $field = $fields->get($entry['slug']);
+            if (!$field) continue;
+
+            $value = $entry['value'] ?? null;
+            if ($field->type === 'checkbox' && is_array($value)) {
+                $value = json_encode(array_values($value), JSON_UNESCAPED_UNICODE);
+            } elseif ($value !== null) {
+                $value = (string) $value;
+            }
+
+            \App\Models\LeadCustomFieldValue::updateOrCreate(
+                ['lead_id' => $lead->id, 'custom_field_id' => $field->id],
+                ['value'   => $value]
+            );
+        }
+    }
 
     return response()->json(['success' => true]);
 }

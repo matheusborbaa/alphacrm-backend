@@ -3,6 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\Lead;
+use App\Models\CustomField;
+use App\Models\LeadCustomFieldValue;
+use App\Services\LeadStatusRequirementValidator;
 use Illuminate\Http\Request;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
     use App\Http\Resources\LeadResource;
@@ -17,17 +20,53 @@ class LeadController extends Controller
 {
 
         use AuthorizesRequests;
-public function update(Request $request, Lead $lead)
+public function update(Request $request, Lead $lead, LeadStatusRequirementValidator $validator)
 {
     $data = $request->validate([
-        'name'  => 'sometimes|string|max:255',
-        'email' => 'sometimes|email|max:255',
-        'phone' => 'sometimes|string|max:20',
+        'name'              => 'sometimes|string|max:255',
+        'email'             => 'sometimes|nullable|email|max:255',
+        'phone'             => 'sometimes|string|max:20',
+        'source_id'         => 'sometimes|nullable|exists:lead_sources,id',
+        'status_id'         => 'sometimes|nullable|exists:lead_status,id',
+        'lead_substatus_id' => 'sometimes|nullable|exists:lead_substatus,id',
+        'assigned_user_id'  => 'sometimes|nullable|exists:users,id',
+        'empreendimento_id' => 'sometimes|nullable|exists:empreendimentos,id',
+        'channel'           => 'sometimes|nullable|string|max:100',
+        'campaign'          => 'sometimes|nullable|string|max:255',
+
+        // Valores de campos customizados que vêm junto (opcional).
+        // Formato: [{ slug: "motivo_descarte", value: "Preço" }, ...]
+        'custom_field_values'         => 'sometimes|array',
+        'custom_field_values.*.slug'  => 'required_with:custom_field_values|string|exists:custom_fields,slug',
+        'custom_field_values.*.value' => 'nullable',
     ]);
 
+    // Separa custom_field_values do resto
+    $customValues = $data['custom_field_values'] ?? [];
+    unset($data['custom_field_values']);
+
+    // Se está mudando status ou substatus, valida obrigatórios ANTES de salvar
+    $validator->validate(
+        $lead,
+        array_key_exists('status_id', $data)         ? $data['status_id']         : null,
+        array_key_exists('lead_substatus_id', $data) ? $data['lead_substatus_id'] : null,
+        $data,
+        $customValues
+    );
+
+    // Atualiza o lead (campos fixos)
+    if (!empty($data)) {
+        $lead->update($data);
+    }
+
+    // Salva os custom values se vieram
+    if (!empty($customValues)) {
+        $this->saveCustomValues($lead, $customValues);
+    }
+
+    // Histórico
     $usuario = Auth()->user()->name;
     $user_id = Auth()->user()->id;
-    $lead->update($data);
     LeadHistory::create([
     'lead_id' => $lead->id,
     'user_id' => auth()->id(),
@@ -42,6 +81,34 @@ public function update(Request $request, Lead $lead)
 
     return response()->json(['success' => true]);
 }
+
+/**
+ * Upsert em bulk dos valores de custom fields de um lead.
+ * Usado pelo update() quando o request traz custom_field_values.
+ */
+private function saveCustomValues(Lead $lead, array $values): void
+{
+    $slugs  = collect($values)->pluck('slug')->unique();
+    $fields = CustomField::whereIn('slug', $slugs)->get()->keyBy('slug');
+
+    foreach ($values as $entry) {
+        $field = $fields->get($entry['slug']);
+        if (!$field) continue;
+
+        $value = $entry['value'] ?? null;
+        if ($field->type === 'checkbox' && is_array($value)) {
+            $value = json_encode(array_values($value), JSON_UNESCAPED_UNICODE);
+        } elseif ($value !== null) {
+            $value = (string) $value;
+        }
+
+        LeadCustomFieldValue::updateOrCreate(
+            ['lead_id' => $lead->id, 'custom_field_id' => $field->id],
+            ['value'   => $value]
+        );
+    }
+}
+
     /**
      * Listar leads
      *
