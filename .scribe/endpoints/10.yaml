@@ -1,0 +1,92 @@
+name: Auditoria
+description: |-
+
+  Histórico de ações realizadas no sistema.
+  Usado para rastreabilidade, compliance e análise de alterações nos leads.
+endpoints:
+  -
+    custom: []
+    httpMethods:
+      - GET
+    uri: 'api/leads/{lead_id}/audits'
+    metadata:
+      custom: []
+      groupName: Auditoria
+      groupDescription: |-
+
+        Histórico de ações realizadas no sistema.
+        Usado para rastreabilidade, compliance e análise de alterações nos leads.
+      subgroup: ''
+      subgroupDescription: ''
+      title: 'Histórico de auditoria do lead'
+      description: |-
+        Retorna a linha do tempo completa de ações realizadas em um lead,
+        incluindo mudanças de status, redistribuições de SLA e contatos.
+      authenticated: false
+      deprecated: false
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+    urlParameters:
+      lead_id:
+        custom: []
+        name: lead_id
+        description: 'The ID of the lead.'
+        required: true
+        example: 1
+        type: integer
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: false
+        deprecated: false
+      lead:
+        custom: []
+        name: lead
+        description: 'ID do lead.'
+        required: false
+        example: 1
+        type: integer
+        enumValues: []
+        exampleWasSpecified: true
+        nullable: false
+        deprecated: false
+    cleanUrlParameters:
+      lead_id: 1
+      lead: 1
+    queryParameters: []
+    cleanQueryParameters: []
+    bodyParameters: []
+    cleanBodyParameters: []
+    fileParameters: []
+    responses:
+      -
+        custom: []
+        status: 200
+        content: |-
+          [
+            {
+              "id": 10,
+              "event": "status_changed",
+              "entity_type": "Lead",
+              "entity_id": 1,
+              "user": {
+                "id": 2,
+                "name": "Gestor João"
+              },
+              "old_values": {
+                "status_id": 2
+              },
+              "new_values": {
+                "status_id": 3
+              },
+              "source": "kanban",
+              "created_at": "2026-01-27T15:22:00Z"
+            }
+          ]
+        headers: []
+        description: ''
+    responseFields: []
+    auth: []
+    controller: null
+    method: null
+    route: null

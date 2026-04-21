@@ -1,0 +1,440 @@
+name: Leads
+description: |-
+
+  APIs para listagem e visualização de leads do CRM.
+  Usado pela Home, Lista de Leads e Card do Lead.
+endpoints:
+  -
+    custom: []
+    httpMethods:
+      - GET
+    uri: api/leads
+    metadata:
+      custom: []
+      groupName: Leads
+      groupDescription: |-
+
+        APIs para listagem e visualização de leads do CRM.
+        Usado pela Home, Lista de Leads e Card do Lead.
+      subgroup: ''
+      subgroupDescription: ''
+      title: 'Listar leads'
+      description: |-
+        Retorna uma lista paginada de leads com filtros opcionais.
+        Inclui corretor responsável, status, empreendimentos,
+        último contato e status do SLA.
+      authenticated: false
+      deprecated: false
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+    urlParameters: []
+    cleanUrlParameters: []
+    queryParameters:
+      status_id:
+        custom: []
+        name: status_id
+        description: 'Filtrar pelo status do funil.'
+        required: false
+        example: 1
+        type: integer
+        enumValues: []
+        exampleWasSpecified: true
+        nullable: false
+        deprecated: false
+      assigned_user_id:
+        custom: []
+        name: assigned_user_id
+        description: 'Filtrar por corretor responsável.'
+        required: false
+        example: 5
+        type: integer
+        enumValues: []
+        exampleWasSpecified: true
+        nullable: false
+        deprecated: false
+      sla_status:
+        custom: []
+        name: sla_status
+        description: 'Filtrar pelo status do SLA (pending, met, expired).'
+        required: false
+        example: pending
+        type: string
+        enumValues: []
+        exampleWasSpecified: true
+        nullable: false
+        deprecated: false
+      search:
+        custom: []
+        name: search
+        description: 'Buscar por nome ou telefone do lead.'
+        required: false
+        example: João
+        type: string
+        enumValues: []
+        exampleWasSpecified: true
+        nullable: false
+        deprecated: false
+    cleanQueryParameters:
+      status_id: 1
+      assigned_user_id: 5
+      sla_status: pending
+      search: João
+    bodyParameters: []
+    cleanBodyParameters: []
+    fileParameters: []
+    responses:
+      -
+        custom: []
+        status: 200
+        content: |-
+          {
+            "current_page": 1,
+            "data": [
+              {
+                "id": 1,
+                "name": "João Silva",
+                "phone": "11999999999",
+                "sla_status": "pending",
+                "corretor": {
+                  "id": 2,
+                  "name": "Corretor A"
+                },
+                "status": {
+                  "id": 1,
+                  "name": "Novo"
+                },
+                "empreendimentos": [
+                  {
+                    "id": 1,
+                    "name": "Residencial Alpha"
+                  }
+                ],
+                "interactions": [
+                  {
+                    "id": 10,
+                    "type": "whatsapp",
+                    "created_at": "2026-01-27T12:00:00Z"
+                  }
+                ]
+              }
+            ]
+          }
+        headers: []
+        description: ''
+    responseFields: []
+    auth: []
+    controller: null
+    method: null
+    route: null
+  -
+    custom: []
+    httpMethods:
+      - POST
+    uri: 'api/leads/{lead_id}/interactions'
+    metadata:
+      custom: []
+      groupName: Leads
+      groupDescription: |-
+
+        Registro de contatos realizados pelos corretores com os leads.
+        Usado para encerrar SLA, histórico do lead e auditoria.
+      subgroup: ''
+      subgroupDescription: ''
+      title: 'Registrar contato com lead'
+      description: |-
+        Registra uma interação (contato) entre o corretor e o lead.
+        Ao registrar um contato, o SLA do lead é encerrado automaticamente.
+      authenticated: false
+      deprecated: false
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+    urlParameters:
+      lead_id:
+        custom: []
+        name: lead_id
+        description: 'The ID of the lead.'
+        required: true
+        example: 1
+        type: integer
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: false
+        deprecated: false
+      lead:
+        custom: []
+        name: lead
+        description: 'ID do lead.'
+        required: false
+        example: 1
+        type: integer
+        enumValues: []
+        exampleWasSpecified: true
+        nullable: false
+        deprecated: false
+    cleanUrlParameters:
+      lead_id: 1
+      lead: 1
+    queryParameters: []
+    cleanQueryParameters: []
+    bodyParameters:
+      type:
+        custom: []
+        name: type
+        description: |-
+          Tipo do contato realizado.
+          Valores possíveis: whatsapp, call, email, visit.
+        required: true
+        example: whatsapp
+        type: string
+        enumValues: []
+        exampleWasSpecified: true
+        nullable: false
+        deprecated: false
+      note:
+        custom: []
+        name: note
+        description: 'Observação opcional sobre o contato.'
+        required: false
+        example: 'Cliente pediu retorno amanhã'
+        type: string
+        enumValues: []
+        exampleWasSpecified: true
+        nullable: true
+        deprecated: false
+      appointment_date:
+        custom: []
+        name: appointment_date
+        description: 'Must be a valid date.'
+        required: false
+        example: '2026-03-08T12:31:17'
+        type: string
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: true
+        deprecated: false
+      user_id:
+        custom: []
+        name: user_id
+        description: 'ID do corretor que realizou o contato.'
+        required: true
+        example: 2
+        type: integer
+        enumValues: []
+        exampleWasSpecified: true
+        nullable: false
+        deprecated: false
+    cleanBodyParameters:
+      type: whatsapp
+      note: 'Cliente pediu retorno amanhã'
+      appointment_date: '2026-03-08T12:31:17'
+      user_id: 2
+    fileParameters: []
+    responses:
+      -
+        custom: []
+        status: 200
+        content: |-
+          {
+            "success": true
+          }
+        headers: []
+        description: ''
+      -
+        custom: []
+        status: 422
+        content: |-
+          {
+            "message": "The given data was invalid.",
+            "errors": {
+              "type": ["The type field is required."]
+            }
+          }
+        headers: []
+        description: ''
+    responseFields: []
+    auth: []
+    controller: null
+    method: null
+    route: null
+  -
+    custom: []
+    httpMethods:
+      - GET
+    uri: 'api/leads/{lead_id}'
+    metadata:
+      custom: []
+      groupName: Leads
+      groupDescription: |-
+
+        APIs para listagem e visualização de leads do CRM.
+        Usado pela Home, Lista de Leads e Card do Lead.
+      subgroup: ''
+      subgroupDescription: ''
+      title: 'Visualizar lead'
+      description: |-
+        Retorna os dados completos de um lead específico,
+        incluindo histórico de contatos, corretor,
+        origem e empreendimentos vinculados.
+      authenticated: false
+      deprecated: false
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+    urlParameters:
+      lead_id:
+        custom: []
+        name: lead_id
+        description: 'The ID of the lead.'
+        required: true
+        example: 1
+        type: integer
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: false
+        deprecated: false
+      lead:
+        custom: []
+        name: lead
+        description: 'ID do lead.'
+        required: false
+        example: 1
+        type: integer
+        enumValues: []
+        exampleWasSpecified: true
+        nullable: false
+        deprecated: false
+    cleanUrlParameters:
+      lead_id: 1
+      lead: 1
+    queryParameters: []
+    cleanQueryParameters: []
+    bodyParameters: []
+    cleanBodyParameters: []
+    fileParameters: []
+    responses:
+      -
+        custom: []
+        status: 200
+        content: |-
+          {
+            "id": 1,
+            "name": "João Silva",
+            "phone": "11999999999",
+            "sla_status": "met",
+            "corretor": {
+              "id": 2,
+              "name": "Corretor A"
+            },
+            "source": {
+              "id": 1,
+              "name": "ManyChat"
+            },
+            "empreendimentos": [
+              {
+                "id": 1,
+                "name": "Residencial Alpha"
+              }
+            ],
+            "interactions": [
+              {
+                "id": 10,
+                "type": "whatsapp",
+                "note": "Primeiro contato",
+                "user": {
+                  "id": 2,
+                  "name": "Corretor A"
+                }
+              }
+            ]
+          }
+        headers: []
+        description: ''
+    responseFields: []
+    auth: []
+    controller: null
+    method: null
+    route: null
+  -
+    custom: []
+    httpMethods:
+      - PUT
+    uri: 'api/leads/editar/{lead_id}'
+    metadata:
+      custom: []
+      groupName: Leads
+      groupDescription: |-
+
+        APIs para listagem e visualização de leads do CRM.
+        Usado pela Home, Lista de Leads e Card do Lead.
+      subgroup: ''
+      subgroupDescription: ''
+      title: ''
+      description: ''
+      authenticated: false
+      deprecated: false
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+    urlParameters:
+      lead_id:
+        custom: []
+        name: lead_id
+        description: 'The ID of the lead.'
+        required: true
+        example: 1
+        type: integer
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: false
+        deprecated: false
+    cleanUrlParameters:
+      lead_id: 1
+    queryParameters: []
+    cleanQueryParameters: []
+    bodyParameters:
+      name:
+        custom: []
+        name: name
+        description: 'Must not be greater than 255 characters.'
+        required: false
+        example: b
+        type: string
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: false
+        deprecated: false
+      email:
+        custom: []
+        name: email
+        description: 'Must be a valid email address. Must not be greater than 255 characters.'
+        required: false
+        example: zbailey@example.net
+        type: string
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: false
+        deprecated: false
+      phone:
+        custom: []
+        name: phone
+        description: 'Must not be greater than 20 characters.'
+        required: false
+        example: iyvdljnikhwaykcm
+        type: string
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: false
+        deprecated: false
+    cleanBodyParameters:
+      name: b
+      email: zbailey@example.net
+      phone: iyvdljnikhwaykcm
+    fileParameters: []
+    responses: []
+    responseFields: []
+    auth: []
+    controller: null
+    method: null
+    route: null

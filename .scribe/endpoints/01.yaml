@@ -1,0 +1,453 @@
+name: Empreendimentos
+description: |-
+
+  Gestão de empreendimentos imobiliários.
+endpoints:
+  -
+    custom: []
+    httpMethods:
+      - GET
+    uri: api/empreendimentos/cities
+    metadata:
+      custom: []
+      groupName: Empreendimentos
+      groupDescription: |-
+
+        Gestão de empreendimentos imobiliários.
+      subgroup: ''
+      subgroupDescription: ''
+      title: ''
+      description: ''
+      authenticated: false
+      deprecated: false
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+    urlParameters: []
+    cleanUrlParameters: []
+    queryParameters: []
+    cleanQueryParameters: []
+    bodyParameters: []
+    cleanBodyParameters: []
+    fileParameters: []
+    responses:
+      -
+        custom: []
+        status: 401
+        content: '{"message":"Unauthenticated."}'
+        headers:
+          cache-control: 'no-cache, private'
+          content-type: 'application/json; charset=UTF-8'
+          vary: Origin
+        description: null
+    responseFields: []
+    auth: []
+    controller: null
+    method: null
+    route: null
+  -
+    custom: []
+    httpMethods:
+      - GET
+    uri: api/public
+    metadata:
+      custom: []
+      groupName: Empreendimentos
+      groupDescription: |-
+
+        Gestão de empreendimentos imobiliários.
+      subgroup: ''
+      subgroupDescription: ''
+      title: ''
+      description: ''
+      authenticated: false
+      deprecated: false
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+    urlParameters: []
+    cleanUrlParameters: []
+    queryParameters: []
+    cleanQueryParameters: []
+    bodyParameters: []
+    cleanBodyParameters: []
+    fileParameters: []
+    responses:
+      -
+        custom: []
+        status: 200
+        content: '[{"id":445,"name":"ALPHA BH RESIDENCE","code":"bhresidence2027","cover_image":null,"locationcity":null,"average_sale_value":"100000.00"},{"id":2,"name":"Alpha Residence","code":"ALPHARESIDENCE","cover_image":"https:\/\/alphadomusimobiliaria.com.br\/wp-content\/uploads\/2026\/01\/casa1-scaled.png","locationcity":"Jardins \u2013 S\u00e3o Paulo, SP","average_sale_value":"600000.00"},{"id":446,"name":"Mirante do Castelo","code":"MIRANTECASTELO2027","cover_image":null,"locationcity":null,"average_sale_value":"390000.00"},{"id":1,"name":"Paradise Village","code":"PARADISEVILLAGE","cover_image":"https:\/\/alphadomusimobiliaria.com.br\/wp-content\/uploads\/2026\/01\/casa1-scaled.png","locationcity":"Jardins \u2013 S\u00e3o Paulo, SP","average_sale_value":"500000.00"},{"id":3,"name":"Portale One","code":"PortaleOne","cover_image":"https:\/\/alphadomusimobiliaria.com.br\/wp-content\/uploads\/2026\/01\/casa1-scaled.png","locationcity":"Jardins \u2013 S\u00e3o Paulo, SP","average_sale_value":"1000000.00"},{"id":444,"name":"tess","code":"1234rwes","cover_image":"https:\/\/alphaimoveisbh.com.br\/wp-content\/webp-express\/webp-images\/uploads\/2025\/07\/MRV_MIRANTE_CASTELO_PPC_FACHADA_20349e1a-17a5-4463-afb0-8e7b0af6ee16.jpeg.webp","locationcity":null,"average_sale_value":"1000.00"},{"id":9,"name":"Testando","code":"SDASDAS","cover_image":"https:\/\/alphadomusimobiliaria.com.br\/wp-content\/uploads\/2026\/01\/casa1-scaled.png","locationcity":"Blumenau","average_sale_value":"1200000.00"},{"id":34,"name":"Testando","code":"aw","cover_image":"https:\/\/alphadomusimobiliaria.com.br\/wp-content\/uploads\/2026\/01\/casa1-scaled.png","locationcity":"Jardins \u2013 S\u00e3o Paulo, SP","average_sale_value":"1200000.00"},{"id":122,"name":"Testando","code":"2312","cover_image":"https:\/\/alphadomusimobiliaria.com.br\/wp-content\/uploads\/2026\/01\/casa1-scaled.png","locationcity":"Jardins \u2013 S\u00e3o Paulo, SP","average_sale_value":"1200000.00"},{"id":123,"name":"Testando","code":"1313","cover_image":"https:\/\/alphadomusimobiliaria.com.br\/wp-content\/uploads\/2026\/01\/casa1-scaled.png","locationcity":"Jardins \u2013 S\u00e3o Paulo, SP","average_sale_value":"1200000.00"},{"id":133,"name":"Testando","code":"23122312","cover_image":"https:\/\/alphadomusimobiliaria.com.br\/wp-content\/uploads\/2026\/01\/casa1-scaled.png","locationcity":"S\u00e3o Francisco do Sul","average_sale_value":"1200000.00"},{"id":343,"name":"Testando","code":"d1we","cover_image":"https:\/\/alphadomusimobiliaria.com.br\/wp-content\/uploads\/2026\/01\/casa1-scaled.png","locationcity":"Jardins \u2013 S\u00e3o Paulo, SP","average_sale_value":"1200000.00"},{"id":443,"name":"Testando","code":"dsada","cover_image":"https:\/\/alphadomusimobiliaria.com.br\/wp-content\/uploads\/2026\/01\/casa1-scaled.png","locationcity":"Jardins \u2013 S\u00e3o Paulo, SP","average_sale_value":"1200000.00"},{"id":447,"name":"TESTE","code":"TESTE2","cover_image":"empreendimentos\/o4QwYspBogUWjcDgzOtUo9me1tgstKynoBeNFffA.jpg","locationcity":null,"average_sale_value":"1000000.00"}]'
+        headers:
+          cache-control: 'no-cache, private'
+          content-type: 'application/json; charset=UTF-8'
+          vary: Origin
+        description: null
+    responseFields: []
+    auth: []
+    controller: null
+    method: null
+    route: null
+  -
+    custom: []
+    httpMethods:
+      - GET
+    uri: 'api/public/empreendimentos/{code}'
+    metadata:
+      custom: []
+      groupName: Empreendimentos
+      groupDescription: |-
+
+        Gestão de empreendimentos imobiliários.
+      subgroup: ''
+      subgroupDescription: ''
+      title: ''
+      description: ''
+      authenticated: false
+      deprecated: false
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+    urlParameters:
+      code:
+        custom: []
+        name: code
+        description: ''
+        required: true
+        example: 1
+        type: integer
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: false
+        deprecated: false
+    cleanUrlParameters:
+      code: 1
+    queryParameters: []
+    cleanQueryParameters: []
+    bodyParameters: []
+    cleanBodyParameters: []
+    fileParameters: []
+    responses:
+      -
+        custom: []
+        status: 404
+        content: |-
+          {
+              "message": "No query results for model [App\\Models\\Empreendimento]."
+          }
+        headers:
+          cache-control: 'no-cache, private'
+          content-type: 'application/json; charset=UTF-8'
+          vary: Origin
+        description: null
+    responseFields: []
+    auth: []
+    controller: null
+    method: null
+    route: null
+  -
+    custom: []
+    httpMethods:
+      - GET
+    uri: api/empreendimentos
+    metadata:
+      custom: []
+      groupName: Empreendimentos
+      groupDescription: |-
+
+        Gestão de empreendimentos imobiliários.
+      subgroup: ''
+      subgroupDescription: ''
+      title: ''
+      description: ''
+      authenticated: false
+      deprecated: false
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+    urlParameters: []
+    cleanUrlParameters: []
+    queryParameters: []
+    cleanQueryParameters: []
+    bodyParameters: []
+    cleanBodyParameters: []
+    fileParameters: []
+    responses:
+      -
+        custom: []
+        status: 401
+        content: '{"message":"Unauthenticated."}'
+        headers:
+          cache-control: 'no-cache, private'
+          content-type: 'application/json; charset=UTF-8'
+          vary: Origin
+        description: null
+    responseFields: []
+    auth: []
+    controller: null
+    method: null
+    route: null
+  -
+    custom: []
+    httpMethods:
+      - POST
+    uri: api/empreendimentos
+    metadata:
+      custom: []
+      groupName: Empreendimentos
+      groupDescription: |-
+
+        Gestão de empreendimentos imobiliários.
+      subgroup: ''
+      subgroupDescription: ''
+      title: ''
+      description: ''
+      authenticated: false
+      deprecated: false
+    headers:
+      Content-Type: multipart/form-data
+      Accept: application/json
+    urlParameters: []
+    cleanUrlParameters: []
+    queryParameters: []
+    cleanQueryParameters: []
+    bodyParameters:
+      name:
+        custom: []
+        name: name
+        description: 'Must not be greater than 255 characters.'
+        required: true
+        example: b
+        type: string
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: false
+        deprecated: false
+      code:
+        custom: []
+        name: code
+        description: 'Must not be greater than 255 characters.'
+        required: false
+        example: 'n'
+        type: string
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: true
+        deprecated: false
+      location_city:
+        custom: []
+        name: location_city
+        description: 'Must not be greater than 255 characters.'
+        required: false
+        example: g
+        type: string
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: true
+        deprecated: false
+      active:
+        custom: []
+        name: active
+        description: ''
+        required: false
+        example: true
+        type: boolean
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: false
+        deprecated: false
+      commission_percentage:
+        custom: []
+        name: commission_percentage
+        description: ''
+        required: false
+        example: 4326.41688
+        type: number
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: true
+        deprecated: false
+      average_sale_value:
+        custom: []
+        name: average_sale_value
+        description: ''
+        required: false
+        example: 4326.41688
+        type: number
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: true
+        deprecated: false
+      starts_at:
+        custom: []
+        name: starts_at
+        description: 'Must be a valid date.'
+        required: false
+        example: '2026-03-08T12:31:17'
+        type: string
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: true
+        deprecated: false
+      ends_at:
+        custom: []
+        name: ends_at
+        description: 'Must be a valid date.'
+        required: false
+        example: '2026-03-08T12:31:17'
+        type: string
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: true
+        deprecated: false
+      shortdescription:
+        custom: []
+        name: shortdescription
+        description: ''
+        required: false
+        example: architecto
+        type: string
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: true
+        deprecated: false
+      description:
+        custom: []
+        name: description
+        description: ''
+        required: false
+        example: 'Eius et animi quos velit et.'
+        type: string
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: true
+        deprecated: false
+      cover_image:
+        custom: []
+        name: cover_image
+        description: 'Must be an image. Must not be greater than 4096 kilobytes.'
+        required: false
+        example: null
+        type: file
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: true
+        deprecated: false
+    cleanBodyParameters:
+      name: b
+      code: 'n'
+      location_city: g
+      active: true
+      commission_percentage: 4326.41688
+      average_sale_value: 4326.41688
+      starts_at: '2026-03-08T12:31:17'
+      ends_at: '2026-03-08T12:31:17'
+      shortdescription: architecto
+      description: 'Eius et animi quos velit et.'
+    fileParameters:
+      cover_image: null
+    responses: []
+    responseFields: []
+    auth: []
+    controller: null
+    method: null
+    route: null
+  -
+    custom: []
+    httpMethods:
+      - GET
+    uri: 'api/empreendimentos/{id}'
+    metadata:
+      custom: []
+      groupName: Empreendimentos
+      groupDescription: |-
+
+        Gestão de empreendimentos imobiliários.
+      subgroup: ''
+      subgroupDescription: ''
+      title: ''
+      description: ''
+      authenticated: false
+      deprecated: false
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+    urlParameters:
+      id:
+        custom: []
+        name: id
+        description: 'The ID of the empreendimento.'
+        required: true
+        example: 1
+        type: integer
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: false
+        deprecated: false
+    cleanUrlParameters:
+      id: 1
+    queryParameters: []
+    cleanQueryParameters: []
+    bodyParameters: []
+    cleanBodyParameters: []
+    fileParameters: []
+    responses:
+      -
+        custom: []
+        status: 401
+        content: '{"message":"Unauthenticated."}'
+        headers:
+          cache-control: 'no-cache, private'
+          content-type: 'application/json; charset=UTF-8'
+          vary: Origin
+        description: null
+    responseFields: []
+    auth: []
+    controller: null
+    method: null
+    route: null
+  -
+    custom: []
+    httpMethods:
+      - PUT
+      - PATCH
+    uri: 'api/empreendimentos/{id}'
+    metadata:
+      custom: []
+      groupName: Empreendimentos
+      groupDescription: |-
+
+        Gestão de empreendimentos imobiliários.
+      subgroup: ''
+      subgroupDescription: ''
+      title: ''
+      description: ''
+      authenticated: false
+      deprecated: false
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+    urlParameters:
+      id:
+        custom: []
+        name: id
+        description: 'The ID of the empreendimento.'
+        required: true
+        example: 1
+        type: integer
+        enumValues: []
+        exampleWasSpecified: false
+        nullable: false
+        deprecated: false
+    cleanUrlParameters:
+      id: 1
+    queryParameters: []
+    cleanQueryParameters: []
+    bodyParameters: []
+    cleanBodyParameters: []
+    fileParameters: []
+    responses: []
+    responseFields: []
+    auth: []
+    controller: null
+    method: null
+    route: null

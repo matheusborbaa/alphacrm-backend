@@ -1,0 +1,108 @@
+name: 'Relatórios de Marketing'
+description: |-
+
+  Indicadores de performance por origem e campanha.
+  Usado para análise de ROI e eficiência de marketing.
+endpoints:
+  -
+    custom: []
+    httpMethods:
+      - GET
+    uri: api/reports/marketing
+    metadata:
+      custom: []
+      groupName: 'Relatórios de Marketing'
+      groupDescription: |-
+
+        Indicadores de performance por origem e campanha.
+        Usado para análise de ROI e eficiência de marketing.
+      subgroup: ''
+      subgroupDescription: ''
+      title: 'Relatório de marketing'
+      description: |-
+        Retorna métricas agrupadas por origem e campanha:
+        - Total de leads
+        - Leads atendidos
+        - Leads convertidos (vendas)
+      authenticated: false
+      deprecated: false
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+    urlParameters: []
+    cleanUrlParameters: []
+    queryParameters:
+      start_date:
+        custom: []
+        name: start_date
+        description: 'date Data inicial (YYYY-MM-DD).'
+        required: false
+        example: '2026-01-01'
+        type: string
+        enumValues: []
+        exampleWasSpecified: true
+        nullable: false
+        deprecated: false
+      end_date:
+        custom: []
+        name: end_date
+        description: 'date Data final (YYYY-MM-DD).'
+        required: false
+        example: '2026-01-31'
+        type: string
+        enumValues: []
+        exampleWasSpecified: true
+        nullable: false
+        deprecated: false
+      source:
+        custom: []
+        name: source
+        description: 'Filtrar por origem do lead.'
+        required: false
+        example: ManyChat
+        type: string
+        enumValues: []
+        exampleWasSpecified: true
+        nullable: false
+        deprecated: false
+      campaign:
+        custom: []
+        name: campaign
+        description: 'Filtrar por campanha.'
+        required: false
+        example: 'Lançamento Alpha'
+        type: string
+        enumValues: []
+        exampleWasSpecified: true
+        nullable: false
+        deprecated: false
+    cleanQueryParameters:
+      start_date: '2026-01-01'
+      end_date: '2026-01-31'
+      source: ManyChat
+      campaign: 'Lançamento Alpha'
+    bodyParameters: []
+    cleanBodyParameters: []
+    fileParameters: []
+    responses:
+      -
+        custom: []
+        status: 200
+        content: |-
+          [
+            {
+              "source": "ManyChat",
+              "campaign": "Lançamento Alpha",
+              "leads_total": 230,
+              "leads_attended": 180,
+              "sales": 4,
+              "conversion_rate": 1.74
+            }
+          ]
+        headers: []
+        description: ''
+    responseFields: []
+    auth: []
+    controller: null
+    method: null
+    route: null

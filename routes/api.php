@@ -1,0 +1,534 @@
+<?php
+use App\Http\Controllers\EmailController;
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\LeadInteractionController;
+use App\Http\Controllers\LeadController;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\DashboardHomeController;
+use App\Http\Controllers\MarketingReportController;
+use App\Http\Controllers\CommissionReportController;
+use App\Http\Controllers\EmpreendimentoController;
+use App\Http\Controllers\AuthController;
+use App\Http\Controllers\EmpreendimentoImageController;
+use App\Http\Controllers\EmpreendimentoFieldDefinitionController;
+use App\Http\Controllers\EmpreendimentoFieldValueController;
+use App\Http\Controllers\AppointmentController;
+use App\Http\Controllers\MyCommissionController;
+use App\Http\Controllers\KanbanController;
+use App\Models\Appointment;
+use App\Models\LeadStatus;
+use App\Models\Lead;
+use Illuminate\Http\Request;
+use Carbon\Carbon;
+use App\Http\Controllers\UserController;
+
+    Route::post('/me', [UserController::class, 'update'])->middleware(['auth:sanctum']);
+// usuario rotas
+
+
+/* leads que precisam de atenção */
+Route::get('/dashboard/leads-atencao', function () {
+
+    $limiteDias = 5;
+
+    $leads = Lead::where(function ($q) use ($limiteDias) {
+
+        $q->whereNull('updated_at') // nunca teve interação
+
+          ->orWhere('updated_at', '<=', now()->subDays($limiteDias)); // mais de X dias
+
+    })->orderBy('updated_at', 'asc')
+    ->limit(5)
+    ->get();
+
+    $result = $leads->map(function ($lead) {
+
+        if (!$lead->updated_at) {
+            return [
+                'id' => $lead->id,
+                'name' => $lead->name,
+                'dias' => 'Nunca'
+            ];
+        }
+
+        $dias = (int) Carbon::parse($lead->updated_at)
+            ->startOfDay()
+            ->diffInDays(now()->startOfDay());
+
+        return [
+            'id' => $lead->id,
+            'name' => $lead->name,
+            'dias' => $dias
+        ];
+    });
+
+    return response()->json($result);
+});
+
+
+
+/*
+|--------------------------------------------------------------------------
+| DASHBOARD
+|--------------------------------------------------------------------------
+*/
+Route::get('/meta/empreendimento-fields', function () {
+    return \App\Models\EmpreendimentoFieldDefinition::orderBy('name')->get();
+});
+Route::get('/funnel', [DashboardHomeController::class, 'funnel']);
+
+
+
+// Route::get('/ksanban', [KanbanController::class, 'index']);
+/*
+|--------------------------------------------------------------------------
+| CIDADES (FILTRO)
+|--------------------------------------------------------------------------
+*/
+Route::middleware('auth:sanctum')->get(
+    '/empreendimentos/cities',
+    [EmpreendimentoController::class, 'cities']
+);
+
+
+/*
+|--------------------------------------------------------------------------
+| ADMIN - FIELD DEFINITIONS
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth:sanctum', 'role:admin'])
+    ->prefix('admin')
+    ->group(function () {
+        Route::apiResource(
+            'empreendimento-field-definitions',
+            EmpreendimentoFieldDefinitionController::class
+        );
+    });
+
+
+Route::post('/auth/refresh', [AuthController::class, 'refresh']);
+
+Route::get(
+    '/admin/empreendimentos/{empreendimento}/fields',
+    [EmpreendimentoFieldValueController::class, 'index']
+)->middleware(['auth:sanctum', 'role:admin,gestor']);
+
+Route::post(
+    '/admin/empreendimentos/{empreendimento}/fields',
+    [EmpreendimentoFieldValueController::class, 'store']
+)->middleware(['auth:sanctum', 'role:admin,gestor']);
+
+
+/*
+|--------------------------------------------------------------------------
+| ROTAS PÚBLICAS (SITE)
+|--------------------------------------------------------------------------
+*/
+Route::get('/public/', [EmpreendimentoController::class, 'publicIndex']);
+Route::get('/public/home', [EmpreendimentoController::class, 'publicIndexHome']);
+Route::get('/public/empreendimentos/{code}', [EmpreendimentoController::class, 'publicShow']);
+Route::get('/public/empreendimentos/{code}/gallery', [EmpreendimentoController::class, 'publicGallery']);
+
+
+/*
+|--------------------------------------------------------------------------
+| IMAGENS EMPREENDIMENTOS
+|--------------------------------------------------------------------------
+*/
+Route::post(
+    '/empreendimentos/{empreendimento}/images',
+    [EmpreendimentoImageController::class, 'store']
+)->middleware(['auth:sanctum', 'role:admin,gestor']);
+
+
+/*
+|--------------------------------------------------------------------------
+| LEAD STATUS
+|--------------------------------------------------------------------------
+*/
+Route::middleware('auth:sanctum')->get('/lead-status', function () {
+    return LeadStatus::select('id', 'name', 'order')
+        ->orderBy('order')
+        ->get();
+});
+
+
+/*
+|--------------------------------------------------------------------------
+| AUTH
+|--------------------------------------------------------------------------
+*/
+Route::post('/auth/login', [AuthController::class, 'login']);
+
+
+/*
+|--------------------------------------------------------------------------
+| API PRIVADA (LEADS + EMPREENDIMENTOS)
+|--------------------------------------------------------------------------
+*/
+Route::get('/users', function(){
+    return \App\Models\User::select('id','name')->get();
+})->middleware('auth:sanctum');
+Route::get('/empreendimentos-lista', function(){
+    return \App\Models\Empreendimento::select('id','name')->get();
+})->middleware('auth:sanctum');
+
+Route::middleware(['auth:sanctum', 'role:admin,gestor,corretor'])->group(function () {
+
+    Route::get('/leads', [LeadController::class, 'index']);
+
+    Route::apiResource('empreendimentos', EmpreendimentoController::class);
+
+
+
+
+
+
+});
+Route::middleware(['auth:sanctum', 'role:admin,gestor'])->group(function () {
+Route::get('/user/me', function (Request $request) {
+    return response()->json($request->user());
+})->middleware('auth:sanctum');
+
+// buscar resumo inicial 
+Route::get('/dashboard/atividades', function (Request $request) {
+
+    $periodo = $request->get('periodo', 'mensal');
+
+    switch ($periodo) {
+        case 'diario':
+            $start = now()->startOfDay();
+            $end   = now()->endOfDay();
+            break;
+
+        case 'semanal':
+            $start = now()->startOfWeek();
+            $end   = now()->endOfWeek();
+            break;
+
+        default:
+            $start = now()->startOfMonth();
+            $end   = now()->endOfMonth();
+            break;
+    }
+
+    // 🔥 AJUSTA NOMES DAS COLUNAS AQUI SE NECESSÁRIO
+    $base = \App\Models\Appointment::whereBetween('starts_at', [$start, $end])
+        ->where('status', 'completed');
+
+    return response()->json([
+        'ligacao' => (clone $base)->where('type', 'ligacao')->count(),
+        'whatsapp' => (clone $base)->where('type', 'whatsapp')->count(),
+        'email' => (clone $base)->where('type', 'email')->count(),
+        'visita' => (clone $base)->where('type', 'visit')->count(),
+    ]);
+})->middleware('auth:sanctum');
+
+
+// busca global
+Route::get('/search', function (Request $request) {
+
+    $q = $request->get('q');
+
+    if (!$q) return [];
+
+    return response()->json([
+
+        'leads' => \App\Models\Lead::where('name', 'like', "%$q%")
+            ->limit(5)
+            ->get(['id', 'name']),
+
+        'empreendimentos' => \App\Models\Empreendimento::where('name', 'like', "%$q%")
+            ->limit(5)
+            ->get(['id', 'name']),
+
+        'appointments' => \App\Models\Appointment::where('title', 'like', "%$q%")
+            ->limit(5)
+            ->get(['id', 'title'])
+
+    ]);
+})->middleware('auth:sanctum');
+Route::post('/user/status', function (Request $request) {
+
+    $user = auth()->user();
+
+    $request->validate([
+        'status' => 'required|in:disponivel,ocupado,offline'
+    ]);
+
+    $user->status_corretor = $request->status;
+    $user->save();
+
+    return response()->json([
+        'message' => 'Status atualizado',
+        'status' => $user->status_corretor
+    ]);
+})->middleware('auth:sanctum');
+// APPINTMENTS LEAD PAGE
+Route::put('/appointments/{id}/reschedule', [AppointmentController::class, 'reschedule']);
+Route::put('/appointments/{id}/complete', [AppointmentController::class, 'complete']);
+Route::get('/appointments/{id}', [AppointmentController::class, 'show'])->middleware('auth:sanctum');
+
+
+Route::get('/dashboard/appointments', function (Request $request) {
+
+    $periodo = $request->get('periodo', 'mensal');
+
+    switch ($periodo) {
+        case 'diario':
+            $start = now()->startOfDay();
+            $end   = now()->endOfDay();
+            break;
+
+        case 'semanal':
+            $start = now()->startOfWeek();
+            $end   = now()->endOfWeek();
+            break;
+
+        default:
+            $start = now()->startOfMonth();
+            $end   = now()->endOfMonth();
+            break;
+    }
+
+    return Appointment::with('lead')
+        ->whereBetween('starts_at', [$start, $end]) // 🔥 FILTRO AQUI
+        ->orderBy('starts_at', 'asc')
+        ->limit(10)
+        ->get();
+});
+
+Route::post('/empreendimentos', [EmpreendimentoController::class,'store']);
+Route::post('/empreendimentos/{id}/fields', [EmpreendimentoFieldValueController::class,'storeCadastro']);
+});
+
+/*
+|--------------------------------------------------------------------------
+| MANYCHAT WEBHOOK
+|--------------------------------------------------------------------------
+*/
+Route::post('/webhooks/manychat/leads', [
+    \App\Http\Controllers\ManyChatWebhookController::class,
+    'store'
+]);
+
+Route::post('/leads', [LeadController::class, 'store'])
+    ->middleware('auth:sanctum');
+/*
+|--------------------------------------------------------------------------
+| LEADS
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth:sanctum'])->group(function () {
+
+    Route::post('/leads/{lead}/interactions', [LeadInteractionController::class, 'store']);
+    Route::get('/leads/{lead}', [LeadController::class, 'show']);
+    Route::put('/leads/editar/{lead}', [LeadController::class, 'update']);
+    
+});
+
+
+/*
+|--------------------------------------------------------------------------
+| NOTIFICAÇÕES
+|--------------------------------------------------------------------------
+*/
+Route::middleware('auth:sanctum')
+    ->get('/notifications', function (Request $request) {
+
+        $count = $request->user()
+            ->unreadNotifications()
+            ->count();
+
+        $notifications = $request->user()
+            ->unreadNotifications()
+            ->latest()
+            ->limit(10)
+            ->get();
+
+        return response()->json([
+            'unread' => $notifications,
+            'count'  => $count
+        ]);
+    });
+
+Route::middleware('auth:sanctum')
+    ->post('/notifications/{id}/read', function ($id, Request $request) {
+
+        $notification = $request->user()
+            ->notifications()
+            ->where('id', $id)
+            ->firstOrFail();
+
+        $notification->markAsRead();
+
+        return response()->json(['success' => true]);
+    });
+
+
+/*
+|--------------------------------------------------------------------------
+| USER
+|--------------------------------------------------------------------------
+*/
+Route::middleware('auth:sanctum')->get('/me', function (Request $request) {
+    return response()->json($request->user());
+});
+
+
+/*
+|--------------------------------------------------------------------------
+| DASHBOARD
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth:sanctum', 'role:admin,gestor'])->group(function () {
+
+    Route::get('/dashboard', [DashboardController::class, 'index']);
+    Route::get('/dashboard/funnel', [DashboardController::class, 'funnel']);
+});
+    Route::get('/dashboard/resumo', [DashboardController::class, 'resumo']);
+
+/*
+|--------------------------------------------------------------------------
+| KANBAN
+|--------------------------------------------------------------------------
+*/
+
+
+Route::patch('/kanban/{lead}/move', [KanbanController::class, 'move']);
+Route::get('/kanban', [KanbanController::class, 'index'])
+    ->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
+Route::post('/kanban/reorder', [KanbanController::class, 'reorder']);
+// Route::patch('/kanbans/leads/{lead}/move', [KanbanController::class, 'move'])
+//  ->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
+
+
+/*
+|--------------------------------------------------------------------------
+| CALENDÁRIO
+|--------------------------------------------------------------------------
+*/
+Route::get('/appointments/by-date', [AppointmentController::class, 'byDate'])->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
+Route::get('/appointments/by-month', [AppointmentController::class, 'byMonth'])->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
+
+
+
+
+/*
+|--------------------------------------------------------------------------
+| RELATÓRIOS
+|--------------------------------------------------------------------------
+*/
+Route::get('/reports/marketing', [MarketingReportController::class, 'index'])
+    ->middleware(['auth:sanctum', 'role:admin,gestor']);
+
+Route::get('/leads/{lead}/audits', [\App\Http\Controllers\AuditController::class, 'index'])
+    ->middleware('auth:sanctum');
+
+Route::get('/reports/commissions', [CommissionReportController::class, 'index'])
+    ->middleware(['auth:sanctum', 'role:admin,gestor']);
+
+
+/*
+|--------------------------------------------------------------------------
+| AGENDA
+|--------------------------------------------------------------------------
+*/
+Route::middleware('auth:sanctum')->group(function () {
+
+    Route::get('/myCommissions', [CommissionReportController::class, 'myCommissions']);
+
+    Route::get('/agenda', [AppointmentController::class, 'index']);
+    Route::post('/agenda', [AppointmentController::class, 'store']);
+    Route::get('/agenda/{appointment}', [AppointmentController::class, 'show']);
+    Route::put('/agenda/{appointment}', [AppointmentController::class, 'update']);
+    Route::delete('/agenda/{appointment}', [AppointmentController::class, 'destroy']);
+});
+
+
+/*
+|--------------------------------------------------------------------------
+| LOGOUT
+|--------------------------------------------------------------------------
+*/
+Route::middleware('auth:sanctum')->post('/auth/logout', function (Request $request) {
+    $request->user()->currentAccessToken()->delete();
+    return response()->json(['message' => 'Logout realizado']);
+});
+
+
+
+/*
+|--------------------------------------------------------------------------
+| ================= ROTAS DUPLICADAS (ISOLADAS PARA TESTE) =================
+|--------------------------------------------------------------------------
+| Mantidas apenas para verificação.
+| NÃO ESTÃO ATIVAS.
+|--------------------------------------------------------------------------
+*/
+
+// Route::middleware(['auth:sanctum', 'role:admin,gestor'])->group(function () {
+//     Route::apiResource('empreendimentos', EmpreendimentoController::class);
+// });
+
+
+
+
+
+
+// rotas criação email
+Route::post('/emails/create', [EmailController::class, 'store']);
+
+Route::get('/teste-whm', function () {
+    return Http::withOptions([
+        'verify' => false
+    ])->withHeaders([
+        'Authorization' => 'whm encu0499:2CRS1I7WJCDHJ9UXATQX7CN5MIS05KG3'
+    ])->get('https://us155-cp.valueserver.com.br:2087/json-api/version');
+});
+
+Route::get('/teste-contas', function () {
+    return Http::withOptions([
+        'verify' => false
+    ])->withHeaders([
+        'Authorization' => 'whm encu0499:2CRS1I7WJCDHJ9UXATQX7CN5MIS05KG3'
+    ])->get('https://us155-cp.valueserver.com.br:2087/json-api/listaccts');
+});
+
+Route::get('/teste-cpanel', function () {
+    return Http::withOptions([
+        'verify' => false
+    ])->withHeaders([
+        'Authorization' => 'whm encu0499:2CRS1I7WJCDHJ9UXATQX7CN5MIS05KG3'
+    ])->get('https://us155-cp.valueserver.com.br:2087/json-api/cpanel', [
+        'cpanel_jsonapi_user' => 'alphadom',
+        'cpanel_jsonapi_apiversion' => 2,
+        'cpanel_jsonapi_module' => 'Email',
+        'cpanel_jsonapi_func' => 'listpops'
+    ]);
+});
+
+Route::get('/criar-email-teste', function () {
+
+    $response = Http::withOptions([
+        'verify' => false
+    ])->withBasicAuth('alphadom', 'appalpha123A@!')
+    ->get('https://alphadomusimobiliaria.com.br:2083/execute/Email/add_pop', [
+        'email' => 'teste'.rand(100,999),
+        'domain' => 'alphadomusimobiliaria.com.br',
+        'password' => 'SenhaForte@123',
+        'quota' => 1024
+    ]);
+
+    return response()->json([
+        'status' => $response->status(),
+        'body' => $response->json()
+    ]);
+});
+
+rsync -avz --progress \
+  --exclude 'node_modules' \
+  --exclude 'vendor' \
+  --exclude 'storage/logs' \
+  root@72.60.15.31::/var/www/alphacrm/ \
+  ~/Desktop/AlphaCRM/
