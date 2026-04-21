@@ -68,12 +68,16 @@ class KanbanController extends Controller
         'id',
         'name',
         'phone',
+        'email',
         'sla_status',
         'status_id',
         'lead_substatus_id',
         'assigned_user_id',
+        'empreendimento_id',
+        'channel',
         'position',
         'updated_at',
+        'created_at',
     ];
 
     $statuses = LeadStatus::with(['substatus' => function ($q) {
@@ -83,7 +87,10 @@ class KanbanController extends Controller
     ->get(['id', 'name', 'order']);
 
     // Carrega todos os leads visíveis pro user de uma vez e distribui em memória
-    $leadsQuery = Lead::with('corretor:id,name')
+    $leadsQuery = Lead::with([
+            'corretor:id,name',
+            'empreendimento:id,name',
+        ])
         ->orderBy('position')
         ->select($leadSelect);
 
