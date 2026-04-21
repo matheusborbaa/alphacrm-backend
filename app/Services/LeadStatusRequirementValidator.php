@@ -147,25 +147,65 @@ class LeadStatusRequirementValidator
 
         $rules = collect();
 
-        // Regras de status (todas as etapas do percurso)
-        if (!empty($statusIdsToCheck)) {
-            $statuses = LeadStatus::whereIn('id', $statusIdsToCheck)
-                ->orderBy('order')
-                ->get()
-                ->keyBy('id');
+        if (empty($statusIdsToCheck) && !$targetSubstatusId) {
+            return $rules;
+        }
 
+        // Mapa id→nome de todos os status envolvidos (pra rotular as regras)
+        $statusesMap = LeadStatus::whereIn('id', $statusIdsToCheck)
+            ->orderBy('order')
+            ->get()
+            ->keyBy('id');
+
+        // Separa TARGET das intermediárias.
+        // As intermediárias são todas menos a última (que é o target).
+        $targetStatusIdFromPath = end($statusIdsToCheck) ?: null;
+        $intermediateStatusIds  = array_slice($statusIdsToCheck, 0, -1);
+
+        // -------- 1) Regras de STATUS (intermediárias + target) --------
+        if (!empty($statusIdsToCheck)) {
             $statusRules = StatusRequiredField::with('customField')
                 ->where('required', true)
                 ->whereIn('lead_status_id', $statusIdsToCheck)
                 ->get();
 
             foreach ($statusRules as $r) {
-                $r->_stage_label = $statuses->get($r->lead_status_id)?->name;
+                $r->_stage_label = $statusesMap->get($r->lead_status_id)?->name;
                 $rules->push($r);
             }
         }
 
-        // Regras do substatus destino
+        // -------- 2) Regras de SUBSTATUS das etapas intermediárias --------
+        // Quando o lead PULA uma etapa, não sabemos por qual substatus ele
+        // "teria passado", então cobramos a UNIÃO dos obrigatórios de todos
+        // os substatuses dessa etapa intermediária.
+        if (!empty($intermediateStatusIds)) {
+            $intermediateSubs = LeadSubstatus::whereIn('lead_status_id', $intermediateStatusIds)
+                ->orderBy('lead_status_id')
+                ->orderBy('order')
+                ->get();
+
+            if ($intermediateSubs->isNotEmpty()) {
+                $intermediateSubIds = $intermediateSubs->pluck('id')->all();
+
+                $intermediateSubRules = StatusRequiredField::with('customField')
+                    ->where('required', true)
+                    ->whereIn('lead_substatus_id', $intermediateSubIds)
+                    ->get();
+
+                $subsById = $intermediateSubs->keyBy('id');
+
+                foreach ($intermediateSubRules as $r) {
+                    $sub = $subsById->get($r->lead_substatus_id);
+                    if (!$sub) continue;
+                    $statusName = $statusesMap->get($sub->lead_status_id)?->name;
+                    $r->_stage_label = ($statusName ? $statusName . ' → ' : '') . $sub->name;
+                    $rules->push($r);
+                }
+            }
+        }
+
+        // -------- 3) Regras do SUBSTATUS destino (específico) --------
         if ($targetSubstatusId) {
             $sub = LeadSubstatus::with('status')->find($targetSubstatusId);
             if ($sub) {
