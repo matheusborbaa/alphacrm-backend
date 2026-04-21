@@ -57,9 +57,34 @@ public function update(Request $request, Lead $lead, LeadStatusRequirementValida
         $customValues
     );
 
+    // Detecta reatribuição de corretor (antes de atualizar) pra notificar depois.
+    $previousAssignedUserId = $lead->assigned_user_id;
+    $newAssignedUserId      = array_key_exists('assigned_user_id', $data)
+        ? $data['assigned_user_id']
+        : null;
+    $reassigned = array_key_exists('assigned_user_id', $data)
+        && $newAssignedUserId
+        && $newAssignedUserId != $previousAssignedUserId;
+
     // Atualiza o lead (campos fixos)
     if (!empty($data)) {
         $lead->update($data);
+    }
+
+    // 🔔 Notifica novo corretor em caso de reatribuição (database + e-mail)
+    if ($reassigned) {
+        $target = \App\Models\User::find($newAssignedUserId);
+        if ($target && $target->id !== auth()->id()) {
+            try {
+                $target->notify(new \App\Notifications\LeadAssignedNotification($lead->fresh()));
+            } catch (\Throwable $e) {
+                \Log::warning('Falha ao notificar corretor de reatribuição', [
+                    'lead_id' => $lead->id,
+                    'user_id' => $target->id,
+                    'error'   => $e->getMessage(),
+                ]);
+            }
+        }
     }
 
     // Salva os custom values se vieram
@@ -361,31 +386,132 @@ public function store(Request $request)
 {
     $user = auth()->user();
 
+    $data = $request->validate([
+        'name'               => 'required|string|max:255',
+        'phone'              => 'required|string|max:30',
+        'whatsapp'           => 'nullable|string|max:30',
+        'email'              => 'nullable|email|max:255',
+        'channel'            => 'nullable|string|max:80',        // origem
+        'campaign'           => 'nullable|string|max:150',
+        'empreendimento_id'  => 'nullable|integer|exists:empreendimentos,id',
+        'city_of_interest'   => 'nullable|string|max:120',
+        'region_of_interest' => 'nullable|string|max:120',
+        'assigned_user_id'   => 'nullable|integer|exists:users,id',
+        'force'              => 'nullable|boolean',              // bypass do duplicate check
+    ]);
+
+    // 🔎 Verificação de duplicidade (telefone / WhatsApp / email).
+    // Se encontrar e o cliente não tiver confirmado via `force`, devolve 409.
+    if (empty($data['force'])) {
+        $duplicates = $this->findDuplicateLeads(
+            $data['phone']    ?? null,
+            $data['whatsapp'] ?? null,
+            $data['email']    ?? null,
+        );
+
+        if ($duplicates->isNotEmpty()) {
+            return response()->json([
+                'message'    => 'Já existem leads com esses contatos.',
+                'duplicates' => $duplicates,
+            ], 409);
+        }
+    }
+
     $assignedUserId = $user->role === 'admin'
-        ? $request->assigned_user_id
+        ? ($data['assigned_user_id'] ?? null)
         : $user->id;
 
-    $lead = \App\Models\Lead::create([
-        'name' => $request->name,
-        'phone' => $request->phone,
-        'email' => $request->email,
-        'empreendimento_id' => $request->empreendimento_id,
-        'assigned_user_id' => $assignedUserId,
-        'status_id' => 1
-    ]);
+    $lead = \App\Models\Lead::create(array_merge(
+        collect($data)->except(['force', 'assigned_user_id'])->toArray(),
+        [
+            'assigned_user_id' => $assignedUserId,
+            'status_id'        => 1,
+        ]
+    ));
 
     // 🔥 fallback: se admin não escolheu
     if (!$assignedUserId) {
+        // O service já notifica o corretor sorteado pelo rodízio.
         app(\App\Services\LeadAssignmentService::class)->assign($lead);
+    } else {
+        // Admin escolheu o responsável direto — notifica imediatamente.
+        $target = \App\Models\User::find($assignedUserId);
+        if ($target && $target->id !== auth()->id()) {
+            try {
+                $target->notify(new \App\Notifications\LeadAssignedNotification($lead->fresh()));
+            } catch (\Throwable $e) {
+                \Log::warning('Falha ao notificar corretor de novo lead (admin)', [
+                    'lead_id' => $lead->id,
+                    'user_id' => $target->id,
+                    'error'   => $e->getMessage(),
+                ]);
+            }
+        }
     }
+
     LeadHistory::create([
-    'lead_id' => $lead->id,
-    'user_id' => auth()->id(),
-    'type' => 'created',
-    'description' => 'Lead criado'
-]);
+        'lead_id'     => $lead->id,
+        'user_id'     => auth()->id(),
+        'type'        => 'created',
+        'description' => 'Lead criado'
+    ]);
 
     return response()->json($lead);
+}
+
+
+/**
+ * Endpoint leve pro frontend consultar duplicidade enquanto o corretor
+ * preenche o modal. Aceita qualquer combinação de phone/whatsapp/email.
+ *
+ * GET /leads/check-duplicates?phone=...&whatsapp=...&email=...
+ */
+public function checkDuplicates(Request $request)
+{
+    $duplicates = $this->findDuplicateLeads(
+        $request->query('phone'),
+        $request->query('whatsapp'),
+        $request->query('email'),
+    );
+
+    return response()->json([
+        'count'      => $duplicates->count(),
+        'duplicates' => $duplicates,
+    ]);
+}
+
+
+/**
+ * Busca leads que batam em qualquer um dos três contatos informados.
+ * Normaliza telefones (só dígitos) pra não falhar por causa de máscara.
+ *
+ * @return \Illuminate\Support\Collection
+ */
+protected function findDuplicateLeads(?string $phone, ?string $whatsapp, ?string $email)
+{
+    $phoneDigits    = $phone    ? preg_replace('/\D/', '', $phone)    : null;
+    $whatsappDigits = $whatsapp ? preg_replace('/\D/', '', $whatsapp) : null;
+
+    $query = \App\Models\Lead::query()
+        ->select(['id', 'name', 'phone', 'whatsapp', 'email', 'status_id', 'assigned_user_id', 'created_at'])
+        ->with(['status:id,name', 'corretor:id,name']);
+
+    $query->where(function ($q) use ($phoneDigits, $whatsappDigits, $email) {
+        if ($phoneDigits) {
+            // Compara só dígitos pra tolerar máscaras diferentes
+            $q->orWhereRaw("REPLACE(REPLACE(REPLACE(REPLACE(phone,' ',''),'-',''),'(',''),')','') = ?", [$phoneDigits]);
+            $q->orWhereRaw("REPLACE(REPLACE(REPLACE(REPLACE(whatsapp,' ',''),'-',''),'(',''),')','') = ?", [$phoneDigits]);
+        }
+        if ($whatsappDigits && $whatsappDigits !== $phoneDigits) {
+            $q->orWhereRaw("REPLACE(REPLACE(REPLACE(REPLACE(phone,' ',''),'-',''),'(',''),')','') = ?", [$whatsappDigits]);
+            $q->orWhereRaw("REPLACE(REPLACE(REPLACE(REPLACE(whatsapp,' ',''),'-',''),'(',''),')','') = ?", [$whatsappDigits]);
+        }
+        if ($email) {
+            $q->orWhere('email', $email);
+        }
+    });
+
+    return $query->limit(10)->get();
 }
 
 public function destroy(Lead $lead)

@@ -40,6 +40,111 @@ public function byDate(Request $request)
             'status'
         ]);
 
+    // Marca cada agendamento como atrasado quando está pendente e já passou.
+    $now = \Carbon\Carbon::now();
+    $appointments->transform(function ($app) use ($now) {
+        $app->overdue = $app->status === 'pending'
+            && $app->starts_at
+            && $app->starts_at->lt($now);
+        return $app;
+    });
+
+    return response()->json($appointments);
+}
+
+/**
+ * Resumo quantitativo do dia: totais por tipo, por situação e atrasadas.
+ * Usado pelo painel superior da agenda.
+ */
+public function summary(Request $request)
+{
+    $request->validate([
+        'date' => 'required|date'
+    ]);
+
+    $user = auth()->user();
+
+    $start = \Carbon\Carbon::parse($request->date)->startOfDay();
+    $end   = \Carbon\Carbon::parse($request->date)->endOfDay();
+
+    $query = Appointment::whereBetween('starts_at', [$start, $end])
+        ->when(!in_array($user->role, ['admin','gestor']), function ($q) use ($user) {
+            $q->where(function ($sub) use ($user) {
+                $sub->where('user_id', $user->id)
+                    ->orWhere('scope', 'company');
+            });
+        });
+
+    $list = (clone $query)->get(['id','type','status','starts_at']);
+    $now  = \Carbon\Carbon::now();
+
+    $byType = [];
+    foreach ($list as $a) {
+        $t = $a->type ?: 'outro';
+        $byType[$t] = ($byType[$t] ?? 0) + 1;
+    }
+
+    $overdue = $list->filter(fn($a) =>
+        $a->status === 'pending'
+        && $a->starts_at
+        && $a->starts_at->lt($now)
+    )->count();
+
+    $completed = $list->where('status', 'completed')->count();
+    $pending   = $list->where('status', 'pending')->count();
+
+    // Atrasadas globais (todas as datas anteriores ainda pendentes) —
+    // útil pra mostrar o badge persistente no topo da agenda.
+    $overdueGlobal = Appointment::where('status', 'pending')
+        ->where('starts_at', '<', $now)
+        ->when(!in_array($user->role, ['admin','gestor']), function ($q) use ($user) {
+            $q->where(function ($sub) use ($user) {
+                $sub->where('user_id', $user->id)
+                    ->orWhere('scope', 'company');
+            });
+        })
+        ->count();
+
+    return response()->json([
+        'date'             => $request->date,
+        'total'            => $list->count(),
+        'by_type'          => $byType,
+        'completed'        => $completed,
+        'pending'          => $pending,
+        'overdue_day'      => $overdue,
+        'overdue_global'   => $overdueGlobal,
+    ]);
+}
+
+/**
+ * Lista todas as tarefas atrasadas do usuário (status=pending e starts_at passado).
+ */
+public function overdueList(Request $request)
+{
+    $user = auth()->user();
+    $now  = \Carbon\Carbon::now();
+
+    $appointments = Appointment::where('status', 'pending')
+        ->where('starts_at', '<', $now)
+        ->when(!in_array($user->role, ['admin','gestor']), function ($q) use ($user) {
+            $q->where(function ($sub) use ($user) {
+                $sub->where('user_id', $user->id)
+                    ->orWhere('scope', 'company');
+            });
+        })
+        ->with(['lead:id,name'])
+        ->orderBy('starts_at', 'asc')
+        ->limit(50)
+        ->get(['id','title','type','starts_at','status','lead_id']);
+
+    $appointments->transform(function ($app) use ($now) {
+        $app->overdue      = true;
+        $app->overdue_days = $app->starts_at
+            ? $app->starts_at->diffInDays($now)
+            : 0;
+        return $app;
+    });
+
     return response()->json($appointments);
 }
 
@@ -58,6 +163,15 @@ public function byMonth(Request $request)
             $q->where('user_id', $user->id);
         })
         ->get(['id','starts_at','type','status']);
+
+    // Marca itens atrasados pra que o calendário mostre o indicador vermelho.
+    $now = \Carbon\Carbon::now();
+    $appointments->transform(function ($app) use ($now) {
+        $app->overdue = $app->status === 'pending'
+            && $app->starts_at
+            && $app->starts_at->lt($now);
+        return $app;
+    });
 
     return response()->json($appointments);
 }

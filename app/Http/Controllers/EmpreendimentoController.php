@@ -191,17 +191,23 @@ public function cities()
     public function store(Request $request)
 {
     $data = $request->validate([
-        'name' => 'required|string|max:255',
-        'code' => 'nullable|string|max:255',
-        'location_city' => 'nullable|string|max:255',
-        'active' => 'boolean',
+        'name'                  => 'required|string|max:255',
+        'code'                  => 'nullable|string|max:255',
+        'locationcity'          => 'nullable|string|max:255',
+        'neighborhood'          => 'nullable|string|max:255',
+        'tipo'                  => 'nullable|string|max:60',
+        'finalidade'            => 'nullable|string|max:60',
+        'status'                => 'nullable|string|max:60',
+        'metragem'              => 'nullable|numeric|min:0',
+        'initial_price'         => 'nullable|numeric|min:0',
+        'active'                => 'boolean',
         'commission_percentage' => 'nullable|numeric',
-        'average_sale_value' => 'nullable|numeric',
-        'starts_at' => 'nullable|date',
-        'ends_at' => 'nullable|date',
-        'shortdescription' => 'nullable|string',
-        'description' => 'nullable|string',
-        'cover_image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:4096'
+        'average_sale_value'    => 'nullable|numeric',
+        'starts_at'             => 'nullable|date',
+        'ends_at'               => 'nullable|date',
+        'shortdescription'      => 'nullable|string',
+        'description'           => 'nullable|string',
+        'cover_image'           => 'nullable|image|mimes:jpg,jpeg,png,webp|max:4096'
     ]);
 
     if($request->hasFile('cover_image')){
@@ -229,14 +235,26 @@ public function cities()
 
     public function update(Request $request, Empreendimento $empreendimento)
     {
-        $empreendimento->update(
-            $request->only([
-                'name',
-                'commission_percentage',
-                'average_sale_value',
-                'active'
-            ])
-        );
+        $data = $request->validate([
+            'name'                  => 'sometimes|required|string|max:255',
+            'code'                  => 'nullable|string|max:255',
+            'locationcity'          => 'nullable|string|max:255',
+            'neighborhood'          => 'nullable|string|max:255',
+            'tipo'                  => 'nullable|string|max:60',
+            'finalidade'            => 'nullable|string|max:60',
+            'status'                => 'nullable|string|max:60',
+            'metragem'              => 'nullable|numeric|min:0',
+            'initial_price'         => 'nullable|numeric|min:0',
+            'active'                => 'boolean',
+            'commission_percentage' => 'nullable|numeric',
+            'average_sale_value'    => 'nullable|numeric',
+            'starts_at'             => 'nullable|date',
+            'ends_at'               => 'nullable|date',
+            'shortdescription'      => 'nullable|string',
+            'description'           => 'nullable|string',
+        ]);
+
+        $empreendimento->update($data);
 
         return $empreendimento;
     }

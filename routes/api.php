@@ -222,8 +222,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
 Route::middleware(['auth:sanctum', 'role:admin,gestor,corretor'])->group(function () {
 
-    Route::get('/leads',        [LeadController::class, 'index']);
-    Route::get('/leads/counts', [LeadController::class, 'counts']);
+    Route::get('/leads',                  [LeadController::class, 'index']);
+    Route::get('/leads/counts',           [LeadController::class, 'counts']);
+    Route::get('/leads/check-duplicates', [LeadController::class, 'checkDuplicates']);
 
     Route::apiResource('empreendimentos', EmpreendimentoController::class);
 
@@ -463,6 +464,8 @@ Route::post('/kanban/reorder', [KanbanController::class, 'reorder'])
 */
 Route::get('/appointments/by-date', [AppointmentController::class, 'byDate'])->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
 Route::get('/appointments/by-month', [AppointmentController::class, 'byMonth'])->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
+Route::get('/appointments/summary', [AppointmentController::class, 'summary'])->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
+Route::get('/appointments/overdue', [AppointmentController::class, 'overdueList'])->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
 
 
 
