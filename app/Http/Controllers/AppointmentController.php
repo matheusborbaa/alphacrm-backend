@@ -37,7 +37,9 @@ public function byDate(Request $request)
             'title',
             'type',
             'starts_at',
-            'status'
+            'status',
+            'lead_id',  // usado pelo frontend pra navegar pro lead ao clicar
+            'user_id',
         ]);
 
     // Marca cada agendamento como atrasado quando está pendente e já passou.
