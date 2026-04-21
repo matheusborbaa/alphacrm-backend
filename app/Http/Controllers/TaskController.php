@@ -165,12 +165,18 @@ class TaskController extends Controller
     }
 
     /* ==================================================================
-     * SHOW — retorna uma tarefa
+     * SHOW — retorna uma tarefa com comentários já carregados
      * ================================================================== */
     public function show(int $id)
     {
         $task = Appointment::tasks()
-            ->with(['lead:id,name', 'user:id,name', 'creator:id,name', 'completer:id,name'])
+            ->with([
+                'lead:id,name',
+                'user:id,name',
+                'creator:id,name',
+                'completer:id,name',
+                'comments',
+            ])
             ->findOrFail($id);
 
         $this->authorizeRead($task);
@@ -227,7 +233,7 @@ class TaskController extends Controller
     public function complete(int $id)
     {
         $task = Appointment::tasks()->findOrFail($id);
-        $this->authorizeEdit($task);
+        $this->authorizeComplete($task);
 
         if ($task->isCompleted()) {
             return response()->json([
@@ -259,7 +265,7 @@ class TaskController extends Controller
     public function reopen(int $id)
     {
         $task = Appointment::tasks()->findOrFail($id);
-        $this->authorizeEdit($task);
+        $this->authorizeComplete($task);
 
         if (!$task->isCompleted()) {
             return response()->json([
@@ -334,7 +340,9 @@ class TaskController extends Controller
 
     /**
      * Restringe o query builder de acordo com o papel do usuário.
-     * admin/gestor → tudo; corretor → próprias + scope='company'.
+     * admin/gestor → tudo;
+     * corretor     → tarefas onde ele é dono (user_id), criador
+     *                (created_by) ou scope='company'.
      */
     private function scopeByRole(Builder $query, $user): void
     {
@@ -344,12 +352,13 @@ class TaskController extends Controller
 
         $query->where(function (Builder $q) use ($user) {
             $q->where('user_id', $user->id)
+              ->orWhere('created_by', $user->id)
               ->orWhere('scope', 'company');
         });
     }
 
     /**
-     * Autorização de LEITURA — corretor lê só próprias + company.
+     * LEITURA — corretor lê tarefas onde é dono, criador ou company.
      */
     private function authorizeRead(Appointment $task): void
     {
@@ -358,16 +367,18 @@ class TaskController extends Controller
             return;
         }
 
-        $ok = (int) $task->user_id === (int) $user->id
+        $ok = (int) $task->user_id    === (int) $user->id
+            || (int) $task->created_by === (int) $user->id
             || $task->scope === 'company';
 
         if (!$ok) {
             Log::warning('TaskController::authorizeRead bloqueou acesso', [
-                'user_id'      => $user->id,
-                'user_role'    => $user->role,
-                'task_id'      => $task->id,
-                'task_user_id' => $task->user_id,
-                'task_scope'   => $task->scope,
+                'user_id'          => $user->id,
+                'user_role'        => $user->role,
+                'task_id'          => $task->id,
+                'task_user_id'     => $task->user_id,
+                'task_created_by'  => $task->created_by,
+                'task_scope'       => $task->scope,
             ]);
         }
 
@@ -375,8 +386,10 @@ class TaskController extends Controller
     }
 
     /**
-     * Autorização de EDIÇÃO — corretor edita só as próprias.
-     * (Mesmo scope='company' não pode ser alterado por não-dono.)
+     * EDIÇÃO de campos (title, due_at, priority, scope, user_id).
+     * Só pode editar: manager, dono ou quem CRIOU a tarefa.
+     * Tarefas scope='company' só podem ser editadas pelo criador/dono/manager
+     * — visualização livre não implica edição.
      */
     private function authorizeEdit(Appointment $task): void
     {
@@ -385,19 +398,56 @@ class TaskController extends Controller
             return;
         }
 
-        $isOwner = (int) $task->user_id === (int) $user->id;
+        $isOwner   = (int) $task->user_id    === (int) $user->id;
+        $isCreator = (int) $task->created_by === (int) $user->id;
 
-        if (!$isOwner) {
+        if (!$isOwner && !$isCreator) {
             Log::warning('TaskController::authorizeEdit bloqueou edição', [
-                'user_id'      => $user->id,
-                'user_role'    => $user->role,
-                'task_id'      => $task->id,
-                'task_user_id' => $task->user_id,
-                'task_scope'   => $task->scope,
+                'user_id'          => $user->id,
+                'user_role'        => $user->role,
+                'task_id'          => $task->id,
+                'task_user_id'     => $task->user_id,
+                'task_created_by'  => $task->created_by,
+                'task_scope'       => $task->scope,
             ]);
         }
 
-        abort_if(!$isOwner, 403, 'Sem permissão pra editar esta tarefa.');
+        abort_if(
+            !$isOwner && !$isCreator,
+            403,
+            'Sem permissão pra editar esta tarefa.'
+        );
+    }
+
+    /**
+     * CONCLUIR / REABRIR — regra mais frouxa que edição.
+     *   - manager, dono ou criador: sempre.
+     *   - scope='company': qualquer corretor pode concluir (é uma tarefa
+     *     da empresa, quem fez registra quem concluiu via completed_by).
+     */
+    private function authorizeComplete(Appointment $task): void
+    {
+        $user = Auth::user();
+        if ($this->isManager($user)) {
+            return;
+        }
+
+        $ok = (int) $task->user_id    === (int) $user->id
+            || (int) $task->created_by === (int) $user->id
+            || $task->scope === 'company';
+
+        if (!$ok) {
+            Log::warning('TaskController::authorizeComplete bloqueou ação', [
+                'user_id'          => $user->id,
+                'user_role'        => $user->role,
+                'task_id'          => $task->id,
+                'task_user_id'     => $task->user_id,
+                'task_created_by'  => $task->created_by,
+                'task_scope'       => $task->scope,
+            ]);
+        }
+
+        abort_if(!$ok, 403, 'Sem permissão pra concluir esta tarefa.');
     }
 
     /**

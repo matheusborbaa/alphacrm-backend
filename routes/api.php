@@ -14,6 +14,7 @@ use App\Http\Controllers\EmpreendimentoFieldDefinitionController;
 use App\Http\Controllers\EmpreendimentoFieldValueController;
 use App\Http\Controllers\AppointmentController;
 use App\Http\Controllers\TaskController;
+use App\Http\Controllers\TaskCommentController;
 use App\Http\Controllers\MyCommissionController;
 use App\Http\Controllers\KanbanController;
 use App\Http\Controllers\CustomFieldController;
@@ -398,6 +399,11 @@ Route::middleware(['auth:sanctum', 'role:admin,gestor,corretor'])->group(functio
     Route::put('/tasks/{id}/complete',   [TaskController::class, 'complete']);
     Route::put('/tasks/{id}/reopen',     [TaskController::class, 'reopen']);
     Route::delete('/tasks/{id}',         [TaskController::class, 'destroy']);
+
+    // Comentários da tarefa — quem vê a tarefa pode comentar.
+    Route::get   ('/tasks/{id}/comments',              [TaskCommentController::class, 'index']);
+    Route::post  ('/tasks/{id}/comments',              [TaskCommentController::class, 'store']);
+    Route::delete('/tasks/{id}/comments/{commentId}',  [TaskCommentController::class, 'destroy']);
 });
 
 

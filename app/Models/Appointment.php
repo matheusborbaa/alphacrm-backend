@@ -93,6 +93,14 @@ class Appointment extends Model
         return $this->belongsTo(User::class, 'completed_by');
     }
 
+    /** Comentários da tarefa (mais recentes primeiro no feed). */
+    public function comments()
+    {
+        return $this->hasMany(TaskComment::class, 'task_id')
+                    ->with('user:id,name')
+                    ->orderBy('created_at', 'asc');
+    }
+
     /* ------------------------------------------------------------------
      * SCOPES — açúcar pras queries mais repetidas
      * ------------------------------------------------------------------ */
