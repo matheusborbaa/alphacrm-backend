@@ -314,6 +314,14 @@ Route::post('/user/status', function (Request $request) {
     ]);
 })->middleware('auth:sanctum');
 // APPINTMENTS LEAD PAGE
+// IMPORTANTE: rotas com segmentos estáticos (/by-date, /by-month, /summary, /overdue)
+// DEVEM vir antes da rota genérica /{id} — caso contrário, o Laravel tenta
+// resolver "by-month" como um id de Appointment e dispara ModelNotFoundException.
+Route::get('/appointments/by-date', [AppointmentController::class, 'byDate'])->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
+Route::get('/appointments/by-month', [AppointmentController::class, 'byMonth'])->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
+Route::get('/appointments/summary', [AppointmentController::class, 'summary'])->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
+Route::get('/appointments/overdue', [AppointmentController::class, 'overdueList'])->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
+
 Route::put('/appointments/{id}/reschedule', [AppointmentController::class, 'reschedule'])
     ->middleware('auth:sanctum');
 Route::put('/appointments/{id}/complete', [AppointmentController::class, 'complete'])
@@ -461,11 +469,9 @@ Route::post('/kanban/reorder', [KanbanController::class, 'reorder'])
 |--------------------------------------------------------------------------
 | CALENDÁRIO
 |--------------------------------------------------------------------------
+| Rotas movidas pra cima (antes de /appointments/{id}) pra evitar que o
+| Laravel interprete "by-date", "by-month", "summary" e "overdue" como {id}.
 */
-Route::get('/appointments/by-date', [AppointmentController::class, 'byDate'])->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
-Route::get('/appointments/by-month', [AppointmentController::class, 'byMonth'])->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
-Route::get('/appointments/summary', [AppointmentController::class, 'summary'])->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
-Route::get('/appointments/overdue', [AppointmentController::class, 'overdueList'])->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
 
 
 
