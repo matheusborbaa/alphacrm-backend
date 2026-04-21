@@ -222,6 +222,15 @@ class KanbanController extends Controller
         $slugs  = collect($customValues)->pluck('slug')->unique();
         $fields = \App\Models\CustomField::whereIn('slug', $slugs)->get()->keyBy('slug');
 
+        // Snapshot antes do upsert pra conseguir logar diff (ex: CPF
+        // preenchido pelo wizard de campos obrigatórios no drag).
+        $oldByFieldId = \App\Models\LeadCustomFieldValue::where('lead_id', $lead->id)
+            ->whereIn('custom_field_id', $fields->pluck('id'))
+            ->get()
+            ->keyBy('custom_field_id');
+
+        $diffs = [];
+
         foreach ($customValues as $entry) {
             $field = $fields->get($entry['slug']);
             if (!$field) continue;
@@ -233,11 +242,25 @@ class KanbanController extends Controller
                 $value = (string) $value;
             }
 
+            $old = $oldByFieldId->get($field->id)?->value;
+
             \App\Models\LeadCustomFieldValue::updateOrCreate(
                 ['lead_id' => $lead->id, 'custom_field_id' => $field->id],
                 ['value'   => $value]
             );
+
+            $a = $old   === null ? '' : (string) $old;
+            $b = $value === null ? '' : (string) $value;
+            if ($a !== $b) {
+                $diffs[] = [
+                    'label' => $field->name ?: $field->slug,
+                    'from'  => $old,
+                    'to'    => $value,
+                ];
+            }
         }
+
+        \App\Models\LeadHistory::logFieldChangeDiffs($lead, $diffs);
     }
 
     return response()->json(['success' => true]);

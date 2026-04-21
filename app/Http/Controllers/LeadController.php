@@ -210,17 +210,10 @@ private function logFieldChanges(Lead $lead, array $originalAttrs, array $custom
         ]);
     }
 
-    // Custom fields — já vêm com label resolvido
-    foreach ($customDiffs as $diff) {
-        LeadHistory::create([
-            'lead_id'     => $lead->id,
-            'user_id'     => auth()->id(),
-            'type'        => 'field_change',
-            'description' => $diff['label'],
-            'from'        => $diff['from'] !== null ? (string) $diff['from'] : null,
-            'to'          => $diff['to']   !== null ? (string) $diff['to']   : null,
-        ]);
-    }
+    // Custom fields — já vêm com label resolvido.
+    // Delega pro helper central (mesmo usado pelo KanbanController@move
+    // e LeadCustomFieldValueController@bulkStore).
+    LeadHistory::logFieldChangeDiffs($lead, $customDiffs, auth()->id());
 }
 
 /**

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\CustomField;
 use App\Models\Lead;
 use App\Models\LeadCustomFieldValue;
+use App\Models\LeadHistory;
 use Illuminate\Http\Request;
 
 /**
@@ -42,11 +43,23 @@ class LeadCustomFieldValueController extends Controller
         $slugs  = collect($data['values'])->pluck('slug')->unique();
         $fields = CustomField::whereIn('slug', $slugs)->get()->keyBy('slug');
 
+        // Snapshot dos valores antigos (só dos campos afetados) pra gerar
+        // histórico granular. Sem isso, quando o corretor preenche CPF pelo
+        // wizard de campos obrigatórios no drag do kanban, a alteração
+        // some — foi a queixa que motivou esse trecho.
+        $oldByFieldId = LeadCustomFieldValue::where('lead_id', $lead->id)
+            ->whereIn('custom_field_id', $fields->pluck('id'))
+            ->get()
+            ->keyBy('custom_field_id');
+
+        $diffs = [];
+
         foreach ($data['values'] as $entry) {
             $field = $fields->get($entry['slug']);
             if (!$field) continue;
 
             $value = $this->normalizeValue($entry['value'], $field);
+            $old   = $oldByFieldId->get($field->id)?->value;
 
             LeadCustomFieldValue::updateOrCreate(
                 [
@@ -55,7 +68,21 @@ class LeadCustomFieldValueController extends Controller
                 ],
                 ['value' => $value]
             );
+
+            // null e '' são equivalentes pra fim de diff — evita poluir
+            // o timeline com "preenchi e apaguei" no mesmo save.
+            $a = $old   === null ? '' : (string) $old;
+            $b = $value === null ? '' : (string) $value;
+            if ($a !== $b) {
+                $diffs[] = [
+                    'label' => $field->name ?: $field->slug,
+                    'from'  => $old,
+                    'to'    => $value,
+                ];
+            }
         }
+
+        LeadHistory::logFieldChangeDiffs($lead, $diffs);
 
         return response()->json([
             'saved' => count($data['values']),
