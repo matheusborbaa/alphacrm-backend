@@ -26,16 +26,21 @@ public function update(Request $request, Lead $lead, LeadStatusRequirementValida
     $this->authorize('update', $lead);
 
     $data = $request->validate([
-        'name'              => 'sometimes|string|max:255',
-        'email'             => 'sometimes|nullable|email|max:255',
-        'phone'             => 'sometimes|string|max:20',
-        'source_id'         => 'sometimes|nullable|exists:lead_sources,id',
-        'status_id'         => 'sometimes|nullable|exists:lead_status,id',
-        'lead_substatus_id' => 'sometimes|nullable|exists:lead_substatus,id',
-        'assigned_user_id'  => 'sometimes|nullable|exists:users,id',
-        'empreendimento_id' => 'sometimes|nullable|exists:empreendimentos,id',
-        'channel'           => 'sometimes|nullable|string|max:100',
-        'campaign'          => 'sometimes|nullable|string|max:255',
+        'name'               => 'sometimes|string|max:255',
+        'email'              => 'sometimes|nullable|email|max:255',
+        'phone'              => 'sometimes|nullable|string|max:20',
+        'whatsapp'           => 'sometimes|nullable|string|max:20',
+        'source_id'          => 'sometimes|nullable|exists:lead_sources,id',
+        'status_id'          => 'sometimes|nullable|exists:lead_status,id',
+        'lead_substatus_id'  => 'sometimes|nullable|exists:lead_substatus,id',
+        'assigned_user_id'   => 'sometimes|nullable|exists:users,id',
+        'empreendimento_id'  => 'sometimes|nullable|exists:empreendimentos,id',
+        'channel'            => 'sometimes|nullable|string|max:100',
+        'campaign'           => 'sometimes|nullable|string|max:255',
+        'temperature'        => 'sometimes|nullable|in:quente,morno,frio',
+        'value'              => 'sometimes|nullable|numeric',
+        'city_of_interest'   => 'sometimes|nullable|string|max:120',
+        'region_of_interest' => 'sometimes|nullable|string|max:120',
 
         // Valores de campos customizados que vêm junto (opcional).
         // Formato: [{ slug: "motivo_descarte", value: "Preço" }, ...]
@@ -190,8 +195,8 @@ private function saveCustomValues(Lead $lead, array $values): void
 
     $query = Lead::with([
         'corretor:id,name',
-        'status:id,name',
-        'substatus:id,name',
+        'status:id,name,color_hex',
+        'substatus:id,lead_status_id,name,color_hex',
         'source:id,name',
         'empreendimento:id,name',
         'interactions' => function ($q) {
@@ -529,7 +534,10 @@ public function show(Lead $lead)
     $this->authorize('view', $lead);
 
 $lead->load([
-    'status:id,name',
+    'status:id,name,color_hex',
+    'substatus:id,lead_status_id,name,color_hex',
+    'source:id,name',
+    'empreendimento:id,name',
     'corretor:id,name',
 
     'interactions' => function ($q) {
@@ -537,7 +545,11 @@ $lead->load([
             'user:id,name',
             'appointment' // 👈 AGORA SIM
         ])->orderByDesc('created_at');
-    }
+    },
+    'histories' => function ($q) {
+        $q->with('user:id,name')->orderByDesc('created_at');
+    },
+    'customFieldValues.customField:id,slug,name,type',
 ]);
 
     return new LeadResource($lead);

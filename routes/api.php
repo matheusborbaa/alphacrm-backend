@@ -157,7 +157,8 @@ Route::post(
 |--------------------------------------------------------------------------
 */
 Route::middleware('auth:sanctum')->get('/lead-status', function () {
-    return LeadStatus::select('id', 'name', 'order')
+    return LeadStatus::select('id', 'name', 'order', 'color_hex')
+        ->with(['substatus:id,lead_status_id,name,order,color_hex'])
         ->orderBy('order')
         ->get();
 });

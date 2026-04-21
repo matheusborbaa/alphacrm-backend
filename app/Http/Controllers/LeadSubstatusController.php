@@ -16,7 +16,9 @@ class LeadSubstatusController extends Controller
 {
     public function index(Request $request)
     {
-        $query = LeadSubstatus::query()->with('status:id,name,order');
+        $query = LeadSubstatus::query()
+            ->select('id', 'lead_status_id', 'name', 'order', 'color_hex')
+            ->with('status:id,name,order,color_hex');
 
         if ($request->filled('status_id')) {
             $query->where('lead_status_id', $request->status_id);
@@ -89,6 +91,8 @@ class LeadSubstatusController extends Controller
                     ->ignore($ignoreId),
             ],
             'order'          => 'nullable|integer|min:0',
+            // Hex opcional — se vazio, substatus herda a cor do status pai
+            'color_hex'      => ['nullable', 'regex:/^#[0-9A-Fa-f]{6}$/'],
         ]);
     }
 }

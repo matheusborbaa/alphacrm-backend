@@ -13,6 +13,7 @@ class LeadSubstatus extends Model
         'lead_status_id',
         'name',
         'order',
+        'color_hex',
     ];
 
     public function status()

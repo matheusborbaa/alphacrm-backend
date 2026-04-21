@@ -13,6 +13,7 @@ class LeadStatus extends Model
     protected $fillable = [
         'name',
         'order',
+        'color_hex',
     ];
 
     public function leads(): HasMany

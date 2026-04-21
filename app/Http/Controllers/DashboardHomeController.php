@@ -20,9 +20,10 @@ class DashboardHomeController extends Controller
         ->get()
         ->map(function ($status) {
             return [
-                'name' => $status->name,
-                'order' => $status->order,
-                'total' => $status->leads_count,
+                'name'      => $status->name,
+                'order'     => $status->order,
+                'color_hex' => $status->color_hex,
+                'total'     => $status->leads_count,
             ];
         });
 

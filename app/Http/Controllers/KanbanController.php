@@ -90,7 +90,7 @@ class KanbanController extends Controller
         $q->orderBy('order');
     }])
     ->orderBy('order')
-    ->get(['id', 'name', 'order']);
+    ->get(['id', 'name', 'order', 'color_hex']);
 
     // Carrega todos os leads visíveis pro user de uma vez e distribui em memória
     $leadsQuery = Lead::with([
@@ -116,10 +116,11 @@ class KanbanController extends Controller
 
         $substatuses = $status->substatus->map(function ($sub) use ($leadsBySub) {
             return [
-                'id'    => $sub->id,
-                'name'  => $sub->name,
-                'order' => $sub->order,
-                'leads' => $leadsBySub->get($sub->id, collect())->values(),
+                'id'        => $sub->id,
+                'name'      => $sub->name,
+                'order'     => $sub->order,
+                'color_hex' => $sub->color_hex,
+                'leads'     => $leadsBySub->get($sub->id, collect())->values(),
             ];
         })->values();
 
@@ -127,6 +128,7 @@ class KanbanController extends Controller
             'id'                       => $status->id,
             'name'                     => $status->name,
             'order'                    => $status->order,
+            'color_hex'                => $status->color_hex,
             'substatuses'              => $substatuses,
             'leads_without_substatus'  => $leadsBySub->get(null, collect())->values(),
         ];

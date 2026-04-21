@@ -19,7 +19,7 @@ class LeadStatusController extends Controller
 {
     public function index()
     {
-        return LeadStatus::select('id', 'name', 'order')
+        return LeadStatus::select('id', 'name', 'order', 'color_hex')
             ->withCount('leads')
             ->orderBy('order')
             ->get();
@@ -92,8 +92,10 @@ class LeadStatusController extends Controller
     private function validateData(Request $request, ?int $ignoreId = null): array
     {
         return $request->validate([
-            'name'  => ['required', 'string', 'max:255', Rule::unique('lead_status', 'name')->ignore($ignoreId)],
-            'order' => 'nullable|integer|min:0',
+            'name'      => ['required', 'string', 'max:255', Rule::unique('lead_status', 'name')->ignore($ignoreId)],
+            'order'     => 'nullable|integer|min:0',
+            // Hex colorido: exige 7 chars começando com # (ex: #3B82F6)
+            'color_hex' => ['nullable', 'regex:/^#[0-9A-Fa-f]{6}$/'],
         ]);
     }
 }
