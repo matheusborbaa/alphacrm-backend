@@ -43,27 +43,82 @@ class KanbanController extends Controller
 {
     $user = auth()->user();
 
-    $statuses = LeadStatus::orderBy('order')
-        ->with(['leads' => function ($q) use ($user) {
+    /*
+    |--------------------------------------------------------------------------
+    | Resposta esperada:
+    |
+    |   [
+    |     {
+    |       "id": 1, "name": "Lead Cadastrado", "order": 1,
+    |       "substatuses": [
+    |          { "id": 1, "name": "IA", "order": 1, "leads": [...] },
+    |          ...
+    |       ],
+    |       "leads_without_substatus": [...]
+    |     }
+    |   ]
+    |
+    | O frontend renderiza uma coluna por SUBSTATUS, agrupadas visualmente
+    | pelo STATUS pai. Leads sem substatus aparecem numa coluna "sem etapa"
+    | dentro do grupo do status.
+    |--------------------------------------------------------------------------
+    */
 
-            if (!in_array($user->role, ['admin', 'gestor'])) {
-                $q->where('assigned_user_id', $user->id);
-            }
+    $leadSelect = [
+        'id',
+        'name',
+        'phone',
+        'sla_status',
+        'status_id',
+        'lead_substatus_id',
+        'assigned_user_id',
+        'position',
+        'updated_at',
+    ];
 
-            $q->orderBy('position')
-              ->select(
-                  'id',
-                  'name',
-                  'phone',
-                  'sla_status',
-                  'status_id',
-                  'assigned_user_id',
-                  'position'
-              );
-        }])
-        ->get(['id', 'name']);
+    $statuses = LeadStatus::with(['substatus' => function ($q) {
+        $q->orderBy('order');
+    }])
+    ->orderBy('order')
+    ->get(['id', 'name', 'order']);
 
-    return response()->json($statuses->values());
+    // Carrega todos os leads visíveis pro user de uma vez e distribui em memória
+    $leadsQuery = Lead::with('corretor:id,name')
+        ->orderBy('position')
+        ->select($leadSelect);
+
+    if (!in_array($user->role, ['admin', 'gestor'])) {
+        $leadsQuery->where('assigned_user_id', $user->id);
+    }
+
+    $leadsByStatus    = $leadsQuery->get()->groupBy('status_id');
+
+    $result = $statuses->map(function ($status) use ($leadsByStatus) {
+
+        $statusLeads = $leadsByStatus->get($status->id, collect());
+
+        // Agrupa por substatus_id; leads sem substatus vão num bucket separado
+        $leadsBySub = $statusLeads->groupBy('lead_substatus_id');
+
+        $substatuses = $status->substatus->map(function ($sub) use ($leadsBySub) {
+            return [
+                'id'    => $sub->id,
+                'name'  => $sub->name,
+                'order' => $sub->order,
+                'leads' => $leadsBySub->get($sub->id, collect())->values(),
+            ];
+        })->values();
+
+        return [
+            'id'                       => $status->id,
+            'name'                     => $status->name,
+            'order'                    => $status->order,
+            'substatuses'              => $substatuses,
+            'leads_without_substatus'  => $leadsBySub->get(null, collect())->values(),
+        ];
+    });
+
+    return response()->json($result->values());
 }
 
 
