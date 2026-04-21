@@ -87,14 +87,27 @@ class TaskCommentController extends Controller
 
     /* ==================================================================
      * HELPER — autoriza visualização da tarefa (mesma regra de leitura
-     * usada no TaskController).
+     * usada no TaskController), INCLUINDO a regra de privacidade:
+     * manager NÃO acessa tarefa pessoal (scope='private' sem lead) de
+     * outro corretor — é a "lista do caderninho" dele pra se organizar.
      * ================================================================== */
     private function authorizeView(Appointment $task): void
     {
         $user = Auth::user();
         $role = strtolower(trim((string) ($user->role ?? '')));
+        $isManager = in_array($role, ['admin', 'gestor'], true);
 
-        if (in_array($role, ['admin', 'gestor'], true)) {
+        if ($isManager) {
+            $othersPrivate = $task->scope === 'private'
+                && is_null($task->lead_id)
+                && (int) $task->user_id    !== (int) $user->id
+                && (int) $task->created_by !== (int) $user->id;
+
+            abort_if(
+                $othersPrivate,
+                403,
+                'Esta é uma tarefa pessoal do corretor.'
+            );
             return;
         }
 

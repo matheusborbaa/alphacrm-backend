@@ -23,7 +23,12 @@ use Illuminate\Database\Eloquent\Builder;
  *
  * Regras de autorização (inline, não Policy, pra manter padrão do
  * AppointmentController):
- *   - admin/gestor: enxergam e editam qualquer tarefa.
+ *   - admin/gestor: enxergam e editam tudo, EXCETO tarefas "internas"
+ *                   de outros corretores. "Interna" = scope='private'
+ *                   SEM lead vinculado — é a lista pessoal do corretor,
+ *                   usada pra se organizar; ninguém (nem admin) bisbilhota.
+ *                   Se a tarefa tem lead_id (é trabalho) ou scope='company'
+ *                   (é da empresa), admin/gestor VÊ normalmente.
  *   - corretor:    enxergam as próprias (user_id=self) + scope='company'.
  *                  Editam/concluem/deletam só as próprias.
  *
@@ -340,13 +345,25 @@ class TaskController extends Controller
 
     /**
      * Restringe o query builder de acordo com o papel do usuário.
-     * admin/gestor → tudo;
+     *
+     * admin/gestor → vê tudo, MENOS tarefa "interna" de outro corretor
+     *                (scope='private' E sem lead_id E não é dele próprio/criada
+     *                por ele). Isso respeita a privacidade da lista pessoal
+     *                que o corretor usa pra se organizar.
      * corretor     → tarefas onde ele é dono (user_id), criador
      *                (created_by) ou scope='company'.
      */
     private function scopeByRole(Builder $query, $user): void
     {
         if ($this->isManager($user)) {
+            // Filtra fora o "cantinho pessoal" do corretor. Só é considerado
+            // pessoal se: scope=private AND lead_id IS NULL AND não é do próprio manager.
+            $query->where(function (Builder $q) use ($user) {
+                $q->where('scope', 'company')
+                  ->orWhereNotNull('lead_id')
+                  ->orWhere('user_id', $user->id)
+                  ->orWhere('created_by', $user->id);
+            });
             return;
         }
 
@@ -358,12 +375,36 @@ class TaskController extends Controller
     }
 
     /**
-     * LEITURA — corretor lê tarefas onde é dono, criador ou company.
+     * True se a tarefa é "pessoal de outro corretor" do ponto de vista
+     * do usuário atual — ou seja: scope=private, sem lead, e nem dono
+     * nem criador é o $user. Usado pra aplicar a regra de privacidade.
+     */
+    private function isOthersPrivateTask(Appointment $task, $user): bool
+    {
+        if ($task->scope !== 'private')   return false;
+        if (!is_null($task->lead_id))      return false;
+        if ((int) $task->user_id    === (int) $user->id) return false;
+        if ((int) $task->created_by === (int) $user->id) return false;
+        return true;
+    }
+
+    /**
+     * LEITURA
+     *   - manager: tudo, menos tarefa pessoal de outro corretor.
+     *   - corretor: dono, criador ou scope='company'.
      */
     private function authorizeRead(Appointment $task): void
     {
         $user = Auth::user();
+
         if ($this->isManager($user)) {
+            if ($this->isOthersPrivateTask($task, $user)) {
+                Log::warning('TaskController::authorizeRead bloqueou manager em tarefa pessoal', [
+                    'user_id'  => $user->id,
+                    'task_id'  => $task->id,
+                ]);
+                abort(403, 'Esta é uma tarefa pessoal do corretor.');
+            }
             return;
         }
 
@@ -394,7 +435,17 @@ class TaskController extends Controller
     private function authorizeEdit(Appointment $task): void
     {
         $user = Auth::user();
+
         if ($this->isManager($user)) {
+            // Mesma regra de privacidade da leitura: manager não mexe
+            // na lista pessoal do corretor. Se nem pode ver, não pode editar.
+            if ($this->isOthersPrivateTask($task, $user)) {
+                Log::warning('TaskController::authorizeEdit bloqueou manager em tarefa pessoal', [
+                    'user_id' => $user->id,
+                    'task_id' => $task->id,
+                ]);
+                abort(403, 'Esta é uma tarefa pessoal do corretor.');
+            }
             return;
         }
 
@@ -428,7 +479,15 @@ class TaskController extends Controller
     private function authorizeComplete(Appointment $task): void
     {
         $user = Auth::user();
+
         if ($this->isManager($user)) {
+            if ($this->isOthersPrivateTask($task, $user)) {
+                Log::warning('TaskController::authorizeComplete bloqueou manager em tarefa pessoal', [
+                    'user_id' => $user->id,
+                    'task_id' => $task->id,
+                ]);
+                abort(403, 'Esta é uma tarefa pessoal do corretor.');
+            }
             return;
         }
 
