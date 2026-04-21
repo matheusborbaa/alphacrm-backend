@@ -16,7 +16,11 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         // User::factory(10)->create();
-    $this->call(LeadSubstatusSeeder::class);
- 
+
+        // Ordem importa: status precisa existir antes dos substatus
+        $this->call([
+            LeadStatusSeeder::class,
+            LeadSubstatusSeeder::class,
+        ]);
     }
 }
