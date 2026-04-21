@@ -9,8 +9,14 @@ class LeadSubstatus extends Model
 {
     protected $table = 'lead_substatus';
 
-public function status()
-{
-    return $this->belongsTo(LeadStatus::class, 'lead_status_id');
-}
+    protected $fillable = [
+        'lead_status_id',
+        'name',
+        'order',
+    ];
+
+    public function status()
+    {
+        return $this->belongsTo(LeadStatus::class, 'lead_status_id');
+    }
 }
