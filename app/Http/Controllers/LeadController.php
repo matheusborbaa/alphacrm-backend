@@ -97,20 +97,21 @@ public function update(Request $request, Lead $lead, LeadStatusRequirementValida
         $this->saveCustomValues($lead, $customValues);
     }
 
-    // Histórico
-    $usuario = Auth()->user()->name;
-    $user_id = Auth()->user()->id;
-    LeadHistory::create([
-    'lead_id' => $lead->id,
-    'user_id' => auth()->id(),
-    'type' => 'update',
-    'description' => '('.$user_id.')'.$usuario.' fez alteração de dados do lead'
-]);
-    
-    
-    
-
-
+    // Histórico de campos "gerais" (nome/telefone/email/empreendimento/etc).
+    // ATENÇÃO: mudanças de status e substatus são gravadas automaticamente
+    // pelo LeadObserver — não logar aqui pra não duplicar entrada.
+    $changedFields = array_diff(
+        array_keys($data),
+        ['status_id', 'lead_substatus_id']
+    );
+    if (!empty($changedFields) && auth()->check()) {
+        LeadHistory::create([
+            'lead_id'     => $lead->id,
+            'user_id'     => auth()->id(),
+            'type'        => 'update',
+            'description' => auth()->user()->name . ' atualizou: ' . implode(', ', $changedFields),
+        ]);
+    }
 
     return response()->json(['success' => true]);
 }
