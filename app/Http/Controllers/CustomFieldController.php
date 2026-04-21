@@ -73,6 +73,8 @@ class CustomFieldController extends Controller
             'type'    => ['required', Rule::in(CustomField::TYPES)],
             'options' => 'nullable|array',
             'options.*' => 'string|max:255',
+            // Máscara: preset conhecido OU padrão livre com 0/A/* + literais
+            'mask'    => ['nullable', 'string', 'max:64'],
             'active'  => 'boolean',
             'order'   => 'integer|min:0',
         ]);

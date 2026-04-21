@@ -135,6 +135,7 @@ class StatusRequiredFieldController extends Controller
                 $row['field_name'] = $this->humanizeColumn($rule->lead_column);
                 $row['field_type'] = 'text';
                 $row['options']    = null;
+                $row['mask']       = $this->defaultMaskForColumn($rule->lead_column);
                 $row['current_value'] = $lead?->getAttribute($rule->lead_column);
             } else {
                 $cf = $rule->customField;
@@ -142,6 +143,7 @@ class StatusRequiredFieldController extends Controller
                 $row['field_name'] = $cf?->name;
                 $row['field_type'] = $cf?->type;
                 $row['options']    = $cf?->options;
+                $row['mask']       = $cf?->mask;
                 $row['custom_field_id'] = $cf?->id;
                 $row['current_value'] = $lead && $cf ? $lead->customValue($cf->slug) : null;
             }
@@ -152,6 +154,19 @@ class StatusRequiredFieldController extends Controller
         }
 
         return response()->json($result);
+    }
+
+    /**
+     * Máscara sugerida por coluna padrão do lead.
+     * Telefone já vem mascarado no cadastro, mas aqui cobrimos o caso
+     * de campo obrigatório aparecer no modal de mudança de status.
+     */
+    private function defaultMaskForColumn(string $column): ?string
+    {
+        return match ($column) {
+            'phone'    => 'celular',
+            default    => null,
+        };
     }
 
     /**

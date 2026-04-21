@@ -17,6 +17,7 @@ class CustomField extends Model
         'slug',
         'type',
         'options',
+        'mask',
         'active',
         'order',
     ];
@@ -31,6 +32,12 @@ class CustomField extends Model
      * Tipos válidos. Usar pra validação no controller.
      */
     public const TYPES = ['text', 'textarea', 'number', 'date', 'select', 'checkbox'];
+
+    /**
+     * Presets de máscara reconhecidos pelo frontend (core/masks.js).
+     * Também aceita padrão livre ("000.000.000-00", "(00) 00000-0000" etc).
+     */
+    public const MASK_PRESETS = ['cpf', 'cnpj', 'telefone', 'celular', 'data', 'cep', 'moeda'];
 
     public function values(): HasMany
     {
