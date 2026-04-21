@@ -16,6 +16,7 @@ class Lead extends Model
         'email',
         'source_id',
         'status_id',
+        'lead_substatus_id',
         'assigned_user_id',
         'empreendimento_id',
         'assigned_at',
@@ -71,4 +72,22 @@ public function substatus()
 {
     return $this->belongsTo(LeadSubstatus::class, 'lead_substatus_id');
 }
+
+    /**
+     * Valores dos campos customizados desse lead.
+     */
+    public function customFieldValues(): HasMany
+    {
+        return $this->hasMany(LeadCustomFieldValue::class);
+    }
+
+    /**
+     * Atalho: pega o valor de um campo customizado pelo slug.
+     */
+    public function customValue(string $slug): ?string
+    {
+        return $this->customFieldValues()
+            ->whereHas('customField', fn($q) => $q->where('slug', $slug))
+            ->value('value');
+    }
 }

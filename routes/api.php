@@ -15,6 +15,9 @@ use App\Http\Controllers\EmpreendimentoFieldValueController;
 use App\Http\Controllers\AppointmentController;
 use App\Http\Controllers\MyCommissionController;
 use App\Http\Controllers\KanbanController;
+use App\Http\Controllers\CustomFieldController;
+use App\Http\Controllers\StatusRequiredFieldController;
+use App\Http\Controllers\LeadCustomFieldValueController;
 use App\Models\Appointment;
 use App\Models\LeadStatus;
 use App\Models\Lead;
@@ -457,6 +460,45 @@ Route::middleware('auth:sanctum')->post('/auth/logout', function (Request $reque
 });
 
 
+/*
+|--------------------------------------------------------------------------
+| CAMPOS CUSTOMIZADOS + REGRAS DE OBRIGATORIEDADE POR STATUS
+|--------------------------------------------------------------------------
+| - custom-fields           : CRUD do catálogo de campos customizados
+| - status-required-fields  : CRUD das regras "quando status X, campo Y obrigatório"
+| - for-target              : endpoint consumido pelo modal no frontend
+|                             (dado um status/substatus, quais campos pedir)
+| - leads/{lead}/custom-field-values : salvar/ler valores custom do lead
+|--------------------------------------------------------------------------
+*/
+Route::middleware('auth:sanctum')->group(function () {
+
+    // Catálogo de campos customizados (admin-only seria ideal, mas leitura é livre)
+    Route::get   ('/custom-fields',              [CustomFieldController::class, 'index']);
+    Route::get   ('/custom-fields/{customField}', [CustomFieldController::class, 'show']);
+    Route::post  ('/custom-fields',              [CustomFieldController::class, 'store'])
+        ->middleware('role:admin,gestor');
+    Route::put   ('/custom-fields/{customField}', [CustomFieldController::class, 'update'])
+        ->middleware('role:admin,gestor');
+    Route::delete('/custom-fields/{customField}', [CustomFieldController::class, 'destroy'])
+        ->middleware('role:admin,gestor');
+
+    // Regras de obrigatoriedade
+    Route::get   ('/status-required-fields',                           [StatusRequiredFieldController::class, 'index']);
+    Route::get   ('/status-required-fields/for-target',                [StatusRequiredFieldController::class, 'forTarget']);
+    Route::post  ('/status-required-fields',                           [StatusRequiredFieldController::class, 'store'])
+        ->middleware('role:admin,gestor');
+    Route::put   ('/status-required-fields/{statusRequiredField}',     [StatusRequiredFieldController::class, 'update'])
+        ->middleware('role:admin,gestor');
+    Route::delete('/status-required-fields/{statusRequiredField}',     [StatusRequiredFieldController::class, 'destroy'])
+        ->middleware('role:admin,gestor');
+
+    // Valores dos custom fields por lead
+    Route::get ('/leads/{lead}/custom-field-values', [LeadCustomFieldValueController::class, 'index']);
+    Route::post('/leads/{lead}/custom-field-values', [LeadCustomFieldValueController::class, 'bulkStore']);
+});
+
+
 
 /*
 |--------------------------------------------------------------------------
@@ -525,10 +567,3 @@ Route::get('/criar-email-teste', function () {
         'body' => $response->json()
     ]);
 });
-
-rsync -avz --progress \
-  --exclude 'node_modules' \
-  --exclude 'vendor' \
-  --exclude 'storage/logs' \
-  root@72.60.15.31::/var/www/alphacrm/ \
-  ~/Desktop/AlphaCRM/
