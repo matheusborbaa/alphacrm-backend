@@ -49,6 +49,39 @@ public function update(Request $request, Lead $lead, LeadStatusRequirementValida
         'custom_field_values.*.value' => 'nullable',
     ]);
 
+    /* ------------------------------------------------------------------
+     * 🔒 GATE DE PERMISSÃO — campos gestor-only
+     *
+     * Alguns campos só gestor/admin pode alterar. O corretor NÃO passa
+     * o lead pra outro corretor sozinho, nem "maquia" origem/campanha
+     * pra poluir relatório de marketing. Se o corretor tentou mudar
+     * explicitamente qualquer um desses campos, retornamos 403. Se
+     * enviou o MESMO valor (noop), removemos silenciosamente do payload
+     * pra evitar histórico falso.
+     * ------------------------------------------------------------------ */
+    $authUser  = auth()->user();
+    $isManager = $authUser && in_array(
+        strtolower(trim((string) ($authUser->role ?? ''))),
+        ['admin', 'gestor'],
+        true
+    );
+    if (!$isManager) {
+        $managerOnly = ['assigned_user_id', 'source_id', 'channel', 'campaign'];
+        foreach ($managerOnly as $f) {
+            if (!array_key_exists($f, $data)) continue;
+            $current   = $lead->{$f};
+            $attempted = $data[$f];
+            // Normaliza pra comparar (null, '', 0 são equivalentes aqui).
+            $a = $current   === null ? '' : (string) $current;
+            $b = $attempted === null ? '' : (string) $attempted;
+            if ($a !== $b) {
+                abort(403, 'Só gestor/admin pode alterar este campo.');
+            }
+            // Valor igual ao atual — noop, não deixa na água do update
+            unset($data[$f]);
+        }
+    }
+
     // Separa custom_field_values do resto
     $customValues = $data['custom_field_values'] ?? [];
     unset($data['custom_field_values']);
@@ -71,6 +104,10 @@ public function update(Request $request, Lead $lead, LeadStatusRequirementValida
         && $newAssignedUserId
         && $newAssignedUserId != $previousAssignedUserId;
 
+    /* 📸 Snapshot dos atributos ANTES do update — usado pra gerar o
+     * histórico granular (1 LeadHistory por campo alterado). */
+    $originalAttrs = $lead->getAttributes();
+
     // Atualiza o lead (campos fixos)
     if (!empty($data)) {
         $lead->update($data);
@@ -92,38 +129,119 @@ public function update(Request $request, Lead $lead, LeadStatusRequirementValida
         }
     }
 
-    // Salva os custom values se vieram
+    // Salva os custom values se vieram e coleta diffs (slug => old/new)
+    $customDiffs = [];
     if (!empty($customValues)) {
-        $this->saveCustomValues($lead, $customValues);
+        $customDiffs = $this->saveCustomValues($lead, $customValues);
     }
 
-    // Histórico de campos "gerais" (nome/telefone/email/empreendimento/etc).
-    // ATENÇÃO: mudanças de status e substatus são gravadas automaticamente
-    // pelo LeadObserver — não logar aqui pra não duplicar entrada.
-    $changedFields = array_diff(
-        array_keys($data),
-        ['status_id', 'lead_substatus_id']
-    );
-    if (!empty($changedFields) && auth()->check()) {
-        LeadHistory::create([
-            'lead_id'     => $lead->id,
-            'user_id'     => auth()->id(),
-            'type'        => 'update',
-            'description' => auth()->user()->name . ' atualizou: ' . implode(', ', $changedFields),
-        ]);
-    }
+    /* 📝 HISTÓRICO GRANULAR — uma entrada por campo alterado.
+     *
+     * Substitui o bloco antigo que gravava uma única linha "atualizou
+     * A, B, C". Agora temos rastreabilidade de valor antigo → novo,
+     * e IDs são resolvidos pra nomes humanos (ex.: "Corretor
+     * responsável: João → Maria").
+     *
+     * ATENÇÃO: status_id e lead_substatus_id já são gravados pelo
+     * LeadObserver com type='status_change' / 'substatus_change' — não
+     * duplicamos aqui. */
+    $this->logFieldChanges($lead, $originalAttrs, $customDiffs);
 
     return response()->json(['success' => true]);
 }
 
 /**
+ * Compara snapshot antigo vs valores atuais do lead e grava uma
+ * entrada em lead_histories por campo alterado.
+ *
+ * Campos com FK (assigned_user_id, source_id, empreendimento_id) são
+ * resolvidos pro nome humano antes de virar string. Custom fields
+ * chegam já calculados via $customDiffs (saveCustomValues devolve).
+ */
+private function logFieldChanges(Lead $lead, array $originalAttrs, array $customDiffs): void
+{
+    if (!auth()->check()) return;
+
+    // Map de campo → label humano (em pt-BR)
+    $labels = [
+        'name'               => 'Nome',
+        'email'              => 'E-mail',
+        'phone'              => 'Telefone',
+        'whatsapp'           => 'WhatsApp',
+        'source_id'          => 'Origem',
+        'assigned_user_id'   => 'Corretor responsável',
+        'empreendimento_id'  => 'Empreendimento',
+        'channel'            => 'Canal',
+        'campaign'           => 'Campanha',
+        'temperature'        => 'Temperatura',
+        'value'              => 'Valor estimado',
+        'city_of_interest'   => 'Cidade de interesse',
+        'region_of_interest' => 'Região de interesse',
+    ];
+
+    // Resolvers de ID → nome (só pros FKs). Nulos passam como null.
+    $resolvers = [
+        'assigned_user_id' => fn($id) => $id ? optional(\App\Models\User::find($id))->name : null,
+        'source_id'        => fn($id) => $id ? optional(\App\Models\LeadSource::find($id))->name : null,
+        'empreendimento_id'=> fn($id) => $id ? optional(\App\Models\Empreendimento::find($id))->name : null,
+    ];
+
+    foreach ($labels as $field => $label) {
+        if (!array_key_exists($field, $originalAttrs)) continue;
+
+        $before = $originalAttrs[$field];
+        $after  = $lead->{$field};
+
+        // Normaliza (null e '' são equivalentes pra fim de diff)
+        $a = $before === null ? '' : (string) $before;
+        $b = $after  === null ? '' : (string) $after;
+        if ($a === $b) continue;
+
+        $from = isset($resolvers[$field]) ? $resolvers[$field]($before) : $before;
+        $to   = isset($resolvers[$field]) ? $resolvers[$field]($after)  : $after;
+
+        LeadHistory::create([
+            'lead_id'     => $lead->id,
+            'user_id'     => auth()->id(),
+            'type'        => 'field_change',
+            'description' => $label,
+            'from'        => $from !== null ? (string) $from : null,
+            'to'          => $to   !== null ? (string) $to   : null,
+        ]);
+    }
+
+    // Custom fields — já vêm com label resolvido
+    foreach ($customDiffs as $diff) {
+        LeadHistory::create([
+            'lead_id'     => $lead->id,
+            'user_id'     => auth()->id(),
+            'type'        => 'field_change',
+            'description' => $diff['label'],
+            'from'        => $diff['from'] !== null ? (string) $diff['from'] : null,
+            'to'          => $diff['to']   !== null ? (string) $diff['to']   : null,
+        ]);
+    }
+}
+
+/**
  * Upsert em bulk dos valores de custom fields de um lead.
  * Usado pelo update() quando o request traz custom_field_values.
+ *
+ * Retorna um array de diffs dos campos que mudaram, no formato:
+ *   [ ['label' => 'CPF', 'from' => '...', 'to' => '...'], ... ]
+ * O controller usa pra gravar histórico granular.
  */
-private function saveCustomValues(Lead $lead, array $values): void
+private function saveCustomValues(Lead $lead, array $values): array
 {
+    $diffs  = [];
     $slugs  = collect($values)->pluck('slug')->unique();
     $fields = CustomField::whereIn('slug', $slugs)->get()->keyBy('slug');
+
+    // Carrega valores ANTIGOS (só dos custom_field_id afetados) pra diff
+    $oldByFieldId = LeadCustomFieldValue::where('lead_id', $lead->id)
+        ->whereIn('custom_field_id', $fields->pluck('id'))
+        ->get()
+        ->keyBy('custom_field_id');
 
     foreach ($values as $entry) {
         $field = $fields->get($entry['slug']);
@@ -136,11 +254,26 @@ private function saveCustomValues(Lead $lead, array $values): void
             $value = (string) $value;
         }
 
+        $old = $oldByFieldId->get($field->id)?->value;
+
         LeadCustomFieldValue::updateOrCreate(
             ['lead_id' => $lead->id, 'custom_field_id' => $field->id],
             ['value'   => $value]
         );
+
+        // Diff (null e '' são equivalentes pra fins de histórico)
+        $a = $old   === null ? '' : (string) $old;
+        $b = $value === null ? '' : (string) $value;
+        if ($a !== $b) {
+            $diffs[] = [
+                'label' => $field->name ?: $field->slug,
+                'from'  => $old,
+                'to'    => $value,
+            ];
+        }
     }
+
+    return $diffs;
 }
 
     /**
