@@ -7,6 +7,7 @@ use App\Models\Lead;
 use App\Models\LeadStatus;
 use App\Models\LeadSubstatus;
 use App\Models\StatusRequiredField;
+use App\Services\LeadStatusRequirementValidator;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -74,7 +75,7 @@ class StatusRequiredFieldController extends Controller
      *   - lead_id (opcional) — se passar, já devolve quais campos estão
      *     faltando, pra UI só mostrar o que falta.
      */
-    public function forTarget(Request $request)
+    public function forTarget(Request $request, LeadStatusRequirementValidator $validator)
     {
         $request->validate([
             'status_id'    => 'nullable|exists:lead_status,id',
@@ -82,43 +83,57 @@ class StatusRequiredFieldController extends Controller
             'lead_id'      => 'nullable|exists:leads,id',
         ]);
 
-        $query = StatusRequiredField::with('customField');
+        $targetStatusId    = $request->input('status_id');
+        $targetSubstatusId = $request->input('substatus_id');
 
-        // Quando filtrar por substatus, queremos tanto regras do substatus
-        // QUANTO regras do status pai (porque regra do status vale pra todos
-        // os substatus dele).
-        if ($request->filled('substatus_id')) {
-            $sub = LeadSubstatus::find($request->substatus_id);
-            $parentStatusId = $sub?->lead_status_id;
+        // Se veio só substatus, deriva o status pai
+        if (!$targetStatusId && $targetSubstatusId) {
+            $targetStatusId = LeadSubstatus::where('id', $targetSubstatusId)->value('lead_status_id');
+        }
 
-            $query->where(function ($q) use ($request, $parentStatusId) {
-                $q->where('lead_substatus_id', $request->substatus_id);
-                if ($parentStatusId) {
-                    $q->orWhere('lead_status_id', $parentStatusId);
-                }
-            });
-        } elseif ($request->filled('status_id')) {
-            $query->where('lead_status_id', $request->status_id);
-        } else {
+        if (!$targetStatusId && !$targetSubstatusId) {
             return response()->json([]);
         }
 
-        $rules = $query->get();
+        // Lead atual (pra saber status de origem + quais campos já estão preenchidos)
+        $lead = $request->filled('lead_id')
+            ? Lead::with('customFieldValues.customField')->find($request->lead_id)
+            : null;
 
-        // Se passou lead_id, filtra só o que tá vazio
-        $lead = $request->filled('lead_id') ? Lead::with('customFieldValues')->find($request->lead_id) : null;
+        $currentStatusId = $lead?->status_id;
 
-        $result = $rules->map(function (StatusRequiredField $rule) use ($lead) {
+        // Delega pro service que já sabe percorrer as intermediárias
+        $rules = $validator->collectRulesForTransition(
+            $currentStatusId,
+            $targetStatusId,
+            $targetSubstatusId
+        );
+
+        // Dedup por (lead_column | custom_field_id), mantendo a primeira etapa
+        $seen   = [];
+        $result = [];
+
+        foreach ($rules as $rule) {
+            if (!$rule->required) continue;
+
+            $dedupeKey = $rule->isLeadColumn()
+                ? 'col:' . $rule->lead_column
+                : 'cf:'  . $rule->custom_field_id;
+
+            if (isset($seen[$dedupeKey])) continue;
+            $seen[$dedupeKey] = true;
+
             $row = [
                 'id'        => $rule->id,
                 'required'  => $rule->required,
                 'is_custom' => !$rule->isLeadColumn(),
+                'stage'     => $rule->_stage_label ?? null,
             ];
 
             if ($rule->isLeadColumn()) {
                 $row['field_key']  = $rule->lead_column;
                 $row['field_name'] = $this->humanizeColumn($rule->lead_column);
-                $row['field_type'] = 'text'; // lead columns são tratadas como text no form
+                $row['field_type'] = 'text';
                 $row['options']    = null;
                 $row['current_value'] = $lead?->getAttribute($rule->lead_column);
             } else {
@@ -127,15 +142,16 @@ class StatusRequiredFieldController extends Controller
                 $row['field_name'] = $cf?->name;
                 $row['field_type'] = $cf?->type;
                 $row['options']    = $cf?->options;
-                $row['current_value'] = $lead ? $lead->customValue($cf->slug) : null;
+                $row['custom_field_id'] = $cf?->id;
+                $row['current_value'] = $lead && $cf ? $lead->customValue($cf->slug) : null;
             }
 
             $row['is_filled'] = !empty($row['current_value']);
 
-            return $row;
-        });
+            $result[] = $row;
+        }
 
-        return response()->json($result->values());
+        return response()->json($result);
     }
 
     /**
