@@ -24,8 +24,10 @@ use App\Models\Lead;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\LeadStatusController;
+use App\Http\Controllers\LeadSubstatusController;
 
-    Route::post('/me', [UserController::class, 'update'])->middleware(['auth:sanctum']);
+    Route::post('/me', [UserController::class, 'updateProfile'])->middleware(['auth:sanctum']);
 // usuario rotas
 
 
@@ -177,6 +179,46 @@ Route::get('/users', function(){
 Route::get('/empreendimentos-lista', function(){
     return \App\Models\Empreendimento::select('id','name')->get();
 })->middleware('auth:sanctum');
+
+
+/*
+|--------------------------------------------------------------------------
+| ADMIN — CONFIGURAÇÃO DO PIPELINE (STATUS / SUBSTATUS)
+|--------------------------------------------------------------------------
+| Protegido por permissão: status_required_fields.manage.
+| (Admin e gestor têm por padrão; corretor não.)
+*/
+Route::middleware(['auth:sanctum', 'can:status_required_fields.manage'])
+    ->prefix('admin')
+    ->group(function () {
+
+        Route::post('/lead-status/reorder',        [LeadStatusController::class, 'reorder']);
+        Route::apiResource('lead-status',          LeadStatusController::class)
+            ->parameters(['lead-status' => 'leadStatus'])
+            ->except(['show']);
+
+        Route::post('/lead-substatus/reorder',     [LeadSubstatusController::class, 'reorder']);
+        Route::apiResource('lead-substatus',       LeadSubstatusController::class)
+            ->parameters(['lead-substatus' => 'leadSubstatus'])
+            ->except(['show']);
+    });
+
+
+/*
+|--------------------------------------------------------------------------
+| ADMIN — GERENCIAMENTO DE USUÁRIOS (CORRETORES)
+|--------------------------------------------------------------------------
+| Usa UserPolicy via authorize() dentro do controller.
+*/
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get   ('/users/admin',                  [UserController::class, 'index']);
+    Route::post  ('/users',                        [UserController::class, 'store']);
+    Route::get   ('/users/{user}',                 [UserController::class, 'show']);
+    Route::put   ('/users/{user}',                 [UserController::class, 'update']);
+    Route::delete('/users/{user}',                 [UserController::class, 'destroy']);
+    Route::post  ('/users/{user}/reactivate',      [UserController::class, 'reactivate']);
+    Route::post  ('/users/{user}/send-invite',     [UserController::class, 'sendInvite']);
+});
 
 Route::middleware(['auth:sanctum', 'role:admin,gestor,corretor'])->group(function () {
 
