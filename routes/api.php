@@ -13,6 +13,7 @@ use App\Http\Controllers\EmpreendimentoImageController;
 use App\Http\Controllers\EmpreendimentoFieldDefinitionController;
 use App\Http\Controllers\EmpreendimentoFieldValueController;
 use App\Http\Controllers\AppointmentController;
+use App\Http\Controllers\TaskController;
 use App\Http\Controllers\MyCommissionController;
 use App\Http\Controllers\KanbanController;
 use App\Http\Controllers\CustomFieldController;
@@ -375,6 +376,28 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/appointments/{id}/reschedule', [AppointmentController::class, 'reschedule']);
     Route::put('/appointments/{id}/complete',   [AppointmentController::class, 'complete']);
     Route::get('/appointments/{id}',            [AppointmentController::class, 'show']);
+});
+
+/*
+|--------------------------------------------------------------------------
+| TASKS / FOLLOW-UPS
+|--------------------------------------------------------------------------
+| Tarefas são appointments com type='task'. Controller próprio pra manter
+| o fluxo (complete/reopen + filtros hoje/atrasadas/futuras) separado do
+| de eventos de agenda.
+|
+| Regras de acesso:
+|   - admin/gestor: enxergam e editam tudo.
+|   - corretor:     próprias + scope='company' (leitura); só próprias (edição).
+*/
+Route::middleware(['auth:sanctum', 'role:admin,gestor,corretor'])->group(function () {
+    Route::get('/tasks',                 [TaskController::class, 'index']);
+    Route::post('/tasks',                [TaskController::class, 'store']);
+    Route::get('/tasks/{id}',            [TaskController::class, 'show']);
+    Route::put('/tasks/{id}',            [TaskController::class, 'update']);
+    Route::put('/tasks/{id}/complete',   [TaskController::class, 'complete']);
+    Route::put('/tasks/{id}/reopen',     [TaskController::class, 'reopen']);
+    Route::delete('/tasks/{id}',         [TaskController::class, 'destroy']);
 });
 
 
