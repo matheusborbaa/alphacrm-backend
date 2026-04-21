@@ -6,6 +6,7 @@ use App\Models\Appointment;
 use App\Models\LeadHistory;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Database\Eloquent\Builder;
 
 /**
@@ -81,7 +82,7 @@ class TaskController extends Controller
         }
 
         // Só admin/gestor podem consultar tarefas de OUTRO user.
-        if ($request->filled('user_id') && in_array($user->role, ['admin', 'gestor'])) {
+        if ($request->filled('user_id') && $this->isManager($user)) {
             $query->where('user_id', $request->user_id);
         }
 
@@ -125,14 +126,22 @@ class TaskController extends Controller
             'reminder_at' => 'nullable|date',
             // admin/gestor podem atribuir a outro user
             'user_id'     => 'nullable|exists:users,id',
+            // admin/gestor podem marcar a tarefa como da EMPRESA (visível pra todos)
+            'scope'       => 'nullable|in:private,company',
         ]);
 
         $user = Auth::user();
 
         // Corretor só cria tarefa pra si mesmo.
-        $assigneeId = isset($data['user_id']) && in_array($user->role, ['admin', 'gestor'])
+        $assigneeId = isset($data['user_id']) && $this->isManager($user)
             ? $data['user_id']
             : $user->id;
+
+        // Scope só pode ser 'company' se quem está criando é admin/gestor.
+        // Corretor sempre cria tarefas privadas, mesmo que mande scope=company no payload.
+        $scope = (isset($data['scope']) && $this->isManager($user))
+            ? $data['scope']
+            : 'private';
 
         $task = Appointment::create([
             'title'       => $data['title'],
@@ -144,6 +153,7 @@ class TaskController extends Controller
             'type'        => Appointment::TYPE_TASK,
             'status'      => Appointment::STATUS_PENDING,
             'user_id'     => $assigneeId,
+            'scope'       => $scope,
             'created_by'  => $user->id,
         ]);
 
@@ -184,11 +194,17 @@ class TaskController extends Controller
             'priority'    => 'nullable|in:low,medium,high',
             'reminder_at' => 'nullable|date',
             'user_id'     => 'nullable|exists:users,id',
+            'scope'       => 'nullable|in:private,company',
         ]);
 
         // Reatribuição só por admin/gestor.
-        if (isset($data['user_id']) && !in_array(Auth::user()->role, ['admin', 'gestor'])) {
+        if (isset($data['user_id']) && !$this->isManager(Auth::user())) {
             unset($data['user_id']);
+        }
+
+        // Mudança de scope (private <-> company) só por admin/gestor.
+        if (isset($data['scope']) && !$this->isManager(Auth::user())) {
+            unset($data['scope']);
         }
 
         $task->update($data);
@@ -300,12 +316,29 @@ class TaskController extends Controller
      * ================================================================== */
 
     /**
+     * Normaliza o valor do campo role — evita falsos negativos por
+     * espaço em branco ou caixa alta vindo do banco.
+     */
+    private function normalizedRole($user): string
+    {
+        return strtolower(trim((string) ($user->role ?? '')));
+    }
+
+    /**
+     * True se o usuário é admin ou gestor (tem acesso total às tarefas).
+     */
+    private function isManager($user): bool
+    {
+        return in_array($this->normalizedRole($user), ['admin', 'gestor'], true);
+    }
+
+    /**
      * Restringe o query builder de acordo com o papel do usuário.
      * admin/gestor → tudo; corretor → próprias + scope='company'.
      */
     private function scopeByRole(Builder $query, $user): void
     {
-        if (in_array($user->role, ['admin', 'gestor'])) {
+        if ($this->isManager($user)) {
             return;
         }
 
@@ -321,11 +354,23 @@ class TaskController extends Controller
     private function authorizeRead(Appointment $task): void
     {
         $user = Auth::user();
-        if (in_array($user->role, ['admin', 'gestor'])) {
+        if ($this->isManager($user)) {
             return;
         }
 
-        $ok = $task->user_id === $user->id || $task->scope === 'company';
+        $ok = (int) $task->user_id === (int) $user->id
+            || $task->scope === 'company';
+
+        if (!$ok) {
+            Log::warning('TaskController::authorizeRead bloqueou acesso', [
+                'user_id'      => $user->id,
+                'user_role'    => $user->role,
+                'task_id'      => $task->id,
+                'task_user_id' => $task->user_id,
+                'task_scope'   => $task->scope,
+            ]);
+        }
+
         abort_if(!$ok, 403, 'Sem permissão pra visualizar esta tarefa.');
     }
 
@@ -336,11 +381,23 @@ class TaskController extends Controller
     private function authorizeEdit(Appointment $task): void
     {
         $user = Auth::user();
-        if (in_array($user->role, ['admin', 'gestor'])) {
+        if ($this->isManager($user)) {
             return;
         }
 
-        abort_if($task->user_id !== $user->id, 403, 'Sem permissão pra editar esta tarefa.');
+        $isOwner = (int) $task->user_id === (int) $user->id;
+
+        if (!$isOwner) {
+            Log::warning('TaskController::authorizeEdit bloqueou edição', [
+                'user_id'      => $user->id,
+                'user_role'    => $user->role,
+                'task_id'      => $task->id,
+                'task_user_id' => $task->user_id,
+                'task_scope'   => $task->scope,
+            ]);
+        }
+
+        abort_if(!$isOwner, 403, 'Sem permissão pra editar esta tarefa.');
     }
 
     /**
