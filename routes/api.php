@@ -28,6 +28,7 @@ use App\Http\Controllers\LeadStatusController;
 use App\Http\Controllers\LeadSubstatusController;
 use App\Http\Controllers\RelatoriosController;
 use App\Http\Controllers\UserMetaController;
+use App\Http\Controllers\HomeController;
 
     Route::post('/me', [UserController::class, 'updateProfile'])->middleware(['auth:sanctum']);
 // usuario rotas
@@ -549,6 +550,16 @@ Route::middleware(['auth:sanctum', 'role:admin,gestor'])->group(function () {
     Route::post  ('/user-metas',             [UserMetaController::class, 'store']);
     Route::put   ('/user-metas/{userMeta}',  [UserMetaController::class, 'update']);
     Route::delete('/user-metas/{userMeta}',  [UserMetaController::class, 'destroy']);
+});
+
+/*
+|--------------------------------------------------------------------------
+| HOME — MÓDULO #45
+|--------------------------------------------------------------------------
+| Endpoint consolidado da Home (financeiro + gamificação + metas do mês).
+*/
+Route::middleware(['auth:sanctum', 'role:admin,gestor,corretor'])->group(function () {
+    Route::get('/home/summary', [HomeController::class, 'summary']);
 });
 
 
