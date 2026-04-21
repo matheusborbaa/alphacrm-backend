@@ -371,6 +371,10 @@ Route::middleware(['auth:sanctum', 'role:admin,gestor,corretor'])->group(functio
     Route::get('/appointments/by-month', [AppointmentController::class, 'byMonth']);
     Route::get('/appointments/summary',  [AppointmentController::class, 'summary']);
     Route::get('/appointments/overdue',  [AppointmentController::class, 'overdueList']);
+
+    // Listagem unificada — alimenta o MODO LISTA da /agenda.php
+    // (ligação + visita + reunião + tarefa em um só feed).
+    Route::get('/appointments/list',     [AppointmentController::class, 'listUnified']);
 });
 
 Route::middleware('auth:sanctum')->group(function () {

@@ -377,4 +377,133 @@ LeadHistory::create([
 
         return response()->json(['success' => true]);
     }
+
+    /**
+     * @group Agenda
+     *
+     * Listagem unificada — usada pelo MODO LISTA da página /agenda.php.
+     * Diferente de /tasks (que é específico de type=task), este endpoint
+     * enxerga qualquer tipo de Appointment (task/visit/call/meeting/etc).
+     *
+     * Filtros suportados (todos opcionais):
+     *   filter    = today | overdue | upcoming | done | open
+     *   type      = task | visit | call | meeting | ... (sem valor = todos)
+     *   lead_id   = id do lead
+     *   user_id   = só admin/gestor pode filtrar por outro user
+     *   priority  = low | medium | high
+     *   q         = busca no título
+     *   per_page  = default 50 (máx 200)
+     *
+     * Ordena por COALESCE(due_at, starts_at) — "data efetiva" do item.
+     *
+     * Aplica as MESMAS regras de escopo e privacidade do TaskController:
+     *   - admin/gestor → tudo, MENOS tarefa pessoal de outro corretor
+     *     (scope='private' + sem lead_id + não é dono/criador)
+     *   - corretor    → próprias (user_id/created_by) + scope='company'
+     *
+     * @authenticated
+     */
+    public function listUnified(Request $request)
+    {
+        $user = Auth::user();
+
+        $query = Appointment::with([
+            'lead:id,name',
+            'user:id,name',
+        ]);
+
+        $this->applyRoleScope($query, $user);
+
+        // ---- filtro por ESTADO (usa COALESCE(due_at, starts_at) como data efetiva) ----
+        switch ($request->query('filter')) {
+            case 'today':
+                $query->whereNull('completed_at')
+                      ->whereRaw('DATE(COALESCE(due_at, starts_at)) = ?', [now()->toDateString()]);
+                break;
+            case 'overdue':
+                $query->whereNull('completed_at')
+                      ->whereRaw('COALESCE(due_at, starts_at) IS NOT NULL')
+                      ->whereRaw('COALESCE(due_at, starts_at) < ?', [now()]);
+                break;
+            case 'upcoming':
+                $query->whereNull('completed_at')
+                      ->whereRaw('COALESCE(due_at, starts_at) IS NOT NULL')
+                      ->whereRaw('DATE(COALESCE(due_at, starts_at)) > ?', [now()->toDateString()]);
+                break;
+            case 'done':
+                $query->whereNotNull('completed_at');
+                break;
+            case 'open':
+                $query->whereNull('completed_at');
+                break;
+            // sem filter → retorna tudo (respeitando o scope de role)
+        }
+
+        // ---- tipo (task | visit | call | ... ) ----
+        if ($request->filled('type')) {
+            $query->where('type', $request->type);
+        }
+
+        // ---- lead / user (admin) / prioridade / busca ----
+        if ($request->filled('lead_id')) {
+            $query->where('lead_id', $request->lead_id);
+        }
+
+        if ($request->filled('user_id') && $this->isManagerUser($user)) {
+            $query->where('user_id', $request->user_id);
+        }
+
+        if ($request->filled('priority')) {
+            $query->where('priority', $request->priority);
+        }
+
+        if ($request->filled('q')) {
+            $query->where('title', 'like', '%' . $request->q . '%');
+        }
+
+        // Abertas primeiro (COALESCE data asc); concluídas vão pro fim.
+        $query->orderByRaw('completed_at IS NULL DESC')
+              ->orderByRaw('COALESCE(due_at, starts_at) ASC')
+              ->orderBy('id', 'desc');
+
+        $perPage = min((int) $request->query('per_page', 50), 200);
+
+        return response()->json($query->paginate($perPage));
+    }
+
+    /* ==================================================================
+     * HELPERS de permissão — replicados do TaskController pra manter
+     * consistência sem criar dependência cruzada.
+     * ================================================================== */
+    private function isManagerUser($user): bool
+    {
+        $role = strtolower(trim((string) ($user->role ?? '')));
+        return in_array($role, ['admin', 'gestor'], true);
+    }
+
+    /**
+     * Aplica o scope de papel no query builder. Replica EXATAMENTE a regra
+     * do TaskController::scopeByRole — inclusive a privacidade de manager
+     * sobre tarefa pessoal de corretor (scope=private + sem lead_id + não é
+     * dono/criador).
+     */
+    private function applyRoleScope($query, $user): void
+    {
+        if ($this->isManagerUser($user)) {
+            // Manager vê tudo exceto o "caderninho pessoal" do corretor.
+            $query->where(function ($q) use ($user) {
+                $q->where('scope', 'company')
+                  ->orWhereNotNull('lead_id')
+                  ->orWhere('user_id', $user->id)
+                  ->orWhere('created_by', $user->id);
+            });
+            return;
+        }
+
+        $query->where(function ($q) use ($user) {
+            $q->where('user_id', $user->id)
+              ->orWhere('created_by', $user->id)
+              ->orWhere('scope', 'company');
+        });
+    }
 }
