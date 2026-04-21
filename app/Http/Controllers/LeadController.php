@@ -22,6 +22,9 @@ class LeadController extends Controller
         use AuthorizesRequests;
 public function update(Request $request, Lead $lead, LeadStatusRequirementValidator $validator)
 {
+    // Bloqueia corretor de editar lead alheio (LeadPolicy@update)
+    $this->authorize('update', $lead);
+
     $data = $request->validate([
         'name'              => 'sometimes|string|max:255',
         'email'             => 'sometimes|nullable|email|max:255',
@@ -304,6 +307,16 @@ public function store(Request $request)
 ]);
 
     return response()->json($lead);
+}
+
+public function destroy(Lead $lead)
+{
+    // Bloqueia quem não tem leads.delete (só admin e gestor, por config)
+    $this->authorize('delete', $lead);
+
+    $lead->delete();
+
+    return response()->json(['success' => true]);
 }
 
 public function show(Lead $lead)

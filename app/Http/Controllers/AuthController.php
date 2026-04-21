@@ -61,6 +61,29 @@ class AuthController extends Controller
     }
 
 
+    /**
+     * Retorna a role e a lista de permissions do usuário autenticado.
+     * O frontend consome isso após o login pra montar o `can()` do
+     * core/permissions.js e esconder/mostrar botões e itens de menu.
+     */
+    public function permissions(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json(['message' => 'Não autenticado'], 401);
+        }
+
+        $role = $user->getRoleNames()->first() ?? $user->role;
+
+        $permissions = $user->getAllPermissions()->pluck('name')->values();
+
+        return response()->json([
+            'role'        => $role,
+            'permissions' => $permissions,
+        ]);
+    }
+
     public function refresh(Request $request)
     {
         $request->validate([

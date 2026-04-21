@@ -110,6 +110,8 @@ Route::middleware(['auth:sanctum', 'role:admin'])
 
 
 Route::post('/auth/refresh', [AuthController::class, 'refresh']);
+Route::get('/auth/permissions', [AuthController::class, 'permissions'])
+    ->middleware('auth:sanctum');
 
 Route::get(
     '/admin/empreendimentos/{empreendimento}/fields',
@@ -268,8 +270,10 @@ Route::post('/user/status', function (Request $request) {
     ]);
 })->middleware('auth:sanctum');
 // APPINTMENTS LEAD PAGE
-Route::put('/appointments/{id}/reschedule', [AppointmentController::class, 'reschedule']);
-Route::put('/appointments/{id}/complete', [AppointmentController::class, 'complete']);
+Route::put('/appointments/{id}/reschedule', [AppointmentController::class, 'reschedule'])
+    ->middleware('auth:sanctum');
+Route::put('/appointments/{id}/complete', [AppointmentController::class, 'complete'])
+    ->middleware('auth:sanctum');
 Route::get('/appointments/{id}', [AppointmentController::class, 'show'])->middleware('auth:sanctum');
 
 
@@ -327,7 +331,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/leads/{lead}/interactions', [LeadInteractionController::class, 'store']);
     Route::get('/leads/{lead}', [LeadController::class, 'show']);
     Route::put('/leads/editar/{lead}', [LeadController::class, 'update']);
-    
+    Route::delete('/leads/{lead}', [LeadController::class, 'destroy']);
+
 });
 
 
@@ -398,10 +403,12 @@ Route::middleware(['auth:sanctum', 'role:admin,gestor'])->group(function () {
 */
 
 
-Route::patch('/kanban/{lead}/move', [KanbanController::class, 'move']);
+Route::patch('/kanban/{lead}/move', [KanbanController::class, 'move'])
+    ->middleware('auth:sanctum');
 Route::get('/kanban', [KanbanController::class, 'index'])
     ->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
-Route::post('/kanban/reorder', [KanbanController::class, 'reorder']);
+Route::post('/kanban/reorder', [KanbanController::class, 'reorder'])
+    ->middleware('auth:sanctum');
 // Route::patch('/kanbans/leads/{lead}/move', [KanbanController::class, 'move'])
 //  ->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
 

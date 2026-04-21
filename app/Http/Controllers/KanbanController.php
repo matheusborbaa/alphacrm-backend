@@ -7,6 +7,7 @@ use App\Models\LeadStatus;
 use Illuminate\Http\Request;
 use App\Services\AuditService;
 use App\Services\LeadStatusRequirementValidator;
+use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 
 /**
  * @group Kanban
@@ -16,6 +17,7 @@ use App\Services\LeadStatusRequirementValidator;
  */
 class KanbanController extends Controller
 {
+    use AuthorizesRequests;
     /**
      * Listar colunas do Kanban
      *
@@ -86,6 +88,9 @@ class KanbanController extends Controller
      */
     public function move(Request $request, Lead $lead, LeadStatusRequirementValidator $validator)
 {
+    // Bloqueia corretor de mover lead alheio (LeadPolicy@move)
+    $this->authorize('move', $lead);
+
     $data = $request->validate([
         'status_id'         => 'required|exists:lead_status,id',
         'lead_substatus_id' => 'sometimes|nullable|exists:lead_substatus,id',
