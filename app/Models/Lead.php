@@ -25,6 +25,18 @@ class Lead extends Model
         'manychat_id',
         'channel',
         'campaign',
+        'temperature',
+        'value',
+        'last_interaction_at',
+        'status_changed_at',
+    ];
+
+    protected $casts = [
+        'assigned_at'         => 'datetime',
+        'sla_deadline_at'     => 'datetime',
+        'last_interaction_at' => 'datetime',
+        'status_changed_at'   => 'datetime',
+        'value'               => 'decimal:2',
     ];
 
     public function corretor(): BelongsTo

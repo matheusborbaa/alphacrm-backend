@@ -166,11 +166,14 @@ private function saveCustomValues(Lead $lead, array $values): void
     $query = Lead::with([
         'corretor:id,name',
         'status:id,name',
-'empreendimento:id,name',        'interactions' => function ($q) {
-    $q->with('user:id,name')
-      ->latest()
-      ->limit(1);
-}
+        'substatus:id,name',
+        'source:id,name',
+        'empreendimento:id,name',
+        'interactions' => function ($q) {
+            $q->with('user:id,name')
+              ->latest()
+              ->limit(1);
+        },
     ]);
 
     /*
@@ -196,8 +199,41 @@ if ($request->filled('empreendimento')) {
 if ($request->filled('funil')) {
     $query->where('status_id', $request->funil);
 }
+if ($request->filled('substatus')) {
+    $query->where('lead_substatus_id', $request->substatus);
+}
 if ($request->filled('responsavel')) {
     $query->where('assigned_user_id', $request->responsavel);
+}
+if ($request->filled('temperature')) {
+    // Aceita string única ou lista separada por vírgula: 'quente,morno'
+    $temps = is_array($request->temperature)
+        ? $request->temperature
+        : explode(',', (string) $request->temperature);
+    $temps = array_filter(array_map('trim', $temps));
+    if (!empty($temps)) {
+        $query->whereIn('temperature', $temps);
+    }
+}
+if ($request->filled('source_id')) {
+    $query->where('source_id', $request->source_id);
+}
+if ($request->filled('channel')) {
+    $query->where('channel', $request->channel);
+}
+if ($request->filled('sem_interacao_dias')) {
+    // Leads sem interação há N dias
+    $dias = (int) $request->sem_interacao_dias;
+    $query->where(function ($q) use ($dias) {
+        $q->whereNull('last_interaction_at')
+          ->orWhere('last_interaction_at', '<=', now()->subDays($dias));
+    });
+}
+if ($request->filled('created_from')) {
+    $query->whereDate('created_at', '>=', $request->created_from);
+}
+if ($request->filled('created_to')) {
+    $query->whereDate('created_at', '<=', $request->created_to);
 }
     
    if ($request->filled('search')) {
@@ -231,10 +267,53 @@ if ($request->filled('responsavel')) {
     
 }
 
+    $perPage = (int) $request->input('per_page', 15);
+    $perPage = max(5, min(100, $perPage));
+
     return LeadResource::collection(
-    $query->orderByDesc('created_at')->paginate(10)
-);
+        $query->orderByDesc('created_at')->paginate($perPage)
+    );
 }
+
+    /**
+     * Contadores pros cards-resumo da listagem de leads (doc funcional).
+     * Respeita as mesmas regras de visibilidade (corretor só vê os seus).
+     *
+     * GET /leads/counts
+     *
+     * @response 200 {
+     *   "quente": 103,
+     *   "morno": 59,
+     *   "frio": 28,
+     *   "total": 400,
+     *   "em_atendimento": 180,
+     *   "sem_interacao_10d": 30
+     * }
+     */
+    public function counts(Request $request)
+    {
+        $user = $request->user();
+
+        $base = Lead::query();
+        if ($user->role === 'corretor') {
+            $base->where('assigned_user_id', $user->id);
+        }
+
+        $cloneBase = fn() => (clone $base);
+
+        return response()->json([
+            'quente'            => $cloneBase()->where('temperature', 'quente')->count(),
+            'morno'             => $cloneBase()->where('temperature', 'morno')->count(),
+            'frio'              => $cloneBase()->where('temperature', 'frio')->count(),
+            'sem_temperatura'   => $cloneBase()->whereNull('temperature')->count(),
+            'total'             => $cloneBase()->count(),
+            'em_atendimento'    => $cloneBase()->whereHas('status', fn($q) => $q->where('name', 'Em Atendimento'))->count(),
+            'sem_interacao_10d' => $cloneBase()->where(function ($q) {
+                                       $q->whereNull('last_interaction_at')
+                                         ->orWhere('last_interaction_at', '<=', now()->subDays(10));
+                                   })->count(),
+        ]);
+    }
 
     /**
      * Visualizar lead

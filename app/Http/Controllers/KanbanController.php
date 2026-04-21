@@ -75,6 +75,12 @@ class KanbanController extends Controller
         'assigned_user_id',
         'empreendimento_id',
         'channel',
+        'campaign',
+        'source_id',
+        'temperature',
+        'value',
+        'last_interaction_at',
+        'status_changed_at',
         'position',
         'updated_at',
         'created_at',
@@ -90,6 +96,7 @@ class KanbanController extends Controller
     $leadsQuery = Lead::with([
             'corretor:id,name',
             'empreendimento:id,name',
+            'source:id,name',
         ])
         ->orderBy('position')
         ->select($leadSelect);
@@ -179,11 +186,34 @@ class KanbanController extends Controller
     $lastPosition = Lead::where('status_id', $data['status_id'])
         ->max('position');
 
-    $lead->update([
-        'status_id'         => $data['status_id'],
-        'lead_substatus_id' => $data['lead_substatus_id'] ?? $lead->lead_substatus_id,
+    $newStatusId    = $data['status_id'];
+    $newSubstatusId = $data['lead_substatus_id'] ?? $lead->lead_substatus_id;
+
+    $updatePayload = [
+        'status_id'         => $newStatusId,
+        'lead_substatus_id' => $newSubstatusId,
         'position'          => ($lastPosition ?? 0) + 1,
-    ]);
+    ];
+
+    // Marca quando entrou na etapa (usado pra "ociosidade" no card)
+    if ($newStatusId !== $lead->status_id) {
+        $updatePayload['status_changed_at'] = now();
+    }
+
+    // Deriva temperatura automaticamente baseado no nome do substatus.
+    // Convenção combinada com o cliente (doc):
+    //   Em Atendimento > "Sem Avanço" = frio
+    //                  > "Conversando" = morno
+    //                  > "Qualificado" = quente
+    if ($newSubstatusId) {
+        $subName = \App\Models\LeadSubstatus::where('id', $newSubstatusId)->value('name');
+        $derived = $this->derivedTemperature($subName);
+        if ($derived !== null) {
+            $updatePayload['temperature'] = $derived;
+        }
+    }
+
+    $lead->update($updatePayload);
 
     // Salva custom values se vieram
     if (!empty($customValues)) {
@@ -222,5 +252,28 @@ public function reorder(Request $request)
     }
 
     return response()->json(['success' => true]);
+}
+
+/**
+ * Deriva a temperatura baseado no nome do substatus.
+ * Retorna 'frio' | 'morno' | 'quente' ou null quando não aplicável.
+ */
+private function derivedTemperature(?string $substatusName): ?string
+{
+    if (!$substatusName) return null;
+
+    $normalized = mb_strtolower(trim($substatusName));
+
+    if (str_contains($normalized, 'sem avanço') || str_contains($normalized, 'sem avanco')) {
+        return 'frio';
+    }
+    if (str_contains($normalized, 'conversando')) {
+        return 'morno';
+    }
+    if (str_contains($normalized, 'qualificado')) {
+        return 'quente';
+    }
+
+    return null;
 }
 }

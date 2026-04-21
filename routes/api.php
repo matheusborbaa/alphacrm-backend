@@ -222,7 +222,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
 Route::middleware(['auth:sanctum', 'role:admin,gestor,corretor'])->group(function () {
 
-    Route::get('/leads', [LeadController::class, 'index']);
+    Route::get('/leads',        [LeadController::class, 'index']);
+    Route::get('/leads/counts', [LeadController::class, 'counts']);
 
     Route::apiResource('empreendimentos', EmpreendimentoController::class);
 
