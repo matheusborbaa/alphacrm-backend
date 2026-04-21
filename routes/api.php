@@ -313,20 +313,7 @@ Route::post('/user/status', function (Request $request) {
         'status' => $user->status_corretor
     ]);
 })->middleware('auth:sanctum');
-// APPINTMENTS LEAD PAGE
-// IMPORTANTE: rotas com segmentos estáticos (/by-date, /by-month, /summary, /overdue)
-// DEVEM vir antes da rota genérica /{id} — caso contrário, o Laravel tenta
-// resolver "by-month" como um id de Appointment e dispara ModelNotFoundException.
-Route::get('/appointments/by-date', [AppointmentController::class, 'byDate'])->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
-Route::get('/appointments/by-month', [AppointmentController::class, 'byMonth'])->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
-Route::get('/appointments/summary', [AppointmentController::class, 'summary'])->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
-Route::get('/appointments/overdue', [AppointmentController::class, 'overdueList'])->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
-
-Route::put('/appointments/{id}/reschedule', [AppointmentController::class, 'reschedule'])
-    ->middleware('auth:sanctum');
-Route::put('/appointments/{id}/complete', [AppointmentController::class, 'complete'])
-    ->middleware('auth:sanctum');
-Route::get('/appointments/{id}', [AppointmentController::class, 'show'])->middleware('auth:sanctum');
+// APPOINTMENTS — rotas movidas pra fora do group (ver abaixo do fechamento do group).
 
 
 Route::get('/dashboard/appointments', function (Request $request) {
@@ -360,6 +347,32 @@ Route::get('/dashboard/appointments', function (Request $request) {
 Route::post('/empreendimentos', [EmpreendimentoController::class,'store']);
 Route::post('/empreendimentos/{id}/fields', [EmpreendimentoFieldValueController::class,'storeCadastro']);
 });
+
+
+/*
+|--------------------------------------------------------------------------
+| APPOINTMENTS
+|--------------------------------------------------------------------------
+| IMPORTANTE: rotas com segmentos estáticos (/by-date, /by-month, /summary,
+| /overdue) DEVEM vir antes da rota genérica /{id} — caso contrário, o
+| Laravel interpreta "by-month" como id de Appointment.
+|
+| Mantidas FORA do group `role:admin,gestor` pra que o corretor também tenha
+| acesso (agenda pessoal).
+*/
+Route::middleware(['auth:sanctum', 'role:admin,gestor,corretor'])->group(function () {
+    Route::get('/appointments/by-date',  [AppointmentController::class, 'byDate']);
+    Route::get('/appointments/by-month', [AppointmentController::class, 'byMonth']);
+    Route::get('/appointments/summary',  [AppointmentController::class, 'summary']);
+    Route::get('/appointments/overdue',  [AppointmentController::class, 'overdueList']);
+});
+
+Route::middleware('auth:sanctum')->group(function () {
+    Route::put('/appointments/{id}/reschedule', [AppointmentController::class, 'reschedule']);
+    Route::put('/appointments/{id}/complete',   [AppointmentController::class, 'complete']);
+    Route::get('/appointments/{id}',            [AppointmentController::class, 'show']);
+});
+
 
 /*
 |--------------------------------------------------------------------------
