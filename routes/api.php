@@ -26,6 +26,8 @@ use Carbon\Carbon;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\LeadStatusController;
 use App\Http\Controllers\LeadSubstatusController;
+use App\Http\Controllers\RelatoriosController;
+use App\Http\Controllers\UserMetaController;
 
     Route::post('/me', [UserController::class, 'updateProfile'])->middleware(['auth:sanctum']);
 // usuario rotas
@@ -502,6 +504,52 @@ Route::get('/leads/{lead}/audits', [\App\Http\Controllers\AuditController::class
 
 Route::get('/reports/commissions', [CommissionReportController::class, 'index'])
     ->middleware(['auth:sanctum', 'role:admin,gestor']);
+
+/*
+|--------------------------------------------------------------------------
+| RELATÓRIOS — MÓDULO #44
+|--------------------------------------------------------------------------
+| Endpoints do novo módulo de relatórios (Corretor + Gerente).
+| Middleware role:admin,gestor,corretor — o controller faz o escopo:
+| corretor só vê os próprios dados; admin/gestor vê tudo e pode filtrar
+| por corretor_id via query param.
+|
+| /reports/funnel            → Funil de conversão (por status)
+| /reports/productivity      → Appointments, SLA, tempo de resposta
+| /reports/origin-campaign   → Leads por origem / canal / campanha / cidade
+| /reports/ranking           → Ranking de corretores + % meta
+| /reports/evolution         → Série temporal últimos N meses
+| /reports/export/{tipo}/{formato} → PDF ou XLSX
+*/
+Route::middleware(['auth:sanctum', 'role:admin,gestor,corretor'])->group(function () {
+    Route::get('/reports/funnel',           [RelatoriosController::class, 'funnel']);
+    Route::get('/reports/productivity',     [RelatoriosController::class, 'productivity']);
+    Route::get('/reports/origin-campaign',  [RelatoriosController::class, 'originCampaign']);
+    Route::get('/reports/ranking',          [RelatoriosController::class, 'ranking']);
+    Route::get('/reports/evolution',        [RelatoriosController::class, 'evolution']);
+
+    Route::get('/reports/export/{tipo}/{formato}',
+        [\App\Http\Controllers\RelatoriosExportController::class, 'export'])
+        ->where('tipo', 'funnel|productivity|origin|ranking')
+        ->where('formato', 'pdf|xlsx');
+});
+
+/*
+|--------------------------------------------------------------------------
+| METAS DOS CORRETORES (gamificação / ranking)
+|--------------------------------------------------------------------------
+| Admin/gestor gerenciam. Corretor só lê a própria.
+*/
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/user-metas',            [UserMetaController::class, 'index']);
+    Route::get('/user-metas/{userMeta}', [UserMetaController::class, 'show']);
+});
+
+Route::middleware(['auth:sanctum', 'role:admin,gestor'])->group(function () {
+    Route::post  ('/user-metas',             [UserMetaController::class, 'store']);
+    Route::put   ('/user-metas/{userMeta}',  [UserMetaController::class, 'update']);
+    Route::delete('/user-metas/{userMeta}',  [UserMetaController::class, 'destroy']);
+});
 
 
 /*
