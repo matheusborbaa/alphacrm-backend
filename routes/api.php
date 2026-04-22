@@ -37,6 +37,15 @@ use App\Http\Controllers\HomeController;
     Route::post('/me', [UserController::class, 'updateProfile'])->middleware(['auth:sanctum']);
     // Status do corretor (disponivel/ocupado/offline) — usado pelo rodízio.
     Route::post('/users/me/status', [UserController::class, 'updateStatus'])->middleware(['auth:sanctum']);
+
+    // GET do usuário logado — precisa estar acessível pra QUALQUER role
+    // (admin, gestor, corretor), senão o corretor não consegue sincronizar
+    // o status_corretor do dropdown do header. A versão antiga dessa rota
+    // mora dentro do grupo role:admin,gestor — mantemos ela lá por compat,
+    // mas essa aqui é a canônica pra uso do frontend.
+    Route::get('/user/me', function (\Illuminate\Http\Request $request) {
+        return response()->json($request->user());
+    })->middleware('auth:sanctum');
 // usuario rotas
 
 
@@ -249,11 +258,11 @@ Route::middleware(['auth:sanctum', 'role:admin,gestor,corretor'])->group(functio
 
 });
 Route::middleware(['auth:sanctum', 'role:admin,gestor'])->group(function () {
-Route::get('/user/me', function (Request $request) {
-    return response()->json($request->user());
-})->middleware('auth:sanctum');
+// /user/me agora é declarado acima fora do grupo role:admin,gestor — qualquer
+// usuário autenticado (inclusive corretor) precisa dela pra sincronizar dados
+// próprios no frontend (ex.: dropdown statusCorretor).
 
-// buscar resumo inicial 
+// buscar resumo inicial
 Route::get('/dashboard/atividades', function (Request $request) {
 
     $periodo = $request->get('periodo', 'mensal');

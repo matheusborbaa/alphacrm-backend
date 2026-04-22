@@ -656,7 +656,11 @@ public function queue(Request $request)
     $now = now();
 
     $items = $leads->map(function ($lead) use ($now) {
-        $minutes = (int) $now->diffInMinutes($lead->created_at);
+        // Carbon 3 (Laravel 12) retorna signed por padrão: como created_at
+        // está no passado, $now->diffInMinutes($created_at) vem NEGATIVO e
+        // cai pra 0 no cast (int). Invertendo a ordem ($created_at->diffInMinutes($now))
+        // + abs() garante positivo independente da versão do Carbon.
+        $minutes = (int) abs($lead->created_at->diffInMinutes($now));
         return [
             'id'               => $lead->id,
             'name'             => $lead->name,
@@ -713,7 +717,9 @@ public function queueCount(Request $request)
             ->orderBy('created_at', 'asc')
             ->value('created_at');
         if ($oldest) {
-            $oldestMinutes = (int) now()->diffInMinutes($oldest);
+            // Mesma armadilha do queue(): Carbon 3 devolve signed — inverter
+            // ordem e aplicar abs() pra garantir sempre positivo.
+            $oldestMinutes = (int) abs(\Carbon\Carbon::parse($oldest)->diffInMinutes(now()));
         }
     }
 
