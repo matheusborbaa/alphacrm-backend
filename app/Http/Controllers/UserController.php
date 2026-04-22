@@ -6,12 +6,14 @@ use Illuminate\Http\Request;
 use App\Models\User;
 use App\Models\Lead;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Str;
 use App\Services\LeadAssignmentService;
+use App\Mail\WelcomeUserMail;
 
 /**
  * CRUD de usuários (corretores, gestores, admins).
@@ -132,7 +134,12 @@ class UserController extends Controller
             ]);
         }
 
-        $plainPassword = $data['password'] ?? Str::random(12);
+        // Se o admin não informou senha, gera uma provisória de 12 chars.
+        // A flag $passwordWasGenerated controla se deve disparar o
+        // WelcomeUserMail (só enviamos quando a senha é provisória; se o
+        // admin digitou, assume que vai repassar por fora).
+        $passwordWasGenerated = empty($data['password']);
+        $plainPassword = $passwordWasGenerated ? Str::random(12) : $data['password'];
 
         $user = User::create([
             'name'     => $data['name'],
@@ -145,6 +152,22 @@ class UserController extends Controller
 
         $user->assignRole($data['role']);
 
+        // Email de boas-vindas com senha provisória. Só dispara se a senha
+        // foi gerada pelo sistema (admin que escolheu senha manualmente
+        // provavelmente tem um canal próprio pra repassar). Failure é
+        // logado sem bloquear o cadastro — um admin que perder o email
+        // ainda consegue ver a senha na resposta HTTP abaixo.
+        if ($passwordWasGenerated) {
+            try {
+                Mail::to($user->email)->send(new WelcomeUserMail($user, $plainPassword));
+            } catch (\Throwable $e) {
+                \Log::error('Falha ao enviar WelcomeUserMail', [
+                    'user_id' => $user->id,
+                    'error'   => $e->getMessage(),
+                ]);
+            }
+        }
+
         return response()->json([
             'success' => true,
             'user'    => [
@@ -154,7 +177,7 @@ class UserController extends Controller
                 'role'  => $data['role'],
             ],
             // Devolve a senha temporária pro admin repassar (ou usar invite).
-            'temporary_password' => empty($request->input('password')) ? $plainPassword : null,
+            'temporary_password' => $passwordWasGenerated ? $plainPassword : null,
         ], 201);
     }
 

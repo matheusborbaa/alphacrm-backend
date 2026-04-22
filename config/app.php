@@ -56,6 +56,24 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Frontend URL
+    |--------------------------------------------------------------------------
+    |
+    | URL pública onde o frontend (alphacrm-frontend) está servido. Usada
+    | em emails transacionais (welcome, reset password) pra gerar links que
+    | apontem pro HTML do usuário, não pra URL da API.
+    |
+    | Ex.: APP_URL    = https://app.alphadomusimobiliaria.com.br   (API)
+    |      FRONTEND_URL = https://crm.alphadomusimobiliaria.com.br (frontend)
+    |
+    | Se não configurada, cai no APP_URL como fallback.
+    |
+    */
+
+    'frontend_url' => env('FRONTEND_URL'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------
     |

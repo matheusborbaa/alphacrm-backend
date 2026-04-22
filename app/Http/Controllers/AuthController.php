@@ -5,8 +5,13 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Password;
+use Illuminate\Auth\Events\PasswordReset;
+use Illuminate\Validation\Rules\Password as PasswordRule;
 use App\Models\User;
 use App\Models\RefreshToken;
+use App\Mail\ResetPasswordMail;
 
 class AuthController extends Controller
 {
@@ -20,7 +25,13 @@ class AuthController extends Controller
 
         $user = User::where('email', $request->email)->first();
 
-        if (!$user || !Hash::check($request->password, $user->password)) {
+        // Não diferenciamos entre "usuário inexistente", "senha errada" e
+        // "usuário desativado" na resposta: tudo retorna o mesmo 401 genérico.
+        // Isso evita que um atacante use o login pra enumerar emails
+        // cadastrados ou pra descobrir que uma conta existe mas foi bloqueada.
+        // O admin que desativou o usuário sabe que ele não consegue mais
+        // entrar — não precisa da informação no erro.
+        if (!$user || !Hash::check($request->password, $user->password) || !$user->active) {
             return response()->json([
                 'message' => 'Credenciais inválidas'
             ], 401);
@@ -104,6 +115,17 @@ class AuthController extends Controller
 
         $user = $refresh->user;
 
+        // Usuário pode ter sido desativado APÓS o login. Bloqueia a renovação
+        // do access token e limpa o refresh antigo pra forçar nova autenticação
+        // (que vai bater no AuthController@login e ser rejeitada com 401).
+        if (!$user || !$user->active) {
+            if ($user) {
+                $user->tokens()->delete();
+                RefreshToken::where('user_id', $user->id)->delete();
+            }
+            return response()->json(['message' => 'Sessão inválida'], 401);
+        }
+
         // gerar novo access
         $accessToken = $user->createToken('crm-token')->plainTextToken;
 
@@ -111,6 +133,99 @@ class AuthController extends Controller
             'access_token' => $accessToken,
             'expires_in' => 900
         ]);
+    }
+
+    /**
+     * POST /auth/forgot-password
+     *
+     * Inicia o fluxo de recuperação: gera um token no broker padrão do
+     * Laravel (tabela password_reset_tokens) e dispara o ResetPasswordMail
+     * com um link pro frontend.
+     *
+     * Resposta é SEMPRE genérica ("Se o email existir, enviaremos…") mesmo
+     * que o email não exista ou o user esteja inativo — evita enumeração
+     * de contas. O envio real só acontece se o usuário existe E está ativo.
+     */
+    public function forgotPassword(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email',
+        ]);
+
+        $user = User::where('email', $request->email)->first();
+
+        if ($user && $user->active) {
+            // Gera token via broker do Laravel (grava em password_reset_tokens
+            // com created_at = now(); expiração é validada no reset().)
+            $token = Password::broker()->createToken($user);
+
+            // Envia o email. Se o driver de mail falhar, engole o erro pra
+            // manter a resposta genérica — o admin vê o problema no log.
+            try {
+                Mail::to($user->email)->send(new ResetPasswordMail($user, $token));
+            } catch (\Throwable $e) {
+                \Log::error('Falha ao enviar email de reset de senha', [
+                    'user_id' => $user->id,
+                    'error'   => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return response()->json([
+            'message' => 'Se o email estiver cadastrado, você receberá um link de recuperação em instantes.',
+        ]);
+    }
+
+    /**
+     * POST /auth/reset-password
+     *
+     * Consome o token gerado no forgotPassword e grava a nova senha.
+     * Invalida todos os tokens de API (sanctum) e refresh tokens do
+     * usuário — qualquer sessão ativa cai e precisa logar de novo, o que
+     * é o comportamento esperado depois de trocar senha.
+     *
+     * Body: { email, token, password, password_confirmation }
+     */
+    public function resetPassword(Request $request)
+    {
+        $request->validate([
+            'email'                 => 'required|email',
+            'token'                 => 'required|string',
+            'password'              => ['required', 'confirmed', PasswordRule::min(8)->mixedCase()->numbers()],
+        ]);
+
+        // Laravel Password::reset() valida o token + atualiza o user + dispara
+        // PasswordReset event (que invalidaria o remember_token via listener
+        // default). Aqui já usamos o callback pra também invalidar tokens de
+        // API e refresh tokens — o remember_token não é usado no app (auth é
+        // stateless via sanctum).
+        $status = Password::reset(
+            $request->only('email', 'password', 'password_confirmation', 'token'),
+            function (User $user, string $password) {
+                $user->password = Hash::make($password);
+                $user->save();
+
+                $user->tokens()->delete();
+                RefreshToken::where('user_id', $user->id)->delete();
+
+                event(new PasswordReset($user));
+            }
+        );
+
+        if ($status === Password::PASSWORD_RESET) {
+            return response()->json([
+                'message' => 'Senha alterada com sucesso. Faça login com a nova senha.',
+            ]);
+        }
+
+        // Trad do status pra mensagem amigável em português.
+        $message = match ($status) {
+            Password::INVALID_USER  => 'Não encontramos uma conta com esse email.',
+            Password::INVALID_TOKEN => 'Link inválido ou expirado. Solicite um novo.',
+            default                 => 'Não foi possível redefinir a senha. Tente novamente.',
+        };
+
+        return response()->json(['message' => $message], 422);
     }
 
 }
