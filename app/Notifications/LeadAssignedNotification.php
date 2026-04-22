@@ -6,7 +6,6 @@ use App\Models\Lead;
 use Illuminate\Bus\Queueable;
 use Illuminate\Notifications\Notification;
 use Illuminate\Notifications\Messages\MailMessage;
-use Illuminate\Contracts\Queue\ShouldQueue;
 
 /**
  * Notificação disparada quando um lead é atribuído a um corretor.
@@ -14,9 +13,14 @@ use Illuminate\Contracts\Queue\ShouldQueue;
  *  - `database` → popup sonoro via polling do frontend (/notifications).
  *  - `mail`     → e-mail imediato pro corretor com link direto pro lead.
  *
- * Fica em queue por padrão pra não travar o request HTTP de cadastro/rodízio.
+ * NÃO implementa ShouldQueue de propósito: queremos que o insert em
+ * `notifications` seja SÍNCRONO, pra que o frontend (que faz polling de
+ * /notifications a cada 15s) veja a notificação no próximo tick sem
+ * precisar de um `php artisan queue:work` rodando. O e-mail também roda
+ * sync — é single-recipient e rápido; se virar gargalo no futuro, dá pra
+ * refatorar e separar só o canal 'mail' pra queue.
  */
-class LeadAssignedNotification extends Notification implements ShouldQueue
+class LeadAssignedNotification extends Notification
 {
     use Queueable;
 

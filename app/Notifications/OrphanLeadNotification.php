@@ -4,7 +4,6 @@ namespace App\Notifications;
 
 use App\Models\Lead;
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
@@ -17,8 +16,13 @@ use Illuminate\Notifications\Notification;
  *   (b) um admin atribuir manualmente pela UI.
  *
  * Canais: database (popup no CRM) + email (pra admin que não tá com o CRM aberto).
+ *
+ * NÃO implementa ShouldQueue de propósito (ver comentário em
+ * LeadAssignedNotification): precisamos que o insert em `notifications`
+ * seja síncrono, senão o frontend nunca enxerga a notificação sem um
+ * `php artisan queue:work` ativo.
  */
-class OrphanLeadNotification extends Notification implements ShouldQueue
+class OrphanLeadNotification extends Notification
 {
     use Queueable;
 
