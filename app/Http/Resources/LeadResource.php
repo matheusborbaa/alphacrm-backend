@@ -22,6 +22,10 @@ class LeadResource extends JsonResource
             'last_interaction_at' => $this->last_interaction_at,
             'status_changed_at'   => $this->status_changed_at,
             'sla_status'          => $this->sla_status,
+            // Prazo do SLA de primeira resposta (ISO datetime ou null).
+            // Usado pelo banner de primeiro contato no lead.php pra exibir
+            // countdown MM:SS. Null quando SLA está desabilitado em /configuracoes.
+            'sla_deadline_at'     => $this->sla_deadline_at,
             'channel'             => $this->channel,
             'campaign'            => $this->campaign,
             'city_of_interest'    => $this->city_of_interest,

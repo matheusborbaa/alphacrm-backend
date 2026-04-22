@@ -102,19 +102,102 @@ class LeadAssignmentService
         return $lead;
     }
 
+    /**
+     * Reatribuição por expiração de SLA.
+     *
+     * Regras (decididas com o produto):
+     *   - Pega o primeiro da fila disponível (orderBy last_lead_assigned_at).
+     *   - Se o escolhido é OUTRO corretor: reatribui (applyAssignment +
+     *     cooldown + notificação) — o applyAssignment já loga 'assigned'
+     *     e eventuais status_change/substatus_change.
+     *   - Se o ÚNICO disponível é o mesmo corretor atual: mantém ele,
+     *     reseta só sla_status/sla_deadline_at (novo prazo) e loga
+     *     'sla_retry_same_broker'. Ele tem mais uma chance dentro do
+     *     novo prazo — não ficamos "tirando e devolvendo" o lead dele.
+     *   - Se NINGUÉM está disponível (nem o corretor atual): lead vira
+     *     órfão (handleOrphan) — mantém o fluxo já existente.
+     *
+     * Retorna o User responsável pelo lead ao final, ou null se ficou órfão.
+     */
+    public function reassignForSla(Lead $lead): ?User
+    {
+        $currentId = $lead->assigned_user_id;
+        $current   = $currentId ? User::find($currentId) : null;
+
+        $next = $this->pickNextAvailable();
+
+        // Ninguém na fila: tenta reter com o corretor atual se ainda estiver
+        // elegível; senão, orfaniza.
+        if (!$next) {
+            if ($current && $this->isEligible($current)) {
+                $this->resetSlaOnly($lead, $current);
+                return $current;
+            }
+            $this->handleOrphan($lead);
+            return null;
+        }
+
+        // Só o mesmo está disponível: reseta SLA e loga retry.
+        if ($current && (int) $next->id === (int) $current->id) {
+            $this->resetSlaOnly($lead, $current);
+            return $current;
+        }
+
+        // Outro corretor: reatribui via pipeline normal.
+        $this->applyAssignment($lead, $next);
+        $this->applyCooldown($next);
+        $this->notifyBroker($next, $lead);
+        return $next;
+    }
+
+    /**
+     * Reseta só SLA do lead pra dar "mais uma chance" pro corretor atual.
+     * Loga LeadHistory type='sla_retry_same_broker'.
+     */
+    private function resetSlaOnly(Lead $lead, User $current): void
+    {
+        $slaMinutes = $this->configSlaMinutes();
+        $lead->update([
+            'sla_status'      => 'pending',
+            'sla_deadline_at' => $slaMinutes > 0 ? now()->addMinutes($slaMinutes) : null,
+        ]);
+
+        try {
+            LeadHistory::create([
+                'lead_id'     => $lead->id,
+                'user_id'     => null,
+                'type'        => 'sla_retry_same_broker',
+                'from'        => null,
+                'to'          => $current->name,
+                'description' => 'SLA expirou; como era o único corretor disponível, manteve a atribuição e novo prazo foi aplicado',
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Falha ao gravar histórico de sla_retry_same_broker', [
+                'lead_id' => $lead->id,
+                'error'   => $e->getMessage(),
+            ]);
+        }
+    }
+
     /* ==============================================================
      * INTERNOS
      * ============================================================== */
 
     /**
-     * Grava assigned_user_id, SLA, e (se configurado) status inicial
-     * do lead + entrada de histórico quando muda o status.
+     * Grava assigned_user_id, SLA, e (se configurado) status+subetapa inicial
+     * do lead + entradas de histórico pra:
+     *   - atribuição (sempre — from/to corretor)
+     *   - mudança de etapa/subetapa (se houve)
      */
     private function applyAssignment(Lead $lead, User $corretor): void
     {
-        $slaMinutes     = $this->configSlaMinutes();
-        $firstStatusId  = $this->configFirstStatusId();
+        $slaMinutes       = $this->configSlaMinutes();
+        $firstStatusId    = $this->configFirstStatusId();
+        $firstSubstatusId = $this->configFirstSubstatusId();
+
         $oldStatusId    = $lead->status_id;
+        $oldSubstatusId = $lead->lead_substatus_id;
+        $oldAssigned    = $lead->assigned_user_id;
 
         $update = [
             'assigned_user_id' => $corretor->id,
@@ -128,40 +211,100 @@ class LeadAssignmentService
         // Se admin configurou um status inicial pro rodízio (ex: "Aguardando
         // atendimento"), mudamos pra ele. Só mexe se o status realmente
         // muda — evita histórico ruidoso quando já está no status certo.
+        $statusChanged = false;
         if ($firstStatusId && $firstStatusId !== $oldStatusId) {
             $update['status_id']         = $firstStatusId;
             $update['status_changed_at'] = now();
+            $statusChanged = true;
+        }
+
+        // Subetapa inicial (opcional). Só aplica se a subetapa configurada
+        // pertencer à etapa atual (ou à nova etapa, se também mudou).
+        // Caso contrário, zera — evita inconsistência de hierarquia.
+        $substatusChanged = false;
+        if ($firstSubstatusId) {
+            $targetStatusId = $update['status_id'] ?? $oldStatusId;
+            if ($this->substatusBelongsToStatus($firstSubstatusId, $targetStatusId)) {
+                if ($firstSubstatusId !== $oldSubstatusId) {
+                    $update['lead_substatus_id'] = $firstSubstatusId;
+                    $substatusChanged = true;
+                }
+            }
         }
 
         $lead->update($update);
         $corretor->update(['last_lead_assigned_at' => now()]);
 
-        // Histórico da mudança de etapa (se houve).
-        if (!empty($update['status_id'])) {
-            try {
+        // ---- HISTÓRICOS -----------------------------------------------
+        $uid = auth()->check() ? auth()->id() : null;
+
+        try {
+            // 1) Atribuição (sempre grava — é o evento-raiz).
+            $fromCorretor = $oldAssigned
+                ? optional(User::find($oldAssigned))->name
+                : null;
+            LeadHistory::create([
+                'lead_id'     => $lead->id,
+                'user_id'     => $uid,
+                'type'        => 'assigned',
+                'from'        => $fromCorretor,
+                'to'          => $corretor->name,
+                'description' => $oldAssigned
+                    ? 'Lead reatribuído via rodízio'
+                    : 'Lead atribuído via rodízio',
+            ]);
+
+            // 2) Mudança de etapa (se houve).
+            if ($statusChanged) {
                 $fromName = $oldStatusId
                     ? optional(LeadStatus::find($oldStatusId))->name
                     : null;
                 $toName = optional(LeadStatus::find($firstStatusId))->name;
-
-                // user_id pode ser null — em CLI (webhook, job) não há auth.
-                // O loggerDiffs ignora se não tem autor; aqui gravamos direto
-                // pra não perder o evento mesmo sem autor.
                 LeadHistory::create([
                     'lead_id'     => $lead->id,
-                    'user_id'     => auth()->check() ? auth()->id() : null,
+                    'user_id'     => $uid,
                     'type'        => 'status_change',
                     'from'        => $fromName,
                     'to'          => $toName,
                     'description' => 'Etapa alterada pelo rodízio',
                 ]);
-            } catch (\Throwable $e) {
-                Log::warning('Falha ao gravar histórico de status no rodízio', [
-                    'lead_id' => $lead->id,
-                    'error'   => $e->getMessage(),
+            }
+
+            // 3) Mudança de subetapa (se houve).
+            if ($substatusChanged) {
+                $fromSub = $oldSubstatusId
+                    ? optional(\App\Models\LeadSubstatus::find($oldSubstatusId))->name
+                    : null;
+                $toSub = optional(\App\Models\LeadSubstatus::find($firstSubstatusId))->name;
+                LeadHistory::create([
+                    'lead_id'     => $lead->id,
+                    'user_id'     => $uid,
+                    'type'        => 'substatus_change',
+                    'from'        => $fromSub,
+                    'to'          => $toSub,
+                    'description' => 'Subetapa alterada pelo rodízio',
                 ]);
             }
+        } catch (\Throwable $e) {
+            Log::warning('Falha ao gravar histórico de atribuição', [
+                'lead_id' => $lead->id,
+                'error'   => $e->getMessage(),
+            ]);
         }
+    }
+
+    /**
+     * Verifica se a subetapa pertence à etapa. Retorna true se não há nada
+     * pra validar (null ou parent correto). Previne inconsistência quando
+     * admin configura uma subetapa que não pertence à etapa inicial.
+     */
+    private function substatusBelongsToStatus(?int $substatusId, ?int $statusId): bool
+    {
+        if (!$substatusId) return true;
+        if (!$statusId) return false;
+
+        $sub = \App\Models\LeadSubstatus::find($substatusId);
+        return $sub && (int) $sub->lead_status_id === (int) $statusId;
     }
 
     /**
@@ -282,6 +425,12 @@ class LeadAssignmentService
     private function configFirstStatusId(): ?int
     {
         $v = Setting::get('lead_first_status_id', null);
+        return is_numeric($v) ? (int) $v : null;
+    }
+
+    private function configFirstSubstatusId(): ?int
+    {
+        $v = Setting::get('lead_first_substatus_id', null);
         return is_numeric($v) ? (int) $v : null;
     }
 }

@@ -443,6 +443,14 @@ Route::post('/leads', [LeadController::class, 'store'])
 Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::post('/leads/{lead}/interactions', [LeadInteractionController::class, 'store']);
+
+    // Registro de primeiro contato — usado pelo banner dentro de lead.php.
+    // Fecha o SLA (sla_status='met'), opcionalmente move o lead pra etapa+subetapa
+    // definidas em /configuracoes (lead_after_first_contact_status_id/substatus_id)
+    // e loga LeadHistory (first_contact + status_change + substatus_change quando aplicável).
+    // Permissão: corretor responsável, admin ou gestor.
+    Route::post('/leads/{id}/first-contact', [LeadController::class, 'firstContact']);
+
     Route::get('/leads/{lead}', [LeadController::class, 'show']);
     // LGPD: devolve o valor cleartext de um campo sensível (fixo ou custom)
     // e registra LeadHistory type='pii_revealed'. Permissão: gestor/admin

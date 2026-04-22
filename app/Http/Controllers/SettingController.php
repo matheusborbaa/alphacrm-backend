@@ -83,6 +83,26 @@ class SettingController extends Controller
             'type'    => 'int_or_null',
             'default' => null,
         ],
+        // Subetapa opcional pra acompanhar lead_first_status_id.
+        // null = não seta subetapa (ou a etapa escolhida não tem subetapa).
+        'lead_first_substatus_id' => [
+            'type'    => 'int_or_null',
+            'default' => null,
+        ],
+
+        // =================== PÓS PRIMEIRO CONTATO =======================
+        // Quando o corretor clica em "Registrar primeiro contato" no lead,
+        // o lead muda pra essa etapa + subetapa. null em qualquer das duas
+        // = não mexe naquele campo. Útil pra fluxo tipo:
+        //   Aguardando atendimento → Em atendimento / Qualificação
+        'lead_after_first_contact_status_id' => [
+            'type'    => 'int_or_null',
+            'default' => null,
+        ],
+        'lead_after_first_contact_substatus_id' => [
+            'type'    => 'int_or_null',
+            'default' => null,
+        ],
     ];
 
     /** Lista TODAS as configurações (chave => valor). Só chaves conhecidas. */

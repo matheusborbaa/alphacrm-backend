@@ -896,5 +896,139 @@ $lead->load([
     return new LeadResource($lead);
 }
 
-   
+    /**
+     * POST /leads/{id}/first-contact
+     *
+     * O corretor dono do lead marca que fez o primeiro contato. Isso:
+     *   - Cumpre o SLA (sla_status: pending → met). Com 'met', o
+     *     CheckLeadSlaJob ignora o lead e não reatribui por SLA vencido.
+     *   - Opcionalmente move o lead pra etapa+subetapa configuradas em
+     *     lead_after_first_contact_status_id / ..._substatus_id.
+     *   - Grava LeadHistory com o evento + mudanças de etapa/subetapa.
+     *
+     * Regras de acesso:
+     *   - Só o corretor dono do lead OU admin/gestor pode chamar.
+     *   - Só funciona se sla_status === 'pending'. Idempotente: se já foi
+     *     marcado, retorna 409 com mensagem amigável.
+     *
+     * Validação de campos obrigatórios (RequiredFields da etapa destino)
+     * fica no FRONTEND — o modal RequiredFields wizard chama esse endpoint
+     * DEPOIS de já ter gravado os custom fields. Backend aqui só move.
+     */
+    public function firstContact(Request $request, $id)
+    {
+        $lead = Lead::findOrFail($id);
+        $user = $request->user();
+
+        // ---- AUTORIZAÇÃO -----------------------------------------------
+        $role = strtolower(trim((string) ($user->role ?? '')));
+        $isOwner = (int) $lead->assigned_user_id === (int) $user->id;
+        if (!$isOwner && !in_array($role, ['admin', 'gestor'], true)) {
+            return response()->json([
+                'message' => 'Você não é o corretor responsável por esse lead.'
+            ], 403);
+        }
+
+        // ---- IDEMPOTÊNCIA ----------------------------------------------
+        if (strtolower((string) $lead->sla_status) !== 'pending') {
+            return response()->json([
+                'message'    => 'Primeiro contato já foi registrado (ou SLA já encerrou).',
+                'sla_status' => $lead->sla_status,
+            ], 409);
+        }
+
+        // ---- LÊ CONFIG DE DESTINO --------------------------------------
+        $toStatusId = \App\Models\Setting::get('lead_after_first_contact_status_id', null);
+        $toSubId    = \App\Models\Setting::get('lead_after_first_contact_substatus_id', null);
+        $toStatusId = is_numeric($toStatusId) ? (int) $toStatusId : null;
+        $toSubId    = is_numeric($toSubId)    ? (int) $toSubId    : null;
+
+        $oldStatusId = $lead->status_id;
+        $oldSubId    = $lead->lead_substatus_id;
+
+        // Se a subetapa configurada não pertence à etapa de destino (ou à
+        // atual, se não vamos mover), ignora — evita inconsistência.
+        if ($toSubId) {
+            $targetStatus = $toStatusId ?: $oldStatusId;
+            $sub = \App\Models\LeadSubstatus::find($toSubId);
+            if (!$sub || (int) $sub->lead_status_id !== (int) $targetStatus) {
+                $toSubId = null;
+            }
+        }
+
+        $update = ['sla_status' => 'met'];
+        $statusChanged = false;
+        $subChanged    = false;
+
+        if ($toStatusId && $toStatusId !== $oldStatusId) {
+            $update['status_id']         = $toStatusId;
+            $update['status_changed_at'] = now();
+            $statusChanged = true;
+        }
+        if ($toSubId !== null && $toSubId !== $oldSubId) {
+            $update['lead_substatus_id'] = $toSubId;
+            $subChanged = true;
+        }
+
+        // Guarda dados de interação (usado p/ relatório "tempo até 1ª resposta")
+        $update['last_interaction_at'] = now();
+
+        $lead->update($update);
+
+        // ---- HISTÓRICOS ------------------------------------------------
+        try {
+            LeadHistory::create([
+                'lead_id'     => $lead->id,
+                'user_id'     => $user->id,
+                'type'        => 'first_contact',
+                'from'        => null,
+                'to'          => null,
+                'description' => 'Primeiro contato registrado — SLA cumprido',
+            ]);
+
+            if ($statusChanged) {
+                $fromName = $oldStatusId
+                    ? optional(\App\Models\LeadStatus::find($oldStatusId))->name
+                    : null;
+                $toName = optional(\App\Models\LeadStatus::find($toStatusId))->name;
+                LeadHistory::create([
+                    'lead_id'     => $lead->id,
+                    'user_id'     => $user->id,
+                    'type'        => 'status_change',
+                    'from'        => $fromName,
+                    'to'          => $toName,
+                    'description' => 'Etapa alterada após primeiro contato',
+                ]);
+            }
+
+            if ($subChanged) {
+                $fromSub = $oldSubId
+                    ? optional(\App\Models\LeadSubstatus::find($oldSubId))->name
+                    : null;
+                $toSub = $toSubId
+                    ? optional(\App\Models\LeadSubstatus::find($toSubId))->name
+                    : null;
+                LeadHistory::create([
+                    'lead_id'     => $lead->id,
+                    'user_id'     => $user->id,
+                    'type'        => 'substatus_change',
+                    'from'        => $fromSub,
+                    'to'          => $toSub,
+                    'description' => 'Subetapa alterada após primeiro contato',
+                ]);
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Falha ao gravar histórico de first_contact', [
+                'lead_id' => $lead->id,
+                'error'   => $e->getMessage(),
+            ]);
+        }
+
+        return response()->json([
+            'success'    => true,
+            'sla_status' => 'met',
+            'lead'       => $lead->fresh(['status', 'substatus', 'corretor']),
+        ]);
+    }
+
 }
