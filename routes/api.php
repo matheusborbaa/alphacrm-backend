@@ -488,6 +488,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get   ('/leads/{lead}/documents',                                  [LeadDocumentController::class, 'index']);
     Route::post  ('/leads/{lead}/documents',                                  [LeadDocumentController::class, 'store']);
     Route::get   ('/leads/{lead}/documents/{document}/download',              [LeadDocumentController::class, 'download']);
+    Route::get   ('/leads/{lead}/documents/{document}/preview',               [LeadDocumentController::class, 'preview']);
     Route::post  ('/leads/{lead}/documents/{document}/request-deletion',      [LeadDocumentController::class, 'requestDeletion']);
     Route::post  ('/leads/{lead}/documents/{document}/cancel-deletion',       [LeadDocumentController::class, 'cancelDeletionRequest']);
     Route::post  ('/leads/{lead}/documents/{document}/approve-deletion',      [LeadDocumentController::class, 'approveDeletion']);

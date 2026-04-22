@@ -226,6 +226,62 @@ class LeadDocumentController extends Controller
         }, $document->original_name, $headers);
     }
 
+    /**
+     * Preview inline — serve o arquivo com Content-Disposition: inline pra
+     * exibir direto no navegador (via iframe/img no blob URL do frontend).
+     *
+     * Mesmas regras do download (auth, LGPD, lixeira), mas loga em
+     * lead_document_accesses com action='preview' pra separar métrica de
+     * visualização de download efetivo.
+     */
+    public function preview(Request $request, Lead $lead, LeadDocument $document): StreamedResponse
+    {
+        $this->authorize('view', $lead);
+        $this->ensureDocBelongsToLead($lead, $document);
+
+        // Mesmo bloqueio LGPD do download: doc com solicitação em aberto ou
+        // em retenção só abre pra admin/gestor.
+        if (
+            ($document->isDeletionPending() || $document->deleted_at !== null)
+            && !$this->userIsAdminOrManager()
+        ) {
+            abort(403, 'Documento indisponível: há uma solicitação de exclusão em aberto. Apenas admin/gestor podem acessar.');
+        }
+
+        $disk = Storage::disk('local');
+        $path = $this->resolveStoragePath($disk, $document->storage_path);
+
+        if ($path === null) {
+            abort(404, 'Arquivo não encontrado no storage.');
+        }
+
+        // Log do acesso com action='preview' (distingue de download pro audit log).
+        $this->logAccess($request, $lead, $document, 'preview');
+
+        $mime = $document->mime_type ?: 'application/octet-stream';
+        $size = (int) $document->size_bytes;
+
+        // Sanitiza nome do arquivo pro header (evita quebra de linha / aspas).
+        $safeName = str_replace(['"', "\r", "\n"], ['\\"', '', ''], (string) $document->original_name);
+
+        $headers = [
+            'Content-Type'        => $mime,
+            'Content-Disposition' => 'inline; filename="' . $safeName . '"',
+            'Cache-Control'       => 'private, no-store, no-cache, must-revalidate',
+            'Pragma'              => 'no-cache',
+            // Permite embed via iframe/img no mesmo domínio do frontend.
+            'X-Content-Type-Options' => 'nosniff',
+        ];
+        if ($size > 0) $headers['Content-Length'] = (string) $size;
+
+        return new StreamedResponse(function () use ($disk, $path) {
+            $stream = $disk->readStream($path);
+            if ($stream === null || $stream === false) return;
+            fpassthru($stream);
+            if (is_resource($stream)) fclose($stream);
+        }, 200, $headers);
+    }
+
     private function resolveStoragePath($disk, string $stored): ?string
     {
         if ($disk->exists($stored)) return $stored;
