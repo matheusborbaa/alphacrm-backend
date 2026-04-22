@@ -459,6 +459,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
     | role aqui — a proteção continua funcionando mesmo se alguém trocar
     | a rota por engano.
     */
+    // Lista GLOBAL de solicitações de exclusão pendentes (admin-only).
+    // Fica antes da rota com {lead} pra não ser interpretada como lead_id.
+    Route::get   ('/documents/pending-deletions',                             [LeadDocumentController::class, 'pendingDeletions']);
+
     Route::get   ('/leads/{lead}/documents',                                  [LeadDocumentController::class, 'index']);
     Route::post  ('/leads/{lead}/documents',                                  [LeadDocumentController::class, 'store']);
     Route::get   ('/leads/{lead}/documents/{document}/download',              [LeadDocumentController::class, 'download']);

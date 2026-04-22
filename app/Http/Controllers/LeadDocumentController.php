@@ -71,6 +71,40 @@ class LeadDocumentController extends Controller
     }
 
     /* ==============================================================
+     * PENDING DELETIONS (CROSS-LEAD)
+     * ==============================================================
+     * Lista GLOBAL de solicitações de exclusão pendentes — alimenta a
+     * página /solicitacoes-exclusao.php. Só admin tem acesso porque só
+     * admin pode aprovar/rejeitar mesmo (gestor/corretor já veem a
+     * solicitação dentro do próprio lead).
+     *
+     * Retorna o doc + dados mínimos do lead pra navegação.
+     */
+    public function pendingDeletions(Request $request)
+    {
+        $this->ensureAdmin();
+
+        $docs = LeadDocument::with([
+                'uploader:id,name',
+                'deletionRequester:id,name',
+                'lead:id,name',
+            ])
+            ->whereNotNull('deletion_requested_at')
+            ->orderBy('deletion_requested_at', 'asc') // mais antiga primeiro
+            ->get()
+            ->map(function ($d) {
+                $base = $this->present($d);
+                $base['lead'] = $d->relationLoaded('lead') && $d->lead ? [
+                    'id'   => $d->lead->id,
+                    'name' => $d->lead->name,
+                ] : null;
+                return $base;
+            });
+
+        return response()->json($docs);
+    }
+
+    /* ==============================================================
      * UPLOAD
      * ============================================================== */
     public function store(Request $request, Lead $lead)
@@ -95,15 +129,25 @@ class LeadDocumentController extends Controller
 
         // Nome no disco: uuid + extensão original (evita colisão e injeção
         // de path via filename). Original_name continua na tabela pra UI.
-        $ext         = $file->getClientOriginalExtension();
-        $diskName    = (string) Str::uuid() . ($ext ? '.' . strtolower($ext) : '');
-        $storagePath = "private/leads/{$lead->id}/{$diskName}";
+        $ext      = $file->getClientOriginalExtension();
+        $diskName = (string) Str::uuid() . ($ext ? '.' . strtolower($ext) : '');
 
-        Storage::disk('local')->putFileAs(
-            "private/leads/{$lead->id}",
+        // IMPORTANTE: no Laravel 11, o disk 'local' tem root em
+        // storage/app/private/. Por isso o prefixo do path relativo é
+        // só 'leads/{id}' — o 'private/' NÃO entra, senão duplicaria a pasta.
+        // Usamos o retorno do putFileAs como storage_path canônico pra garantir
+        // que exists()/readStream() usem o mesmíssimo valor na hora do download.
+        $storagePath = Storage::disk('local')->putFileAs(
+            "leads/{$lead->id}",
             $file,
             $diskName
         );
+
+        if (!$storagePath) {
+            return response()->json([
+                'message' => 'Falha ao gravar o arquivo no storage.',
+            ], 500);
+        }
 
         $doc = LeadDocument::create([
             'lead_id'          => $lead->id,
@@ -123,20 +167,67 @@ class LeadDocumentController extends Controller
 
     /* ==============================================================
      * DOWNLOAD
-     * ============================================================== */
+     * ==============================================================
+     * Usa streamDownload (fpassthru) em vez de Storage::download() pra
+     * não depender de X-Sendfile/X-Accel-Redirect — alguns hosts não
+     * respondem certo com os headers do sendFile do Symfony.
+     *
+     * Fallback de path: docs antigos foram salvos com 'private/' hardcoded
+     * no início do storage_path (bug da v1). A gente tenta o valor do banco
+     * primeiro; se não existir, tenta sem o prefixo 'private/'.
+     */
     public function download(Lead $lead, LeadDocument $document): StreamedResponse
     {
         $this->authorize('view', $lead);
         $this->ensureDocBelongsToLead($lead, $document);
 
-        if (!Storage::disk('local')->exists($document->storage_path)) {
+        $disk = Storage::disk('local');
+        $path = $this->resolveStoragePath($disk, $document->storage_path);
+
+        if ($path === null) {
             abort(404, 'Arquivo não encontrado no storage.');
         }
 
-        return Storage::disk('local')->download(
-            $document->storage_path,
-            $document->original_name
-        );
+        $mime = $document->mime_type ?: 'application/octet-stream';
+        $size = (int) $document->size_bytes;
+
+        $headers = [
+            'Content-Type'        => $mime,
+            'Content-Description' => 'File Transfer',
+            'Cache-Control'       => 'no-store, no-cache, must-revalidate',
+            'Pragma'              => 'no-cache',
+        ];
+        if ($size > 0) $headers['Content-Length'] = (string) $size;
+
+        return response()->streamDownload(function () use ($disk, $path) {
+            $stream = $disk->readStream($path);
+            if ($stream === null || $stream === false) {
+                // Já passou pelo exists(); se chegou aqui e falhou, aborta
+                // silenciosamente pro browser — o navegador mostra "arquivo corrompido".
+                return;
+            }
+            fpassthru($stream);
+            if (is_resource($stream)) fclose($stream);
+        }, $document->original_name, $headers);
+    }
+
+    /**
+     * Tenta localizar o arquivo no disk. Se o path gravado tem 'private/'
+     * como prefixo (docs antigos), retorna o path sem o prefixo quando ele
+     * não existe com o prefixo. Null = arquivo não encontrado em nenhum lugar.
+     */
+    private function resolveStoragePath($disk, string $stored): ?string
+    {
+        if ($disk->exists($stored)) return $stored;
+
+        // Compat: docs gravados na v1 tinham 'private/' hardcoded no path,
+        // mas o disk 'local' no Laravel 11 já aponta pra storage/app/private.
+        if (str_starts_with($stored, 'private/')) {
+            $fallback = substr($stored, 8);
+            if ($disk->exists($fallback)) return $fallback;
+        }
+
+        return null;
     }
 
     /* ==============================================================
@@ -213,7 +304,10 @@ class LeadDocumentController extends Controller
 
         // Remove o arquivo do disco (se existir) e a row. Hard delete porque
         // LGPD pede apagar, e o LeadHistory mantém o rastro.
-        Storage::disk('local')->delete($document->storage_path);
+        // Usa resolveStoragePath pro mesmo fallback do download (docs antigos).
+        $disk = Storage::disk('local');
+        $real = $this->resolveStoragePath($disk, $document->storage_path);
+        if ($real !== null) $disk->delete($real);
         $document->delete();
 
         $this->logHistory($lead, 'document_deleted', $name);
