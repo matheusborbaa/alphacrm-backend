@@ -14,6 +14,7 @@ use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Str;
 use App\Services\LeadAssignmentService;
 use App\Mail\WelcomeUserMail;
+use App\Mail\ResetPasswordMail;
 
 /**
  * CRUD de usuários (corretores, gestores, admins).
@@ -265,19 +266,47 @@ class UserController extends Controller
     }
 
     /**
-     * POST /users/{user}/send-invite — gera link de reset de senha e devolve
-     * pra o admin enviar (ou o backend dispara o email do Laravel).
+     * POST /users/{user}/send-invite
+     *
+     * Reenvio do convite / link de redefinição de senha. Mesmo fluxo do
+     * "Esqueci minha senha": gera token no `password_reset_tokens` via
+     * broker e dispara o ResetPasswordMail (que aponta pro frontend em
+     * /reset-password.html?token=...&email=...).
+     *
+     * Por que NÃO usar `Password::sendResetLink()`?
+     *   - Ela dispara a notificação default do Laravel, que tenta resolver
+     *     `route('password.reset', ...)` pra montar o URL. Essa rota só
+     *     existe se o projeto usa o Auth UI do Laravel — não é o nosso
+     *     caso (reset vive no frontend estático). Resultado: 500 no send.
+     *
+     * Se o envio falhar (SMTP off, credenciais erradas), devolve 500 com
+     * mensagem clara em vez de deixar propagar um stack trace pro front.
      */
     public function sendInvite(Request $request, User $user)
     {
         $this->authorize('update', $user);
 
-        // Usa o password broker do Laravel pra gerar o token
-        $status = Password::sendResetLink(['email' => $user->email]);
+        // Gera um token fresco (substitui qualquer um que esteja ativo pra esse
+        // email) na mesma tabela usada pelo fluxo /auth/forgot-password.
+        $token = Password::broker()->createToken($user);
+
+        try {
+            Mail::to($user->email)->send(new ResetPasswordMail($user, $token));
+        } catch (\Throwable $e) {
+            \Log::error('Falha ao enviar convite/link de redefinição', [
+                'user_id' => $user->id,
+                'error'   => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Não foi possível enviar o email. Verifique a configuração SMTP em Configurações → Email.',
+            ], 500);
+        }
 
         return response()->json([
-            'status'  => $status,
-            'success' => $status === Password::RESET_LINK_SENT,
+            'success' => true,
+            'message' => "Link de redefinição de senha enviado pra {$user->email}.",
         ]);
     }
 
