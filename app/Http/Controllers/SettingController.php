@@ -76,6 +76,15 @@ class SettingController extends Controller
             'max'     => 1440,
         ],
 
+        // Quando SLA expira, se ligado o job reatribui o lead (tira do
+        // corretor atual e joga na fila pro próximo disponível). Se
+        // desligado, o lead só é marcado 'expired' e continua com o
+        // corretor — o gestor decide o que fazer. Default: true.
+        'lead_sla_reassign_on_breach' => [
+            'type'    => 'bool',
+            'default' => true,
+        ],
+
         // =================== STATUS INICIAL DO RODÍZIO ==================
         // Quando o lead cai no rodízio, muda pra essa etapa (ex:
         // "Aguardando atendimento"). null = não mexe no status atual.

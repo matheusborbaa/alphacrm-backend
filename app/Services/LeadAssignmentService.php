@@ -121,33 +121,67 @@ class LeadAssignmentService
      */
     public function reassignForSla(Lead $lead): ?User
     {
-        $currentId = $lead->assigned_user_id;
-        $current   = $currentId ? User::find($currentId) : null;
+        $currentId   = $lead->assigned_user_id;
+        $current     = $currentId ? User::find($currentId) : null;
+        $currentName = $current?->name;
 
-        $next = $this->pickNextAvailable();
+        // Exclui o corretor atual da fila pra esse ciclo — ele FALHOU o SLA,
+        // não pode receber o lead de volta imediatamente. Se ele for o único
+        // elegível, cai no branch "só ele está disponível" e mantemos com
+        // novo prazo (conforme política "tirar só se houver outro").
+        $next = $this->pickNextAvailable($currentId);
 
-        // Ninguém na fila: tenta reter com o corretor atual se ainda estiver
-        // elegível; senão, orfaniza.
+        // Ninguém além do corretor atual disponível: mantém com ele +
+        // novo prazo (política "tirar só se houver outro").
         if (!$next) {
             if ($current && $this->isEligible($current)) {
                 $this->resetSlaOnly($lead, $current);
                 return $current;
             }
+            // Nem o atual tá elegível (offline/inativo) e ninguém mais disponível:
+            // vai pra fila de órfãos.
+            $this->logReturnedToQueue($lead, $currentName, 'orphan');
             $this->handleOrphan($lead);
             return null;
         }
 
-        // Só o mesmo está disponível: reseta SLA e loga retry.
-        if ($current && (int) $next->id === (int) $current->id) {
-            $this->resetSlaOnly($lead, $current);
-            return $current;
-        }
-
-        // Outro corretor: reatribui via pipeline normal.
-        $this->applyAssignment($lead, $next);
+        // Outro corretor disponível: reatribui. Usa preserveStage=true pra
+        // NÃO forçar lead_first_status_id (decisão de produto: lead mantém
+        // a etapa atual quando sai do corretor por breach de SLA).
+        $this->logReturnedToQueue($lead, $currentName, 'reassigned', $next->name);
+        $this->applyAssignment($lead, $next, true);
         $this->applyCooldown($next);
         $this->notifyBroker($next, $lead);
         return $next;
+    }
+
+    /**
+     * Loga histórico explícito de "lead devolvido à fila por SLA vencido",
+     * detalhando de qual corretor saiu e pra onde foi (outro corretor ou
+     * fila de órfãos). Complementa o 'sla_expired' (genérico) com um evento
+     * direcional pra auditoria.
+     */
+    private function logReturnedToQueue(Lead $lead, ?string $fromName, string $mode, ?string $toName = null): void
+    {
+        try {
+            LeadHistory::create([
+                'lead_id'     => $lead->id,
+                'user_id'     => null,
+                'type'        => $mode === 'orphan'
+                    ? 'sla_breach_orphaned'
+                    : 'sla_breach_returned_to_queue',
+                'from'        => $fromName,
+                'to'          => $toName,
+                'description' => $mode === 'orphan'
+                    ? 'Lead removido do corretor por SLA vencido e devolvido à fila (nenhum corretor disponível — órfão)'
+                    : 'Lead removido do corretor por SLA vencido e reatribuído ao próximo da fila',
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Falha ao gravar histórico de SLA returned_to_queue', [
+                'lead_id' => $lead->id,
+                'error'   => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
@@ -188,12 +222,18 @@ class LeadAssignmentService
      * do lead + entradas de histórico pra:
      *   - atribuição (sempre — from/to corretor)
      *   - mudança de etapa/subetapa (se houve)
+     *
+     * @param bool $preserveStage Quando true, NÃO aplica
+     *   lead_first_status_id/substatus_id — usado pelo fluxo de reassign
+     *   por SLA pra preservar o contexto da etapa atual (ex: lead já tava
+     *   em "Em atendimento" e o SLA estourou → o novo corretor continua
+     *   em "Em atendimento", não volta pra "Aguardando atendimento").
      */
-    private function applyAssignment(Lead $lead, User $corretor): void
+    private function applyAssignment(Lead $lead, User $corretor, bool $preserveStage = false): void
     {
         $slaMinutes       = $this->configSlaMinutes();
-        $firstStatusId    = $this->configFirstStatusId();
-        $firstSubstatusId = $this->configFirstSubstatusId();
+        $firstStatusId    = $preserveStage ? null : $this->configFirstStatusId();
+        $firstSubstatusId = $preserveStage ? null : $this->configFirstSubstatusId();
 
         $oldStatusId    = $lead->status_id;
         $oldSubstatusId = $lead->lead_substatus_id;
@@ -341,17 +381,27 @@ class LeadAssignmentService
         return true;
     }
 
-    private function pickNextAvailable(): ?User
+    /**
+     * @param int|null $excludeUserId User a ser ignorado na seleção (ex:
+     *   corretor que acabou de falhar o SLA — não pode receber de volta
+     *   imediatamente). Se o único elegível for o excluído, retorna null.
+     */
+    private function pickNextAvailable(?int $excludeUserId = null): ?User
     {
-        return User::where('role', 'corretor')
+        $q = User::where('role', 'corretor')
             ->where('active', true)
             ->where('status_corretor', 'disponivel')
             ->where(function ($q) {
                 // Cooldown nulo OU expirado = elegível.
                 $q->whereNull('cooldown_until')
                   ->orWhere('cooldown_until', '<=', now());
-            })
-            ->orderByRaw('last_lead_assigned_at IS NULL DESC')
+            });
+
+        if ($excludeUserId) {
+            $q->where('id', '!=', $excludeUserId);
+        }
+
+        return $q->orderByRaw('last_lead_assigned_at IS NULL DESC')
             ->orderBy('last_lead_assigned_at', 'asc')
             ->first();
     }

@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\Lead;
 use App\Models\LeadHistory;
+use App\Models\Setting;
 use App\Models\User;
 use App\Services\LeadAssignmentService;
 use Illuminate\Bus\Queueable;
@@ -48,6 +49,11 @@ class CheckLeadSlaJob implements ShouldQueue
             return;
         }
 
+        // Flag de configuração. Se desligada, o job só marca o lead como
+        // expired + loga histórico, mas NÃO reatribui — o gestor decide
+        // manualmente se devolve pra fila ou deixa com o mesmo corretor.
+        $reassignEnabled = (bool) Setting::get('lead_sla_reassign_on_breach', true);
+
         $assignmentService = new LeadAssignmentService();
 
         foreach ($leads as $lead) {
@@ -59,8 +65,8 @@ class CheckLeadSlaJob implements ShouldQueue
 
             // 2) histórico do 'sla_expired' — registro auditoria que o prazo
             //    passou antes do primeiro contato. O registro da eventual
-            //    reatribuição sai do próprio LeadAssignmentService (assigned
-            //    ou sla_retry_same_broker).
+            //    reatribuição sai do próprio LeadAssignmentService
+            //    ('sla_breach_returned_to_queue' ou 'sla_breach_orphaned').
             try {
                 LeadHistory::create([
                     'lead_id'     => $lead->id,
@@ -68,7 +74,9 @@ class CheckLeadSlaJob implements ShouldQueue
                     'type'        => 'sla_expired',
                     'from'        => $oldCorretorName,
                     'to'          => null,
-                    'description' => 'SLA de primeira resposta expirou — buscando reatribuição',
+                    'description' => $reassignEnabled
+                        ? 'SLA de primeira resposta expirou — buscando reatribuição'
+                        : 'SLA de primeira resposta expirou — lead mantido com o corretor (reatribuição automática desligada)',
                 ]);
             } catch (\Throwable $e) {
                 Log::warning('Falha ao gravar histórico de sla_expired', [
@@ -77,7 +85,13 @@ class CheckLeadSlaJob implements ShouldQueue
                 ]);
             }
 
-            // 3) reatribui (outro corretor, mesmo corretor, ou órfão)
+            // 3) reatribui (outro corretor, mesmo corretor, ou órfão) —
+            //    SÓ se a flag permitir. Quando desligada, paramos aqui:
+            //    lead fica marcado 'expired' e o corretor continua com ele.
+            if (!$reassignEnabled) {
+                continue;
+            }
+
             try {
                 $assignmentService->reassignForSla($lead);
             } catch (\Throwable $e) {
