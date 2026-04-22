@@ -3,6 +3,8 @@ use App\Http\Controllers\EmailController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\LeadInteractionController;
 use App\Http\Controllers\LeadController;
+use App\Http\Controllers\LeadDocumentController;
+use App\Http\Controllers\SettingController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DashboardHomeController;
 use App\Http\Controllers\MarketingReportController;
@@ -439,6 +441,50 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::put('/leads/editar/{lead}', [LeadController::class, 'update']);
     Route::delete('/leads/{lead}', [LeadController::class, 'destroy']);
 
+    /*
+    |----------------------------------------------------------------------
+    | DOCUMENTOS DO LEAD
+    |----------------------------------------------------------------------
+    | Uploads ficam em storage/app/private/leads/{lead}/ — nunca servidos
+    | estaticamente. Download sempre passa pelo controller, que valida
+    | permissão via LeadPolicy@view.
+    |
+    | Fluxo de exclusão (produto):
+    |  - qualquer usuário com acesso ao lead SOLICITA (request-deletion)
+    |  - o solicitante pode CANCELAR a própria solicitação
+    |  - apenas admin APROVA (remove arquivo + row) ou REJEITA
+    |
+    | O LeadDocumentController encapsula a checagem de role='admin' para
+    | approve/reject (ensureAdmin), então não precisamos de middleware
+    | role aqui — a proteção continua funcionando mesmo se alguém trocar
+    | a rota por engano.
+    */
+    Route::get   ('/leads/{lead}/documents',                                  [LeadDocumentController::class, 'index']);
+    Route::post  ('/leads/{lead}/documents',                                  [LeadDocumentController::class, 'store']);
+    Route::get   ('/leads/{lead}/documents/{document}/download',              [LeadDocumentController::class, 'download']);
+    Route::post  ('/leads/{lead}/documents/{document}/request-deletion',      [LeadDocumentController::class, 'requestDeletion']);
+    Route::post  ('/leads/{lead}/documents/{document}/cancel-deletion',       [LeadDocumentController::class, 'cancelDeletionRequest']);
+    Route::post  ('/leads/{lead}/documents/{document}/approve-deletion',      [LeadDocumentController::class, 'approveDeletion']);
+    Route::post  ('/leads/{lead}/documents/{document}/reject-deletion',       [LeadDocumentController::class, 'rejectDeletion']);
+
+});
+
+
+/*
+|--------------------------------------------------------------------------
+| SETTINGS (CONFIGURAÇÕES GLOBAIS)
+|--------------------------------------------------------------------------
+| Leitura: qualquer usuário autenticado (páginas leem flags como
+| watermark_enabled pra decidir comportamento).
+| Escrita: só admin — o controller valida role via ensureAdmin().
+|
+| Chaves conhecidas ficam no array ALLOWED_KEYS do controller; chave
+| desconhecida retorna 404 tanto em leitura quanto em escrita.
+*/
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/settings',            [SettingController::class, 'index']);
+    Route::get('/settings/{key}',      [SettingController::class, 'show']);
+    Route::put('/settings/{key}',      [SettingController::class, 'update']);
 });
 
 
