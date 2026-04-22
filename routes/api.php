@@ -193,6 +193,15 @@ Route::middleware('auth:sanctum')->get('/lead-status', function () {
 */
 Route::post('/auth/login', [AuthController::class, 'login']);
 
+// Fluxo de recuperação de senha. Ambas as rotas são públicas (sem auth):
+//  - forgot-password recebe email e dispara o ResetPasswordMail;
+//  - reset-password recebe email+token+senha nova e grava a senha.
+// Throttle por IP pra dificultar abuso (5 tentativas/minuto).
+Route::post('/auth/forgot-password', [AuthController::class, 'forgotPassword'])
+    ->middleware('throttle:5,1');
+Route::post('/auth/reset-password', [AuthController::class, 'resetPassword'])
+    ->middleware('throttle:5,1');
+
 
 /*
 |--------------------------------------------------------------------------
