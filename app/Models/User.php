@@ -34,6 +34,9 @@ class User extends Authenticatable
         // o DB nunca persiste a mudança (bug: select do corretor "voltava"
         // pra offline sempre que a home recarregava).
         'status_corretor',
+        // Cooldown pós-lead: timestamp até quando o corretor fica "travado"
+        // sem receber novos leads, mesmo que esteja 'disponivel'.
+        'cooldown_until',
     ];
 
    
@@ -57,6 +60,8 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'last_lead_assigned_at' => 'datetime',
+            'cooldown_until' => 'datetime',
         ];
     }
 	

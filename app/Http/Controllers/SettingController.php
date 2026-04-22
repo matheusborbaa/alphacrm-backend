@@ -46,6 +46,43 @@ class SettingController extends Controller
             'type'    => 'bool',
             'default' => true,
         ],
+
+        // =================== COOLDOWN PÓS-LEAD ==========================
+        // Quando o rodízio entrega um lead pra um corretor, se esse toggle
+        // estiver ligado, o corretor vira 'ocupado' automaticamente por
+        // lead_cooldown_minutes. Durante esse período não recebe leads.
+        'lead_cooldown_enabled' => [
+            'type'    => 'bool',
+            'default' => false,
+        ],
+        'lead_cooldown_minutes' => [
+            'type'    => 'int',
+            'default' => 2,
+            'min'     => 0,
+            'max'     => 120,
+        ],
+
+        // =================== SLA DE ATENDIMENTO =========================
+        // Prazo em minutos pra corretor fazer primeira interação após
+        // receber o lead. 0 ou disabled = não grava sla_deadline_at.
+        'lead_sla_enabled' => [
+            'type'    => 'bool',
+            'default' => true,
+        ],
+        'lead_sla_minutes' => [
+            'type'    => 'int',
+            'default' => 15,
+            'min'     => 0,
+            'max'     => 1440,
+        ],
+
+        // =================== STATUS INICIAL DO RODÍZIO ==================
+        // Quando o lead cai no rodízio, muda pra essa etapa (ex:
+        // "Aguardando atendimento"). null = não mexe no status atual.
+        'lead_first_status_id' => [
+            'type'    => 'int_or_null',
+            'default' => null,
+        ],
     ];
 
     /** Lista TODAS as configurações (chave => valor). Só chaves conhecidas. */
@@ -85,14 +122,18 @@ class SettingController extends Controller
         $raw  = $request->input('value');
 
         $value = $this->coerce($raw, $meta['type'], $meta);
-        if ($value === null && $raw !== null && $meta['type'] !== 'mixed') {
+
+        // int_or_null aceita null explicitamente ("desligado"), então não
+        // falha quando $value === null — nos demais tipos, null = erro.
+        $allowNull = in_array($meta['type'], ['int_or_null', 'mixed'], true);
+        if ($value === null && $raw !== null && !$allowNull) {
             return response()->json([
                 'message' => "Valor inválido pra '{$key}' (esperado {$meta['type']}).",
             ], 422);
         }
 
         // Clamp pra tipos com range (int com min/max)
-        if ($meta['type'] === 'int' && $value !== null) {
+        if (in_array($meta['type'], ['int', 'int_or_null'], true) && $value !== null) {
             if (isset($meta['min']) && $value < $meta['min']) {
                 return response()->json([
                     'message' => "Valor mínimo pra '{$key}' é {$meta['min']}.",
@@ -132,6 +173,11 @@ class SettingController extends Controller
                         : (in_array($raw, [0, '0', 'false', 'off', 'no', '', null], true) ? false
                         : null)),
             'int'    => is_numeric($raw) ? (int) $raw : null,
+            // int_or_null: '', null, 'null' e 0/negativo não-numérico viram null ("desligado");
+            // números válidos (incluindo "0") viram int. Usado por lead_first_status_id.
+            'int_or_null' => ($raw === null || $raw === '' || $raw === 'null')
+                ? null
+                : (is_numeric($raw) ? (int) $raw : null),
             'string' => is_string($raw) ? $raw : null,
             'enum'   => is_string($raw) ? $raw : null,
             default  => $raw, // 'mixed' — aceita tudo

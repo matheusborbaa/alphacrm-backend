@@ -298,6 +298,11 @@ class UserController extends Controller
      *
      * Valores aceitos: 'disponivel' | 'ocupado' | 'offline'.
      *
+     * Cooldown (defense-in-depth — frontend já desabilita o select):
+     *   - Se o corretor tem `cooldown_until` no futuro, bloqueamos mudança
+     *     pra 'disponivel' ou 'ocupado'. Só permitimos 'offline' (se ele
+     *     quiser sair antes de terminar o turno, ok — zeramos o cooldown).
+     *
      * Efeitos colaterais:
      *   - Se virou 'disponivel', tentamos auto-atribuir o lead órfão mais
      *     antigo pra esse corretor via LeadAssignmentService::tryClaimNextOrphan().
@@ -315,7 +320,26 @@ class UserController extends Controller
         $before = strtolower((string) ($user->status_corretor ?? ''));
         $after  = $data['status'];
 
-        $user->update(['status_corretor' => $after]);
+        // ---- COOLDOWN GUARD -----------------------------------------
+        // Se tem cooldown_until no futuro, só aceita ir pra 'offline'.
+        $inCooldown = $user->cooldown_until && $user->cooldown_until->isFuture();
+        if ($inCooldown && $after !== 'offline') {
+            return response()->json([
+                'message'        => 'Você está em cooldown após receber um lead. Aguarde o fim do período pra mudar o status.',
+                'cooldown_until' => $user->cooldown_until->toIso8601String(),
+                'current_status' => $before,
+            ], 422);
+        }
+
+        $payload = ['status_corretor' => $after];
+
+        // Indo pra 'offline' durante cooldown: zera o cooldown pra não
+        // deixar lixo no banco (quando ele voltar, vai vir limpo).
+        if ($inCooldown && $after === 'offline') {
+            $payload['cooldown_until'] = null;
+        }
+
+        $user->update($payload);
 
         $claimed = null;
         if ($after === 'disponivel' && $before !== 'disponivel') {
@@ -324,8 +348,9 @@ class UserController extends Controller
         }
 
         return response()->json([
-            'status'        => $after,
-            'claimed_lead'  => $claimed ? [
+            'status'         => $after,
+            'cooldown_until' => $user->fresh()->cooldown_until?->toIso8601String(),
+            'claimed_lead'   => $claimed ? [
                 'id'   => $claimed->id,
                 'name' => $claimed->name,
             ] : null,

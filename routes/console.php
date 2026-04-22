@@ -18,3 +18,11 @@ Schedule::command('docs:purge-expired')
     ->dailyAt('03:10')
     ->onOneServer()
     ->withoutOverlapping();
+
+// Cooldown pós-lead: libera corretores cujo timer expirou e já tenta
+// pegar o lead órfão mais antigo. Roda a cada minuto — operação barata
+// (só toca linhas com cooldown_until vencido).
+Schedule::command('leads:release-cooldowns')
+    ->everyMinute()
+    ->onOneServer()
+    ->withoutOverlapping();
