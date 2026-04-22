@@ -23,12 +23,17 @@ class User extends Authenticatable
     protected $fillable = [
         'name',
         'email',
-        'email',
         'password',
         'role',
         'active',
         'last_lead_assigned_at',
         'avatar',
+        // Usado pelo rodízio: UserController@updateStatus grava aqui via
+        // $user->update(['status_corretor' => ...]). Sem estar em $fillable,
+        // Mass Assignment Protection do Eloquent IGNORA SILENCIOSAMENTE e
+        // o DB nunca persiste a mudança (bug: select do corretor "voltava"
+        // pra offline sempre que a home recarregava).
+        'status_corretor',
     ];
 
    
