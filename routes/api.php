@@ -362,7 +362,11 @@ Route::get('/dashboard/appointments', function (Request $request) {
         ->get();
 });
 
-Route::post('/empreendimentos', [EmpreendimentoController::class,'store']);
+// /empreendimentos POST já é coberto por Route::apiResource acima (grupo
+// role:admin,gestor,corretor). A rota duplicada que existia aqui cadastrava
+// o mesmo verbo pra `role:admin,gestor`, e como Laravel usa "última vence"
+// ela sobrescrevia a do apiResource — efeito colateral: excluía corretor
+// mesmo quando a política de fato permitia. Removida.
 Route::post('/empreendimentos/{id}/fields', [EmpreendimentoFieldValueController::class,'storeCadastro']);
 });
 
