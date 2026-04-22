@@ -5,6 +5,7 @@ use App\Http\Controllers\LeadInteractionController;
 use App\Http\Controllers\LeadController;
 use App\Http\Controllers\LeadDocumentController;
 use App\Http\Controllers\SettingController;
+use App\Http\Controllers\EmailSettingsController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DashboardHomeController;
 use App\Http\Controllers\MarketingReportController;
@@ -529,6 +530,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
 | desconhecida retorna 404 tanto em leitura quanto em escrita.
 */
 Route::middleware('auth:sanctum')->group(function () {
+    // Rotas específicas de email vêm ANTES da wildcard /settings/{key}
+    // pra o Laravel resolver corretamente (senão 'email' bateria no {key}).
+    Route::get('/settings/email',       [EmailSettingsController::class, 'index']);
+    Route::put('/settings/email',       [EmailSettingsController::class, 'update']);
+    Route::post('/settings/email/test', [EmailSettingsController::class, 'test']);
+
     Route::get('/settings',            [SettingController::class, 'index']);
     Route::get('/settings/{key}',      [SettingController::class, 'show']);
     Route::put('/settings/{key}',      [SettingController::class, 'update']);
