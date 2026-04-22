@@ -174,14 +174,27 @@ class LeadDocumentController extends Controller
     /* ==============================================================
      * DOWNLOAD
      * ==============================================================
-     * - Permite download de docs em retenção (admin precisa poder revisar
-     *   antes de decidir restaurar/expurgar).
+     * - Permite download de docs em retenção (admin/gestor precisam poder
+     *   revisar antes de decidir restaurar/expurgar).
+     * - CORRETOR fica bloqueado assim que existe solicitação de exclusão
+     *   (pendente OU em retenção) — só admin/gestor podem visualizar o
+     *   documento depois da solicitação. Isso atende LGPD: corretor solicita,
+     *   gestor/admin auditam.
      * - Registra cada acesso em lead_document_accesses com IP + geo.
      */
     public function download(Request $request, Lead $lead, LeadDocument $document): StreamedResponse
     {
         $this->authorize('view', $lead);
         $this->ensureDocBelongsToLead($lead, $document);
+
+        // Bloqueio LGPD: se o doc tem solicitação de exclusão (pendente
+        // ou já em retenção), corretor não pode mais baixar. Só admin/gestor.
+        if (
+            ($document->isDeletionPending() || $document->deleted_at !== null)
+            && !$this->userIsAdminOrManager()
+        ) {
+            abort(403, 'Documento indisponível: há uma solicitação de exclusão em aberto. Apenas admin/gestor podem acessar.');
+        }
 
         $disk = Storage::disk('local');
         $path = $this->resolveStoragePath($disk, $document->storage_path);
@@ -476,6 +489,15 @@ class LeadDocumentController extends Controller
         return strtolower(trim((string) ($u->role ?? ''))) === 'admin';
     }
 
+    /** Admin OU gestor (a "visão gerencial" que pode auditar documentos). */
+    private function userIsAdminOrManager(): bool
+    {
+        $u = auth()->user();
+        if (!$u) return false;
+        $role = strtolower(trim((string) ($u->role ?? '')));
+        return $role === 'admin' || $role === 'gestor';
+    }
+
     private function ensureAdmin(): void
     {
         if (!$this->userIsAdmin()) {
@@ -572,6 +594,11 @@ class LeadDocumentController extends Controller
     private function present(LeadDocument $d): array
     {
         $pendingPurge = $d->isPendingPurge();
+        $hasDeletion  = $d->isDeletionPending() || $pendingPurge;
+
+        // Espelha a regra do @download: com solicitação em aberto, corretor
+        // perde o botão de baixar. Admin/gestor mantêm acesso pra auditoria.
+        $downloadBlocked = $hasDeletion && !$this->userIsAdminOrManager();
 
         return [
             'id'             => $d->id,
@@ -584,7 +611,8 @@ class LeadDocumentController extends Controller
                 'id'   => $d->uploader->id,
                 'name' => $d->uploader->name,
             ] : null,
-            'created_at'     => $d->created_at?->toIso8601String(),
+            'created_at'      => $d->created_at?->toIso8601String(),
+            'download_blocked' => $downloadBlocked,
 
             // Pendente de aprovação (ainda no fluxo "request -> approve")
             'deletion' => $d->isDeletionPending() ? [
@@ -609,5 +637,103 @@ class LeadDocumentController extends Controller
                 ] : null,
             ] : null,
         ];
+    }
+
+    /* ==============================================================
+     * ACCESS LOG — GLOBAL (admin only)
+     * ==============================================================
+     * Lista TODOS os acessos a documentos do CRM (paginado), com filtros
+     * opcionais. Alimenta a tela "Configurações → Logs de Download".
+     *
+     * Filtros (query string):
+     *   - lead_id           int    filtra por lead
+     *   - document_id       int    filtra por doc específico
+     *   - user_id           int    filtra por quem baixou
+     *   - action            string 'download' (default) ou 'preview'
+     *   - from / to         date   YYYY-MM-DD (inclusive)
+     *   - q                 string busca por IP / país / cidade / ISP
+     *   - per_page          int    default 50, max 200
+     */
+    public function allAccesses(Request $request)
+    {
+        $this->ensureAdmin();
+
+        $perPage = (int) $request->input('per_page', 50);
+        $perPage = max(10, min(200, $perPage));
+
+        $q = LeadDocumentAccess::with([
+                'user:id,name,email',
+                'document:id,original_name,mime_type,lead_id',
+                'lead:id,name',
+            ])
+            ->orderByDesc('accessed_at');
+
+        if ($leadId = $request->input('lead_id')) {
+            $q->where('lead_id', (int) $leadId);
+        }
+        if ($docId = $request->input('document_id')) {
+            $q->where('lead_document_id', (int) $docId);
+        }
+        if ($userId = $request->input('user_id')) {
+            $q->where('user_id', (int) $userId);
+        }
+        if ($action = $request->input('action')) {
+            $q->where('action', $action);
+        }
+        if ($from = $request->input('from')) {
+            try { $q->whereDate('accessed_at', '>=', $from); } catch (\Throwable $e) {}
+        }
+        if ($to = $request->input('to')) {
+            try { $q->whereDate('accessed_at', '<=', $to); } catch (\Throwable $e) {}
+        }
+        if ($search = trim((string) $request->input('q', ''))) {
+            $q->where(function ($sub) use ($search) {
+                $like = '%' . $search . '%';
+                $sub->where('ip_address', 'like', $like)
+                    ->orWhere('country', 'like', $like)
+                    ->orWhere('city', 'like', $like)
+                    ->orWhere('region', 'like', $like)
+                    ->orWhere('isp', 'like', $like);
+            });
+        }
+
+        $page = $q->paginate($perPage);
+
+        $rows = collect($page->items())->map(fn ($a) => [
+            'id'           => $a->id,
+            'action'       => $a->action,
+            'accessed_at'  => $a->accessed_at?->toIso8601String(),
+            'ip_address'   => $a->ip_address,
+            'user_agent'   => $a->user_agent,
+            'country'      => $a->country,
+            'country_code' => $a->country_code,
+            'region'       => $a->region,
+            'city'         => $a->city,
+            'isp'          => $a->isp,
+            'lat'          => $a->lat !== null ? (float) $a->lat : null,
+            'lon'          => $a->lon !== null ? (float) $a->lon : null,
+            'user'         => $a->relationLoaded('user') && $a->user ? [
+                'id'    => $a->user->id,
+                'name'  => $a->user->name,
+                'email' => $a->user->email,
+            ] : null,
+            'lead'         => $a->relationLoaded('lead') && $a->lead ? [
+                'id'   => $a->lead->id,
+                'name' => $a->lead->name,
+            ] : null,
+            'document'     => $a->relationLoaded('document') && $a->document ? [
+                'id'            => $a->document->id,
+                'original_name' => $a->document->original_name,
+                'mime_type'     => $a->document->mime_type,
+            ] : null,
+        ]);
+
+        return response()->json([
+            'data'         => $rows,
+            'current_page' => $page->currentPage(),
+            'per_page'     => $page->perPage(),
+            'total'        => $page->total(),
+            'last_page'    => $page->lastPage(),
+        ]);
     }
 }

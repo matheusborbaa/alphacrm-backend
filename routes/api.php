@@ -481,6 +481,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
     // Fica antes da rota com {lead} pra não ser interpretada como lead_id.
     Route::get   ('/documents/pending-deletions',                             [LeadDocumentController::class, 'pendingDeletions']);
 
+    // Lista GLOBAL de acessos/downloads de documentos (admin-only).
+    // Alimenta a tela "Configurações → Logs de Download".
+    Route::get   ('/documents/accesses',                                      [LeadDocumentController::class, 'allAccesses']);
+
     Route::get   ('/leads/{lead}/documents',                                  [LeadDocumentController::class, 'index']);
     Route::post  ('/leads/{lead}/documents',                                  [LeadDocumentController::class, 'store']);
     Route::get   ('/leads/{lead}/documents/{document}/download',              [LeadDocumentController::class, 'download']);

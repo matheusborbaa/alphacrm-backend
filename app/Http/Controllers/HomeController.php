@@ -147,6 +147,29 @@ class HomeController extends Controller
         $top5 = $rankingFull->take(5)->map(fn($r, $i) => array_merge($r, ['position' => $i + 1]));
 
         /* ----------------------------------------------------
+         | PENDENTES — cards da dashboard
+         |----------------------------------------------------
+         | atendimentos: leads ATRIBUÍDOS ao user que ainda não
+         |   tiveram primeiro contato registrado. O SLA rastreia
+         |   isso via sla_status: 'pending' (dentro do prazo) e
+         |   'expired' (passou do prazo, ainda sem contato) — ambos
+         |   contam como pendente. 'met' = primeiro contato feito;
+         |   'na' = SLA desativado; esses não contam.
+         |
+         | tarefas: appointments com type='task' + overdue scope
+         |   (completed_at NULL AND due_at < now). Mostra só as do
+         |   user logado pra manter consistência com os outros cards.
+         |---------------------------------------------------- */
+        $atendimentosPendentes = Lead::where('assigned_user_id', $user->id)
+            ->whereIn('sla_status', ['pending', 'expired'])
+            ->count();
+
+        $tarefasPendentes = Appointment::tasks()
+            ->overdue()
+            ->where('user_id', $user->id)
+            ->count();
+
+        /* ----------------------------------------------------
          | RESPONSE
          |---------------------------------------------------- */
         return response()->json([
@@ -165,6 +188,10 @@ class HomeController extends Controller
                 'vgv_ativo'         => $vgvAtivo,
             ],
             'metas' => $metas,
+            'pendentes' => [
+                'atendimentos' => $atendimentosPendentes,
+                'tarefas'      => $tarefasPendentes,
+            ],
             'gamificacao' => [
                 'minha_posicao' => $myPos,
                 'total_corretores' => $rankingFull->count(),
