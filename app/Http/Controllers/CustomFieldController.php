@@ -74,9 +74,13 @@ class CustomFieldController extends Controller
             'options' => 'nullable|array',
             'options.*' => 'string|max:255',
             // Máscara: preset conhecido OU padrão livre com 0/A/* + literais
-            'mask'    => ['nullable', 'string', 'max:64'],
-            'active'  => 'boolean',
-            'order'   => 'integer|min:0',
+            'mask'         => ['nullable', 'string', 'max:64'],
+            // LGPD: marca o campo como dado pessoal sensível (CPF, RG, renda...).
+            // Frontend mascara por padrão em listagens e histórico; valor
+            // cleartext fica atrás do endpoint /leads/{id}/reveal (que loga).
+            'is_sensitive' => 'boolean',
+            'active'       => 'boolean',
+            'order'        => 'integer|min:0',
         ]);
     }
 

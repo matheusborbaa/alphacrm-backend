@@ -432,6 +432,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::post('/leads/{lead}/interactions', [LeadInteractionController::class, 'store']);
     Route::get('/leads/{lead}', [LeadController::class, 'show']);
+    // LGPD: devolve o valor cleartext de um campo sensível (fixo ou custom)
+    // e registra LeadHistory type='pii_revealed'. Permissão: gestor/admin
+    // ou corretor responsável pelo lead.
+    Route::get('/leads/{lead}/reveal', [LeadController::class, 'reveal']);
     Route::put('/leads/editar/{lead}', [LeadController::class, 'update']);
     Route::delete('/leads/{lead}', [LeadController::class, 'destroy']);
 

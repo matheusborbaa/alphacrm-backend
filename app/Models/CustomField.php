@@ -18,14 +18,16 @@ class CustomField extends Model
         'type',
         'options',
         'mask',
+        'is_sensitive',
         'active',
         'order',
     ];
 
     protected $casts = [
-        'options' => 'array',
-        'active'  => 'boolean',
-        'order'   => 'integer',
+        'options'      => 'array',
+        'active'       => 'boolean',
+        'is_sensitive' => 'boolean',
+        'order'        => 'integer',
     ];
 
     /**

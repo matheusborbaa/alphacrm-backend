@@ -656,6 +656,88 @@ public function destroy(Lead $lead)
     return response()->json(['success' => true]);
 }
 
+/**
+ * LGPD — devolve o valor cleartext de um campo sensível e registra o
+ * acesso em lead_histories (type='pii_revealed'). Usado pelo botão
+ * "Revelar" na aba Dados do lead.
+ *
+ * Query params (um dos dois):
+ *   - field=phone|whatsapp|email       (campo fixo do lead)
+ *   - custom_slug=cpf|rg|...           (custom_field.slug)
+ *
+ * Resposta: { value: string|null, label: string }
+ *
+ * Permissão: admin, gestor ou corretor responsável pelo lead. Corretor
+ * que NÃO é dono recebe 403 — se for pra ele ver, o gestor reatribui.
+ */
+public function reveal(Request $request, Lead $lead)
+{
+    $user = auth()->user();
+    if (!$user) abort(401);
+
+    $role = strtolower(trim((string) ($user->role ?? '')));
+    $isManager = in_array($role, ['admin', 'gestor'], true);
+    $isOwner   = (int) $lead->assigned_user_id === (int) $user->id;
+
+    if (!$isManager && !$isOwner) {
+        abort(403, 'Você não é o corretor responsável por este lead.');
+    }
+
+    $data = $request->validate([
+        'field'       => 'nullable|string|in:phone,whatsapp,email',
+        'custom_slug' => 'nullable|string|max:100',
+    ]);
+
+    if (empty($data['field']) && empty($data['custom_slug'])) {
+        abort(422, 'Informe field ou custom_slug.');
+    }
+
+    $label = null;
+    $value = null;
+
+    if (!empty($data['field'])) {
+        // Campos fixos — lista branca conferida pelo validator acima
+        $field = $data['field'];
+        $labels = ['phone' => 'Telefone', 'whatsapp' => 'WhatsApp', 'email' => 'E-mail'];
+        $label = $labels[$field];
+        $value = $lead->{$field};
+    } else {
+        $slug = $data['custom_slug'];
+        $cf = CustomField::where('slug', $slug)->first();
+        if (!$cf) abort(404, 'Campo customizado não encontrado.');
+        if (!$cf->is_sensitive) {
+            // Não-sensível não precisa revelar — devolve direto sem log,
+            // pra não poluir o histórico.
+            $val = LeadCustomFieldValue::where('lead_id', $lead->id)
+                ->where('custom_field_id', $cf->id)->first();
+            return response()->json([
+                'value' => $val?->value,
+                'label' => $cf->name ?: $cf->slug,
+            ]);
+        }
+        $label = $cf->name ?: $cf->slug;
+        $val = LeadCustomFieldValue::where('lead_id', $lead->id)
+            ->where('custom_field_id', $cf->id)->first();
+        $value = $val?->value;
+    }
+
+    // Loga o acesso. Esta é a trilha que a LGPD espera (Art. 37):
+    // "quem leu o CPF do lead X, quando, e em que contexto".
+    LeadHistory::create([
+        'lead_id'     => $lead->id,
+        'user_id'     => $user->id,
+        'type'        => 'pii_revealed',
+        'description' => $label,
+        'from'        => null,
+        'to'          => null,
+    ]);
+
+    return response()->json([
+        'value' => $value,
+        'label' => $label,
+    ]);
+}
+
 public function show(Lead $lead)
 {
     $this->authorize('view', $lead);
