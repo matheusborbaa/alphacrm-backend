@@ -15,8 +15,16 @@ class EmpreendimentoFieldDefinition extends Model
         'unit',
         'group',
         'icon',
+        'options',
         'active',
+        'required',
         'order',
+    ];
+
+    protected $casts = [
+        'options'  => 'array',
+        'active'   => 'boolean',
+        'required' => 'boolean',
     ];
 
     public function values()

@@ -4,113 +4,153 @@ namespace App\Http\Controllers;
 
 use App\Models\EmpreendimentoFieldDefinition;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 /**
- * @group Admin - Campos Personalizados
+ * @group Admin - Campos Personalizados (Empreendimento)
  *
  * Endpoints para gerenciar os campos personalizados dos empreendimentos.
  * Apenas usuários administradores podem acessar.
+ *
+ * Tipos suportados:
+ *   - counter  (contador ±, inteiro não-negativo — ex: quartos, banheiros, vagas)
+ *   - boolean  (toggle sim/não — ex: piscina, academia, pet friendly)
+ *   - text     (texto livre — ex: observações, endereço)
+ *   - number   (número livre — ex: área em m², andar, condomínio)
+ *   - select   (dropdown com options fixas — ex: orientação solar)
  *
  * @authenticated
  */
 class EmpreendimentoFieldDefinitionController extends Controller
 {
     /**
-     * Listar campos personalizados
-     *
-     * Retorna todos os campos personalizados cadastrados,
-     * ordenados por grupo e ordem.
+     * Lista fechada de tipos permitidos. Mantida em um só lugar pra evitar
+     * desvio entre controller/model/frontend. Se precisar adicionar novo tipo,
+     * atualiza aqui + no CFG do configuracoes.js + em empreendimentoCadastro.js.
      */
+    private const ALLOWED_TYPES = ['counter', 'boolean', 'text', 'number', 'select'];
+
     public function index()
     {
         return EmpreendimentoFieldDefinition::orderBy('group')
             ->orderBy('order')
+            ->orderBy('name')
             ->get();
     }
 
-    /**
-     * Criar campo personalizado
-     *
-     * Cria um novo campo personalizado para empreendimentos.
-     *
-     * @bodyParam name string required Nome do campo. Example: Dormitórios
-     * @bodyParam slug string required Identificador único. Example: dormitorios
-     * @bodyParam type string required Tipo do campo. Example: number
-     * @bodyParam unit string Unidade do campo. Example: m²
-     * @bodyParam group string Grupo do campo. Example: Características do Imóvel
-     * @bodyParam icon string Ícone do campo (FontAwesome). Example: fa-bed
-     * @bodyParam order integer Ordem de exibição. Example: 1
-     * @bodyParam active boolean Campo ativo ou não. Example: true
-     */
     public function store(Request $request)
     {
-        $data = $request->validate([
-            'name'   => 'required|string',
-            'slug'   => 'required|string|unique:empreendimento_field_definitions,slug',
-            'type'   => 'required|string',
-            'unit'   => 'nullable|string',
-            'group'  => 'nullable|string',
-            'icon'   => 'nullable|string',
-            'order'  => 'nullable|integer',
-            'active' => 'boolean',
-        ]);
+        $data = $this->validatePayload($request);
+        $data = $this->normalize($data);
+
+        // Gera slug automaticamente se não foi enviado.
+        if (empty($data['slug'])) {
+            $data['slug'] = $this->generateUniqueSlug($data['name']);
+        }
+
+        // Garante unicidade (redundância com o rule, mas útil pro autogerado).
+        $data['slug'] = $this->ensureUniqueSlug($data['slug']);
 
         return EmpreendimentoFieldDefinition::create($data);
     }
 
-    /**
-     * Exibir campo personalizado
-     *
-     * Retorna os dados de um campo específico.
-     */
     public function show(EmpreendimentoFieldDefinition $empreendimentoFieldDefinition)
     {
         return $empreendimentoFieldDefinition;
     }
 
-    /**
-     * Atualizar campo personalizado
-     *
-     * Atualiza os dados de um campo personalizado existente.
-     *
-     * @bodyParam name string Nome do campo.
-     * @bodyParam type string Tipo do campo.
-     * @bodyParam unit string Unidade do campo.
-     * @bodyParam group string Grupo do campo.
-     * @bodyParam icon string Ícone do campo.
-     * @bodyParam order integer Ordem de exibição.
-     * @bodyParam active boolean Campo ativo ou não.
-     */
     public function update(
         Request $request,
         EmpreendimentoFieldDefinition $empreendimentoFieldDefinition
     ) {
-        $data = $request->validate([
-            'name'   => 'required|string',
-            'type'   => 'required|string',
-            'unit'   => 'nullable|string',
-            'group'  => 'nullable|string',
-            'icon'   => 'nullable|string',
-            'order'  => 'nullable|integer',
-            'active' => 'boolean',
-        ]);
+        $data = $this->validatePayload($request, $empreendimentoFieldDefinition->id);
+        $data = $this->normalize($data);
+
+        // Não permitimos mudar o slug depois de criado — valores já podem estar
+        // vinculados e frontends podem referenciar pelo slug. Se precisar
+        // renomear, deleta e cria de novo.
+        unset($data['slug']);
 
         $empreendimentoFieldDefinition->update($data);
 
         return $empreendimentoFieldDefinition;
     }
 
-    /**
-     * Remover campo personalizado
-     *
-     * Remove um campo personalizado do sistema.
-     */
     public function destroy(EmpreendimentoFieldDefinition $empreendimentoFieldDefinition)
     {
         $empreendimentoFieldDefinition->delete();
 
-        return response()->json([
-            'success' => true
+        return response()->json(['success' => true]);
+    }
+
+    /* ==============================================================
+     * HELPERS
+     * ============================================================== */
+
+    private function validatePayload(Request $request, ?int $ignoreId = null): array
+    {
+        $slugRule = [
+            'nullable', 'string', 'max:64', 'regex:/^[a-z0-9_-]+$/',
+            Rule::unique('empreendimento_field_definitions', 'slug')->ignore($ignoreId),
+        ];
+
+        return $request->validate([
+            'name'     => 'required|string|max:120',
+            'slug'     => $slugRule,
+            'type'     => ['required', 'string', Rule::in(self::ALLOWED_TYPES)],
+            'unit'     => 'nullable|string|max:20',
+            'group'    => 'nullable|string|max:80',
+            'icon'     => 'nullable|string|max:64',
+            'options'  => 'nullable|array',
+            'options.*'=> 'nullable|string|max:120',
+            'active'   => 'nullable|boolean',
+            'required' => 'nullable|boolean',
+            'order'    => 'nullable|integer|min:0',
         ]);
+    }
+
+    /**
+     * Normaliza o payload de entrada:
+     *  - `options` só faz sentido pra type=select; em outros tipos, força null.
+     *  - Remove opções vazias do array.
+     *  - Defaults explícitos pra booleans/order.
+     */
+    private function normalize(array $data): array
+    {
+        // options só pra select; limpa opções vazias.
+        if (($data['type'] ?? null) === 'select') {
+            $opts = array_values(array_filter(
+                array_map(fn($o) => trim((string) $o), $data['options'] ?? []),
+                fn($o) => $o !== ''
+            ));
+            $data['options'] = $opts ?: null;
+        } else {
+            $data['options'] = null;
+        }
+
+        $data['active']   = array_key_exists('active', $data)   ? (bool) $data['active']   : true;
+        $data['required'] = array_key_exists('required', $data) ? (bool) $data['required'] : false;
+        $data['order']    = $data['order'] ?? 0;
+
+        return $data;
+    }
+
+    private function generateUniqueSlug(string $name): string
+    {
+        $base = Str::slug($name, '_');
+        if ($base === '') $base = 'campo';
+        return $this->ensureUniqueSlug($base);
+    }
+
+    private function ensureUniqueSlug(string $slug): string
+    {
+        $candidate = $slug;
+        $i = 2;
+        while (EmpreendimentoFieldDefinition::where('slug', $candidate)->exists()) {
+            $candidate = $slug . '_' . $i;
+            $i++;
+        }
+        return $candidate;
     }
 }
