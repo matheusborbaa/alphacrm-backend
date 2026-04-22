@@ -11,3 +11,10 @@ Artisan::command('inspire', function () {
 
 
 Schedule::job(new CheckLeadSlaJob())->everyMinute();
+
+// Expurgo diário dos documentos cuja janela de retenção expirou.
+// Roda às 03:10 da manhã (horário de baixo tráfego).
+Schedule::command('docs:purge-expired')
+    ->dailyAt('03:10')
+    ->onOneServer()
+    ->withoutOverlapping();

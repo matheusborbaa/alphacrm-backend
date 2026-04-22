@@ -24,7 +24,28 @@ class SettingController extends Controller
      * Cada entrada diz o tipo esperado (pra validação simples) e o default.
      */
     private const ALLOWED_KEYS = [
-        'watermark_enabled' => ['type' => 'bool', 'default' => true],
+        // Privacidade
+        'watermark_enabled'    => ['type' => 'bool', 'default' => true],
+        'watermark_intensity'  => [
+            'type'    => 'enum',
+            'default' => 'sutil',
+            'options' => ['sutil', 'medio', 'forte'],
+        ],
+
+        // Retenção de documentos
+        // Janela em dias entre soft-delete e hard-delete pelo job PurgeExpiredDocuments.
+        'doc_retention_days'   => [
+            'type'    => 'int',
+            'default' => 7,
+            'min'     => 1,
+            'max'     => 365,
+        ],
+        // Se false, corretor clica em 'excluir' e o doc já vai pra lixeira
+        // sem passar pela aprovação do admin (pula o fluxo request-deletion).
+        'doc_deletion_requires_approval' => [
+            'type'    => 'bool',
+            'default' => true,
+        ],
     ];
 
     /** Lista TODAS as configurações (chave => valor). Só chaves conhecidas. */
@@ -63,11 +84,34 @@ class SettingController extends Controller
         $meta = self::ALLOWED_KEYS[$key];
         $raw  = $request->input('value');
 
-        $value = $this->coerce($raw, $meta['type']);
+        $value = $this->coerce($raw, $meta['type'], $meta);
         if ($value === null && $raw !== null && $meta['type'] !== 'mixed') {
             return response()->json([
                 'message' => "Valor inválido pra '{$key}' (esperado {$meta['type']}).",
             ], 422);
+        }
+
+        // Clamp pra tipos com range (int com min/max)
+        if ($meta['type'] === 'int' && $value !== null) {
+            if (isset($meta['min']) && $value < $meta['min']) {
+                return response()->json([
+                    'message' => "Valor mínimo pra '{$key}' é {$meta['min']}.",
+                ], 422);
+            }
+            if (isset($meta['max']) && $value > $meta['max']) {
+                return response()->json([
+                    'message' => "Valor máximo pra '{$key}' é {$meta['max']}.",
+                ], 422);
+            }
+        }
+
+        // Enum: garante que o valor caiu numa das opções permitidas
+        if ($meta['type'] === 'enum') {
+            if (!in_array($value, $meta['options'], true)) {
+                return response()->json([
+                    'message' => "Valor inválido. Use: " . implode(', ', $meta['options']) . '.',
+                ], 422);
+            }
         }
 
         Setting::set($key, $value);
@@ -80,7 +124,7 @@ class SettingController extends Controller
      * ============================================================== */
 
     /** Converte entrada crua pro tipo da chave. Null = erro. */
-    private function coerce(mixed $raw, string $type): mixed
+    private function coerce(mixed $raw, string $type, array $meta = []): mixed
     {
         return match ($type) {
             'bool'   => is_bool($raw) ? $raw
@@ -89,6 +133,7 @@ class SettingController extends Controller
                         : null)),
             'int'    => is_numeric($raw) ? (int) $raw : null,
             'string' => is_string($raw) ? $raw : null,
+            'enum'   => is_string($raw) ? $raw : null,
             default  => $raw, // 'mixed' — aceita tudo
         };
     }

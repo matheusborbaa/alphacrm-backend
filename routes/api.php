@@ -35,6 +35,8 @@ use App\Http\Controllers\UserMetaController;
 use App\Http\Controllers\HomeController;
 
     Route::post('/me', [UserController::class, 'updateProfile'])->middleware(['auth:sanctum']);
+    // Status do corretor (disponivel/ocupado/offline) — usado pelo rodízio.
+    Route::post('/users/me/status', [UserController::class, 'updateStatus'])->middleware(['auth:sanctum']);
 // usuario rotas
 
 
@@ -470,6 +472,13 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post  ('/leads/{lead}/documents/{document}/cancel-deletion',       [LeadDocumentController::class, 'cancelDeletionRequest']);
     Route::post  ('/leads/{lead}/documents/{document}/approve-deletion',      [LeadDocumentController::class, 'approveDeletion']);
     Route::post  ('/leads/{lead}/documents/{document}/reject-deletion',       [LeadDocumentController::class, 'rejectDeletion']);
+
+    // Retenção / lixeira (admin)
+    Route::post  ('/leads/{lead}/documents/{document}/restore',               [LeadDocumentController::class, 'restore']);
+    Route::post  ('/leads/{lead}/documents/{document}/force-purge',           [LeadDocumentController::class, 'forcePurge']);
+
+    // Auditoria de acesso (admin)
+    Route::get   ('/leads/{lead}/documents/{document}/accesses',              [LeadDocumentController::class, 'accesses']);
 
 });
 

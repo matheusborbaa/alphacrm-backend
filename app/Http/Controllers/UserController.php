@@ -11,6 +11,7 @@ use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Str;
+use App\Services\LeadAssignmentService;
 
 /**
  * CRUD de usuários (corretores, gestores, admins).
@@ -289,6 +290,45 @@ class UserController extends Controller
         return response()->json([
             'success' => true,
             'user'    => $user,
+        ]);
+    }
+
+    /**
+     * POST /users/me/status — o próprio corretor muda o status atual.
+     *
+     * Valores aceitos: 'disponivel' | 'ocupado' | 'offline'.
+     *
+     * Efeitos colaterais:
+     *   - Se virou 'disponivel', tentamos auto-atribuir o lead órfão mais
+     *     antigo pra esse corretor via LeadAssignmentService::tryClaimNextOrphan().
+     *     Isso evita que leads fiquem parados na fila só porque ninguém
+     *     abriu o dashboard pra ver a fila.
+     */
+    public function updateStatus(Request $request, LeadAssignmentService $assigner)
+    {
+        $user = $request->user();
+
+        $data = $request->validate([
+            'status' => ['required', Rule::in(['disponivel', 'ocupado', 'offline'])],
+        ]);
+
+        $before = strtolower((string) ($user->status_corretor ?? ''));
+        $after  = $data['status'];
+
+        $user->update(['status_corretor' => $after]);
+
+        $claimed = null;
+        if ($after === 'disponivel' && $before !== 'disponivel') {
+            // Corretor acabou de ficar disponível — tenta pegar órfão.
+            $claimed = $assigner->tryClaimNextOrphan($user->fresh());
+        }
+
+        return response()->json([
+            'status'        => $after,
+            'claimed_lead'  => $claimed ? [
+                'id'   => $claimed->id,
+                'name' => $claimed->name,
+            ] : null,
         ]);
     }
 }
