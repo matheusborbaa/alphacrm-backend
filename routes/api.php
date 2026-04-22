@@ -46,6 +46,13 @@ use App\Http\Controllers\HomeController;
     Route::get('/user/me', function (\Illuminate\Http\Request $request) {
         return response()->json($request->user());
     })->middleware('auth:sanctum');
+
+    // ALIAS LEGADO: home.js antigo (em cache do browser) chama POST /user/status.
+    // A rota oficial é /users/me/status, mas enquanto os browsers não baixam
+    // a versão nova do JS, redireciona pro mesmo controller pra manter o fluxo
+    // (inclusive o rodízio de órfãos). Auth-only, sem role gate.
+    Route::post('/user/status', [UserController::class, 'updateStatus'])
+        ->middleware('auth:sanctum');
 // usuario rotas
 
 
@@ -320,22 +327,10 @@ Route::get('/search', function (Request $request) {
 
     ]);
 })->middleware('auth:sanctum');
-Route::post('/user/status', function (Request $request) {
-
-    $user = auth()->user();
-
-    $request->validate([
-        'status' => 'required|in:disponivel,ocupado,offline'
-    ]);
-
-    $user->status_corretor = $request->status;
-    $user->save();
-
-    return response()->json([
-        'message' => 'Status atualizado',
-        'status' => $user->status_corretor
-    ]);
-})->middleware('auth:sanctum');
+// /user/status LEGADO: a rota oficial agora é /users/me/status (declarada
+// no topo, fora do grupo role). Mantida aqui só como alias pra browsers
+// com home.js antigo em cache — delega pra UserController@updateStatus
+// (que também dispara rodízio de órfão quando vira 'disponivel').
 // APPOINTMENTS — rotas movidas pra fora do group (ver abaixo do fechamento do group).
 
 
