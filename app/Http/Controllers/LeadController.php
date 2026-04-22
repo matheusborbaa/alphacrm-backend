@@ -614,6 +614,132 @@ public function checkDuplicates(Request $request)
 
 
 /**
+ * ===========================================================================
+ *                   FILA DE LEADS ÓRFÃOS (READ-ONLY)
+ * ===========================================================================
+ * Leads com assigned_user_id = null formam uma fila lógica que o rodízio
+ * consome em ordem (FIFO por created_at) sempre que um corretor vira
+ * 'disponivel'. Essa view serve pros gestores e admins acompanharem o
+ * tamanho da fila e identificarem gargalos — NÃO é uma ferramenta de
+ * atribuição. A distribuição segue 100% automática via LeadAssignmentService.
+ *
+ * Autorização: só admin e gestor. Corretor não tem acesso.
+ * ===========================================================================
+ */
+
+/**
+ * GET /leads/queue
+ * Lista completa da fila de órfãos, ordenada do mais antigo pro mais novo
+ * (que é a mesma ordem em que o rodízio vai consumir).
+ */
+public function queue(Request $request)
+{
+    $this->ensureManager();
+
+    $leads = Lead::query()
+        ->whereNull('assigned_user_id')
+        ->select([
+            'id', 'name', 'phone', 'whatsapp', 'email',
+            'channel', 'campaign',
+            'empreendimento_id',
+            'city_of_interest',
+            'status_id',
+            'created_at',
+        ])
+        ->with([
+            'status:id,name,color_hex',
+            'empreendimento:id,name',
+        ])
+        ->orderBy('created_at', 'asc')
+        ->get();
+
+    $now = now();
+
+    $items = $leads->map(function ($lead) use ($now) {
+        $minutes = (int) $now->diffInMinutes($lead->created_at);
+        return [
+            'id'               => $lead->id,
+            'name'             => $lead->name,
+            'phone'            => $lead->phone,
+            'whatsapp'         => $lead->whatsapp,
+            'email'            => $lead->email,
+            'channel'          => $lead->channel,
+            'campaign'         => $lead->campaign,
+            'city_of_interest' => $lead->city_of_interest,
+            'status'           => $lead->status ? [
+                'id'        => $lead->status->id,
+                'name'      => $lead->status->name,
+                'color_hex' => $lead->status->color_hex ?? null,
+            ] : null,
+            'empreendimento'   => $lead->empreendimento ? [
+                'id'   => $lead->empreendimento->id,
+                'name' => $lead->empreendimento->name,
+            ] : null,
+            'created_at'       => $lead->created_at?->toIso8601String(),
+            'minutes_waiting'  => $minutes,
+        ];
+    });
+
+    // Contagem de corretores disponíveis pro gestor entender por que a
+    // fila está (ou não) avançando. Não bloqueia nada — é só contexto.
+    $availableBrokers = \App\Models\User::where('role', 'corretor')
+        ->where('active', true)
+        ->where('status_corretor', 'disponivel')
+        ->count();
+
+    return response()->json([
+        'total'              => $items->count(),
+        'available_brokers'  => $availableBrokers,
+        'oldest_minutes'     => $items->first()['minutes_waiting'] ?? 0,
+        'items'              => $items,
+    ]);
+}
+
+/**
+ * GET /leads/queue/count
+ * Endpoint leve pra alimentar o badge do sidebar sem ter que transferir
+ * a lista inteira a cada polling.
+ */
+public function queueCount(Request $request)
+{
+    $this->ensureManager();
+
+    $total = Lead::whereNull('assigned_user_id')->count();
+
+    // Pega só o mais antigo pra calcular a cor do badge sem carregar tudo.
+    $oldestMinutes = 0;
+    if ($total > 0) {
+        $oldest = Lead::whereNull('assigned_user_id')
+            ->orderBy('created_at', 'asc')
+            ->value('created_at');
+        if ($oldest) {
+            $oldestMinutes = (int) now()->diffInMinutes($oldest);
+        }
+    }
+
+    return response()->json([
+        'total'          => $total,
+        'oldest_minutes' => $oldestMinutes,
+    ]);
+}
+
+/**
+ * Guarda compartilhada pelos endpoints da fila. Mantém a lógica num
+ * só lugar caso a gente adicione mais views read-only no futuro.
+ */
+private function ensureManager(): void
+{
+    $user = auth()->user();
+    if (!$user) abort(401);
+
+    $role = strtolower(trim((string) ($user->role ?? '')));
+    if (!in_array($role, ['admin', 'gestor'], true)) {
+        abort(403, 'Apenas admin e gestor podem visualizar a fila.');
+    }
+}
+
+
+/**
  * Busca leads que batam em qualquer um dos três contatos informados.
  * Normaliza telefones (só dígitos) pra não falhar por causa de máscara.
  *

@@ -236,6 +236,10 @@ Route::middleware(['auth:sanctum', 'role:admin,gestor,corretor'])->group(functio
     Route::get('/leads/counts',           [LeadController::class, 'counts']);
     Route::get('/leads/check-duplicates', [LeadController::class, 'checkDuplicates']);
 
+    // Fila de órfãos (read-only, admin+gestor). O próprio controller filtra role.
+    Route::get('/leads/queue',            [LeadController::class, 'queue']);
+    Route::get('/leads/queue/count',      [LeadController::class, 'queueCount']);
+
     Route::apiResource('empreendimentos', EmpreendimentoController::class);
 
 
