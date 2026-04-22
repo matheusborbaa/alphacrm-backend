@@ -72,7 +72,16 @@ class EmailLoggerService
         ];
 
         try {
-            Mail::to($to)->send($mailable);
+            // sendNow() ignora `implements ShouldQueue` e entrega SÍNCRONO.
+            // Motivo: queremos que o status gravado em email_logs reflita o
+            // resultado real do SMTP — se usássemos send() + queue, o log
+            // diria "sent" só porque o job foi enfileirado, mesmo que o
+            // worker nunca processe (ou o SMTP rejeite depois).
+            // Trade-off: o POST HTTP bloqueia até o SMTP responder. Pros
+            // e-mails transacionais que temos hoje (welcome/reset/invite)
+            // isso é aceitável; se virar problema, voltamos pro queue com
+            // um listener de MessageSent/MessageFailed pra atualizar o log.
+            Mail::to($to)->sendNow($mailable);
 
             EmailLog::create($base + [
                 'status'        => EmailLog::STATUS_SENT,
