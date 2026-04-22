@@ -135,15 +135,31 @@ class EmailSettingsController extends Controller
         // reiniciar queue worker / php-fpm).
         $this->applyRuntimeConfig();
 
+        $subject = 'Teste de configuração SMTP — Alpha Domus CRM';
+        $body    = "Este é um email de teste enviado pelo Alpha Domus CRM em " . now()->format('d/m/Y H:i:s') . ".\n\n" .
+                   "Se você recebeu essa mensagem, a configuração SMTP está funcionando corretamente.";
+
+        $logBase = [
+            'to_email'             => $data['to'],
+            'to_name'              => null,
+            'from_email'           => config('mail.from.address'),
+            'from_name'            => config('mail.from.name'),
+            'subject'              => $subject,
+            'mail_class'           => null,
+            'type'                 => \App\Models\EmailLog::TYPE_TEST,
+            'triggered_by_user_id' => $request->user()?->id,
+            'related_user_id'      => null,
+        ];
+
         try {
-            Mail::raw(
-                "Este é um email de teste enviado pelo Alpha Domus CRM em " . now()->format('d/m/Y H:i:s') . ".\n\n" .
-                "Se você recebeu essa mensagem, a configuração SMTP está funcionando corretamente.",
-                function ($m) use ($data) {
-                    $m->to($data['to'])
-                      ->subject('Teste de configuração SMTP — Alpha Domus CRM');
-                }
-            );
+            Mail::raw($body, function ($m) use ($data, $subject) {
+                $m->to($data['to'])->subject($subject);
+            });
+
+            \App\Models\EmailLog::create($logBase + [
+                'status'        => \App\Models\EmailLog::STATUS_SENT,
+                'error_message' => null,
+            ]);
 
             return response()->json([
                 'success' => true,
@@ -154,6 +170,13 @@ class EmailSettingsController extends Controller
                 'to'    => $data['to'],
                 'error' => $e->getMessage(),
             ]);
+
+            try {
+                \App\Models\EmailLog::create($logBase + [
+                    'status'        => \App\Models\EmailLog::STATUS_FAILED,
+                    'error_message' => mb_substr($e->getMessage(), 0, 2000),
+                ]);
+            } catch (\Throwable $ignored) {}
 
             return response()->json([
                 'success' => false,

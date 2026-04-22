@@ -94,6 +94,46 @@ class UserController extends Controller
         return response()->json($result);
     }
 
+    /**
+     * GET /users/check-email?email=x&exclude=y
+     *
+     * Pré-validação leve pra UI não liberar o botão "Salvar" com email
+     * duplicado. Devolve qual usuário já tem esse email (id/name/role/active)
+     * pra o front mostrar uma mensagem útil ("Já usado por <Fulano>, Corretor").
+     *
+     * `exclude` (opcional) é o ID do próprio usuário em edição — impede que
+     * o form ache conflito consigo mesmo quando o admin não alterou o email.
+     *
+     * A validação definitiva continua no store()/update() (rule `unique`),
+     * este endpoint é só UX.
+     */
+    public function checkEmail(Request $request)
+    {
+        $this->authorize('viewAny', User::class);
+
+        $data = $request->validate([
+            'email'   => 'required|email|max:255',
+            'exclude' => 'nullable|integer',
+        ]);
+
+        $query = User::where('email', $data['email']);
+        if (!empty($data['exclude'])) {
+            $query->where('id', '!=', $data['exclude']);
+        }
+
+        $user = $query->first();
+
+        return response()->json([
+            'exists'   => (bool) $user,
+            'conflict' => $user ? [
+                'id'     => $user->id,
+                'name'   => $user->name,
+                'role'   => $user->getRoleNames()->first() ?? $user->role,
+                'active' => (bool) $user->active,
+            ] : null,
+        ]);
+    }
+
     public function show(User $user)
     {
         $this->authorize('view', $user);
@@ -159,14 +199,13 @@ class UserController extends Controller
         // logado sem bloquear o cadastro — um admin que perder o email
         // ainda consegue ver a senha na resposta HTTP abaixo.
         if ($passwordWasGenerated) {
-            try {
-                Mail::to($user->email)->send(new WelcomeUserMail($user, $plainPassword));
-            } catch (\Throwable $e) {
-                \Log::error('Falha ao enviar WelcomeUserMail', [
-                    'user_id' => $user->id,
-                    'error'   => $e->getMessage(),
-                ]);
-            }
+            \App\Services\EmailLoggerService::send(
+                to: $user->email,
+                mailable: new WelcomeUserMail($user, $plainPassword),
+                type: \App\Models\EmailLog::TYPE_WELCOME,
+                relatedUserId: $user->id,
+                toName: $user->name
+            );
         }
 
         return response()->json([
@@ -290,14 +329,15 @@ class UserController extends Controller
         // email) na mesma tabela usada pelo fluxo /auth/forgot-password.
         $token = Password::broker()->createToken($user);
 
-        try {
-            Mail::to($user->email)->send(new ResetPasswordMail($user, $token));
-        } catch (\Throwable $e) {
-            \Log::error('Falha ao enviar convite/link de redefinição', [
-                'user_id' => $user->id,
-                'error'   => $e->getMessage(),
-            ]);
+        $ok = \App\Services\EmailLoggerService::send(
+            to: $user->email,
+            mailable: new ResetPasswordMail($user, $token),
+            type: \App\Models\EmailLog::TYPE_INVITE,
+            relatedUserId: $user->id,
+            toName: $user->name
+        );
 
+        if (!$ok) {
             return response()->json([
                 'success' => false,
                 'message' => 'Não foi possível enviar o email. Verifique a configuração SMTP em Configurações → Email.',

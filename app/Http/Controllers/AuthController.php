@@ -159,16 +159,18 @@ class AuthController extends Controller
             // com created_at = now(); expiração é validada no reset().)
             $token = Password::broker()->createToken($user);
 
-            // Envia o email. Se o driver de mail falhar, engole o erro pra
-            // manter a resposta genérica — o admin vê o problema no log.
-            try {
-                Mail::to($user->email)->send(new ResetPasswordMail($user, $token));
-            } catch (\Throwable $e) {
-                \Log::error('Falha ao enviar email de reset de senha', [
-                    'user_id' => $user->id,
-                    'error'   => $e->getMessage(),
-                ]);
-            }
+            // Envia o email via EmailLoggerService — grava histórico em
+            // email_logs (sucesso ou falha) e engole a exception pra manter
+            // a resposta genérica. Triggered_by é null aqui: quem pediu
+            // forgot-password nem está autenticado.
+            \App\Services\EmailLoggerService::send(
+                to: $user->email,
+                mailable: new ResetPasswordMail($user, $token),
+                type: \App\Models\EmailLog::TYPE_RESET,
+                relatedUserId: $user->id,
+                toName: $user->name,
+                triggeredBy: null
+            );
         }
 
         return response()->json([

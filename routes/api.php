@@ -6,6 +6,7 @@ use App\Http\Controllers\LeadController;
 use App\Http\Controllers\LeadDocumentController;
 use App\Http\Controllers\SettingController;
 use App\Http\Controllers\EmailSettingsController;
+use App\Http\Controllers\EmailLogsController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DashboardHomeController;
 use App\Http\Controllers\MarketingReportController;
@@ -248,6 +249,8 @@ Route::middleware(['auth:sanctum', 'can:status_required_fields.manage'])
 */
 Route::middleware('auth:sanctum')->group(function () {
     Route::get   ('/users/admin',                  [UserController::class, 'index']);
+    // Precisa vir ANTES de /users/{user} senão 'check-email' bate no wildcard.
+    Route::get   ('/users/check-email',            [UserController::class, 'checkEmail']);
     Route::post  ('/users',                        [UserController::class, 'store']);
     Route::get   ('/users/{user}',                 [UserController::class, 'show']);
     Route::put   ('/users/{user}',                 [UserController::class, 'update']);
@@ -535,6 +538,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/settings/email',       [EmailSettingsController::class, 'index']);
     Route::put('/settings/email',       [EmailSettingsController::class, 'update']);
     Route::post('/settings/email/test', [EmailSettingsController::class, 'test']);
+
+    // Histórico de envios (admin-only). Namespace /admin/email-logs pra
+    // deixar claro o escopo; roteado junto com os demais de settings.
+    Route::get('/admin/email-logs',        [EmailLogsController::class, 'index']);
+    Route::get('/admin/email-logs/{log}',  [EmailLogsController::class, 'show']);
 
     Route::get('/settings',            [SettingController::class, 'index']);
     Route::get('/settings/{key}',      [SettingController::class, 'show']);
