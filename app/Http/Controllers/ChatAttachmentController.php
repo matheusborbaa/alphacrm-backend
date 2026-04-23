@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\ChatMessageAttachment;
+use App\Models\LeadDocument;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -139,6 +140,92 @@ class ChatAttachmentController extends Controller
                 'Content-Disposition' => 'inline; filename="' . ($att->original_name ?? 'arquivo') . '"',
             ]
         );
+    }
+
+    /**
+     * Abre um anexo do tipo `lead_document` pelo ID do attachment (NÃO pelo
+     * ID do LeadDocument). Desacoplado do endpoint do CRM a propósito:
+     *
+     *   - Checa que o user é participante da conversa (mesma regra do upload).
+     *   - Consulta o LeadDocument AO VIVO e bloqueia se availability !== available
+     *     MESMO PRA ADMIN/GESTOR. Motivo: se a URL do chat foi copiada/salva
+     *     antes da exclusão, não deve continuar servindo o arquivo depois.
+     *     Admin que precisa auditar um doc em retenção usa o CRM (aba
+     *     Documentos do lead), não o link do chat.
+     *   - Streama inline com os mesmos headers do preview do CRM.
+     *
+     * Se o LeadDocument sumiu do banco (purged), o ChatMessageAttachment
+     * permanece (histórico) mas esse endpoint devolve 404/403 conforme o caso.
+     */
+    public function openLeadDocument(Request $request, int $attachmentId): StreamedResponse|JsonResponse
+    {
+        $att = ChatMessageAttachment::with('message.conversation')
+            ->find($attachmentId);
+
+        if (!$att || $att->type !== ChatMessageAttachment::TYPE_LEAD_DOCUMENT) {
+            abort(404);
+        }
+
+        $me = (int) Auth::id();
+
+        // Participação na conversa. Drafts (message_id null) não acontecem
+        // pra lead_document — esse tipo é criado só no store da msg.
+        $conv = $att->message?->conversation;
+        if (!$conv || ($conv->user_a_id !== $me && $conv->user_b_id !== $me)) {
+            abort(403);
+        }
+
+        $doc = $att->attachable_id ? LeadDocument::find((int) $att->attachable_id) : null;
+
+        // Availability check vivo — bloqueio global, inclusive admin.
+        // Se o doc foi excluído ou tem solicitação em aberto, URL do chat
+        // deixa de servir o arquivo pra qualquer um.
+        if (!$doc) {
+            abort(404, 'Documento excluído permanentemente.');
+        }
+        if ($doc->deleted_at !== null) {
+            abort(403, 'Documento excluído. Acesso indisponível pelo link do chat.');
+        }
+        if ($doc->isDeletionPending()) {
+            abort(403, 'Documento com solicitação de exclusão em aberto. Acesso indisponível pelo link do chat.');
+        }
+
+        // Streaming: mesmo padrão do LeadDocumentController@preview, sem a
+        // camada de logAccess (anexo do chat já tem rastreio de quem mandou
+        // pra quem via ChatMessage). Se virar requisito de LGPD auditar esse
+        // canal também, plugamos o LeadDocumentAccess com action='chat_open'.
+        $disk = Storage::disk('local');
+        $path = $doc->storage_path;
+        if (!$disk->exists($path)) {
+            // Fallback pro mesmo layout "private/" que o CRM usa.
+            if (str_starts_with((string) $path, 'private/')) {
+                $alt = substr($path, 8);
+                if ($disk->exists($alt)) $path = $alt;
+                else abort(404, 'Arquivo não encontrado no storage.');
+            } else {
+                abort(404, 'Arquivo não encontrado no storage.');
+            }
+        }
+
+        $mime = $doc->mime_type ?: 'application/octet-stream';
+        $size = (int) $doc->size_bytes;
+        $safeName = str_replace(['"', "\r", "\n"], ['\\"', '', ''], (string) $doc->original_name);
+
+        $headers = [
+            'Content-Type'           => $mime,
+            'Content-Disposition'    => 'inline; filename="' . $safeName . '"',
+            'Cache-Control'          => 'private, no-store, no-cache, must-revalidate',
+            'Pragma'                 => 'no-cache',
+            'X-Content-Type-Options' => 'nosniff',
+        ];
+        if ($size > 0) $headers['Content-Length'] = (string) $size;
+
+        return new StreamedResponse(function () use ($disk, $path) {
+            $stream = $disk->readStream($path);
+            if ($stream === null || $stream === false) return;
+            fpassthru($stream);
+            if (is_resource($stream)) fclose($stream);
+        }, 200, $headers);
     }
 
     /**

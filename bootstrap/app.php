@@ -29,6 +29,9 @@ return Application::configure(basePath: dirname(__DIR__))
         'docs.auth' => BasicAuthDocs::class,
         'role' => \App\Http\Middleware\RoleMiddleware::class,
         'auth' => \Illuminate\Auth\Middleware\Authenticate::class,
+        // Sprint 4.x — 403 nos endpoints de /chat quando o setting
+        // `chat_enabled` estiver false. Colado no grupo prefix('chat').
+        'chat.enabled' => \App\Http\Middleware\EnsureChatEnabled::class,
 
     ]);
 

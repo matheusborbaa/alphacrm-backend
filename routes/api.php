@@ -770,7 +770,7 @@ Route::middleware('auth:sanctum')->post('/auth/logout', function (Request $reque
 |   GET  /chat/attachments/{id}/download          -> baixa/preview do anexo upload
 |   DELETE /chat/attachments/{id}/draft           -> cancela upload draft (antes de enviar msg)
 */
-Route::middleware('auth:sanctum')->prefix('chat')->group(function () {
+Route::middleware(['auth:sanctum', 'chat.enabled'])->prefix('chat')->group(function () {
     Route::get ('/unread-count',                  [ChatConversationController::class, 'unreadCount']);
 
     Route::get ('/conversations',                 [ChatConversationController::class, 'index']);
@@ -795,6 +795,12 @@ Route::middleware('auth:sanctum')->prefix('chat')->group(function () {
     Route::get   ('/attachments/{id}/download',   [ChatAttachmentController::class, 'download'])
         ->whereNumber('id');
     Route::delete('/attachments/{id}/draft',      [ChatAttachmentController::class, 'cancelDraft'])
+        ->whereNumber('id');
+
+    // Sprint 4.x — endpoint dedicado pra abrir lead_document pelo link do chat.
+    // Valida participação + availability ao vivo (bloqueia mesmo admin se o
+    // doc foi excluído / tem solicitação pendente).
+    Route::get   ('/attachments/{id}/lead-document', [ChatAttachmentController::class, 'openLeadDocument'])
         ->whereNumber('id');
 });
 

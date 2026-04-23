@@ -173,15 +173,13 @@ class ChatMessageAttachment extends Model
             if ($state !== 'available') {
                 return null;
             }
-            // Reaproveita o endpoint existente de preview de doc do lead.
-            // A rota real é /leads/{lead}/documents/{document}/preview —
-            // o lead_id vem congelado no snapshot (ChatAttachmentResolver).
-            $leadId = $this->snapshot['lead_id'] ?? null;
-            if ($leadId) {
-                return "/leads/{$leadId}/documents/{$this->attachable_id}/preview";
-            }
-            // Fallback: snapshot antigo sem lead_id — nada a fazer.
-            return null;
+            // Endpoint dedicado do chat (Sprint 4.x): /chat/attachments/{id}/lead-document
+            // — checa availability AO VIVO em cada request, então se a URL
+            // for salva/copiada e o doc for excluído depois, o BE devolve
+            // 403 mesmo pra admin. A rota do CRM (/leads/{lead}/documents/
+            // {doc}/preview) continua disponível pra admin/gestor auditar
+            // via a aba Documentos do lead.
+            return "/chat/attachments/{$this->id}/lead-document";
         }
         return null;
     }

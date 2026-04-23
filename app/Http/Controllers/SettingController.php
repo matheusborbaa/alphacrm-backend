@@ -112,6 +112,16 @@ class SettingController extends Controller
             'type'    => 'int_or_null',
             'default' => null,
         ],
+
+        // =================== MÓDULO DE CHAT =============================
+        // Liga/desliga o chat interno globalmente. Quando OFF: sidebar esconde
+        // o item, deep-link /chat.php redireciona pro dashboard e os
+        // endpoints /conversations e /messages* retornam 403. Default true
+        // pra manter o comportamento existente.
+        'chat_enabled' => [
+            'type'    => 'bool',
+            'default' => true,
+        ],
     ];
 
     /** Lista TODAS as configurações (chave => valor). Só chaves conhecidas. */
