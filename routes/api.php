@@ -59,6 +59,7 @@ use App\Http\Controllers\HomeController;
 
 
 /* leads que precisam de atenção */
+// Protegida com auth:sanctum — expõe nomes de leads, não pode ficar aberta.
 Route::get('/dashboard/leads-atencao', function () {
 
     $limiteDias = 5;
@@ -95,7 +96,7 @@ Route::get('/dashboard/leads-atencao', function () {
     });
 
     return response()->json($result);
-});
+})->middleware('auth:sanctum');
 
 
 
@@ -107,7 +108,9 @@ Route::get('/dashboard/leads-atencao', function () {
 Route::get('/meta/empreendimento-fields', function () {
     return \App\Models\EmpreendimentoFieldDefinition::orderBy('name')->get();
 });
-Route::get('/funnel', [DashboardHomeController::class, 'funnel']);
+// Funil de conversão — exige auth pra não vazar dados de pipeline.
+Route::get('/funnel', [DashboardHomeController::class, 'funnel'])
+    ->middleware('auth:sanctum');
 
 
 
@@ -608,7 +611,10 @@ Route::middleware(['auth:sanctum', 'role:admin,gestor'])->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index']);
     Route::get('/dashboard/funnel', [DashboardController::class, 'funnel']);
 });
-    Route::get('/dashboard/resumo', [DashboardController::class, 'resumo']);
+    // Fora do group acima de propósito? Não — só faltava middleware. Agora
+    // exige auth:sanctum pra não expor resumo de métricas pra anônimos.
+    Route::get('/dashboard/resumo', [DashboardController::class, 'resumo'])
+        ->middleware('auth:sanctum');
 
 /*
 |--------------------------------------------------------------------------
@@ -795,8 +801,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
 
 
-// rotas criação email
-Route::post('/emails/create', [EmailController::class, 'store']);
+// rotas criação email — admin/gestor só (cria contas de email no cPanel).
+Route::post('/emails/create', [EmailController::class, 'store'])
+    ->middleware(['auth:sanctum', 'role:admin,gestor']);
 
 Route::get('/teste-whm', function () {
     return Http::withOptions([
