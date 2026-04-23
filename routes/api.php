@@ -217,7 +217,10 @@ Route::post('/auth/reset-password', [AuthController::class, 'resetPassword'])
 |--------------------------------------------------------------------------
 */
 Route::get('/users', function(){
-    return \App\Models\User::select('id','name')->get();
+    // Inclui email e avatar — o chat usa isso pra renderizar a foto
+    // do corretor nos itens de conversa e no seletor "Nova conversa".
+    // Se virar pesado, paginar ou filtrar por active=true.
+    return \App\Models\User::select('id','name','email','avatar')->get();
 })->middleware('auth:sanctum');
 Route::get('/empreendimentos-lista', function(){
     return \App\Models\Empreendimento::select('id','name')->get();
