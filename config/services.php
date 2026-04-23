@@ -52,16 +52,15 @@ return [
         'vps_id'   => env('HOSTINGER_VPS_ID'),
     ],
 
-    // Monitoramento de disco da APLICAÇÃO (aba Sistema + alertas).
-    // O VPS é compartilhado com outros sistemas; em vez de expor o disco
-    // inteiro, reservamos uma quota fictícia pro AlphaCRM e mostramos o
-    // consumo relativo a ela. `monitor_path` vazio = usa base_path() do
-    // Laravel (= raiz da pasta alphacrm/). O cálculo usa `du -sb` com
-    // fallback PHP e cache pra não repetir a soma toda request.
+    // Quota fictícia de disco do AlphaCRM (aba Sistema + alertas).
+    // O VPS é compartilhado com outros sistemas. Em vez de exibir o disco
+    // total bruto do provedor, usamos essa quota como denominador na aba
+    // Sistema ("5,6 GB de 30 GB"). O numerador continua sendo o USED real
+    // da Hostinger — só mudamos o total pra ficar uma referência honesta
+    // pro admin sem precisar auditar o que não é do CRM. 75% dessa quota
+    // dispara o alerta de capacidade de disco.
     'alphacrm_disk' => [
-        'monitor_path' => env('ALPHACRM_DISK_MONITOR_PATH'),
-        'quota_gb'     => (int) env('ALPHACRM_DISK_QUOTA_GB', 30),
-        'cache_ttl'    => (int) env('ALPHACRM_DISK_CACHE_TTL', 600),
+        'quota_gb' => (int) env('ALPHACRM_DISK_QUOTA_GB', 30),
     ],
 
 ];

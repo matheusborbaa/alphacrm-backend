@@ -5,8 +5,6 @@ namespace App\Services;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Symfony\Component\Process\Exception\ProcessFailedException;
-use Symfony\Component\Process\Process;
 
 /**
  * HostingerService — wrapper fino da API pública da Hostinger
@@ -46,13 +44,13 @@ class HostingerService
     private ?string $apiKey;
     private ?string $vpsId;
 
-    // --- Monitoramento de disco da APLICAÇÃO ---
-    // O servidor físico é compartilhado com outros sistemas. A aba
-    // Sistema e os alertas mostram o consumo da pasta alphacrm/ dividido
-    // por uma quota fictícia reservada pro CRM, e não o disco inteiro.
-    private string $appDiskPath;           // caminho absoluto a medir
-    private int    $appDiskQuotaBytes;     // denominador (quota em bytes)
-    private int    $appDiskCacheTtl;       // TTL do cache do `du` em segundos
+    // --- Quota fictícia de disco reservada pro CRM ---
+    // O servidor físico é compartilhado com outros sistemas. A aba Sistema
+    // e os alertas usam essa quota como denominador ("5,6 GB de 30 GB") em
+    // vez do disco total do VPS. O numerador continua sendo o uso real que
+    // a Hostinger devolve — mudar só o total dá referência mais honesta
+    // pro admin sem precisar auditar o disco de quem não é do CRM.
+    private int $appDiskQuotaBytes;        // denominador (quota em bytes)
 
     public function __construct()
     {
@@ -60,18 +58,10 @@ class HostingerService
         $this->apiKey  = config('services.hostinger.api_key');
         $this->vpsId   = config('services.hostinger.vps_id');
 
-        // Resolve o path de monitoramento em runtime: .env vence, senão
-        // usa base_path() (raiz do Laravel = pasta alphacrm/). Quota em
-        // GB → bytes. TTL com piso de 60s pra evitar thrash em mis-config.
-        $configuredPath = config('services.alphacrm_disk.monitor_path');
-        $this->appDiskPath = is_string($configuredPath) && $configuredPath !== ''
-            ? $configuredPath
-            : base_path();
-
+        // Quota em GB → bytes. Piso de 1 GB pra evitar divisão por 0
+        // e mis-config absurda.
         $quotaGb = max(1, (int) config('services.alphacrm_disk.quota_gb', 30));
         $this->appDiskQuotaBytes = $quotaGb * 1024 * 1024 * 1024;
-
-        $this->appDiskCacheTtl = max(60, (int) config('services.alphacrm_disk.cache_ttl', 600));
     }
 
     /**
@@ -462,16 +452,22 @@ class HostingerService
         $netIn  = $this->avgFromMetric($series['incoming_traffic'] ?? $series['network_in']  ?? $series['net_in']  ?? []);
         $netOut = $this->avgFromMetric($series['outgoing_traffic'] ?? $series['network_out'] ?? $series['net_out'] ?? []);
 
-        // -------- Disco: sobrescreve com o consumo da aplicação --------
-        // O VPS é compartilhado; não faz sentido expor o disco total. Em
-        // vez disso, medimos a pasta do CRM e comparamos com a quota
-        // configurada em .env. Se o cálculo falhar (du indisponível, path
-        // sem permissão), appDiskUsedBytes vem 0 e o card mostra 0 GB de
-        // 30 GB — preferível a vazar info do disco compartilhado.
-        $appDiskUsed  = $this->computeAppDiskUsage();
+        // -------- Disco: mantém o USED da Hostinger, troca só o TOTAL --------
+        // O VPS é compartilhado com outro sistema. Em vez de expor o disco
+        // total bruto do provedor (ex.: 50 GB), exibimos o consumo real do
+        // VPS (que já inclui tudo — Laravel, uploads, logs, outros sistemas)
+        // dividido por uma quota fictícia reservada pro CRM (default 30 GB).
+        //
+        // Tentativa anterior media só `du base_path()` pro USED, mas isso
+        // não refletia uploads fora da pasta (storage em outro disk,
+        // frontend, backups locais) e subia pra UI um número artificial.
+        // Agora só trocamos o denominador — o numerador permanece o "disk
+        // realmente ocupado no VPS" que a Hostinger já devolve.
         $appDiskTotal = $this->appDiskQuotaBytes;
+        // Se o used exceder a quota (quota estourada) o percent trava em
+        // 100% — visualmente avisa o admin sem quebrar a barra.
         $appDiskPct   = $appDiskTotal > 0
-            ? round(min(100.0, $appDiskUsed / $appDiskTotal * 100), 1)
+            ? round(min(100.0, $diskUsed / $appDiskTotal * 100), 1)
             : 0.0;
 
         // -------- Último backup (API /backups da Hostinger) --------
@@ -508,12 +504,12 @@ class HostingerService
                 ? round($ramPercentRaw, 1)
                 : ($ramTotal > 0 ? round($ramUsed / $ramTotal * 100, 1) : 0.0),
 
-            // ⚠️ Disco NÃO reflete o VPS: é a pasta alphacrm/ dividida
-            // pela quota de .env (ALPHACRM_DISK_QUOTA_GB, default 30 GB).
-            // O VPS é compartilhado com outros sistemas — expor o disco
-            // total misturaria o uso de quem não é do CRM.
+            // Disco: USED é o real do VPS (igual ao que a Hostinger devolve);
+            // TOTAL é a quota fictícia de ALPHACRM_DISK_QUOTA_GB (.env,
+            // default 30 GB). O VPS é compartilhado com outros sistemas,
+            // então em vez do total bruto exibimos "usado / quota reservada".
             'disk_total_bytes'      => $appDiskTotal,
-            'disk_used_bytes'       => $appDiskUsed,
+            'disk_used_bytes'       => $diskUsed,
             'disk_percent'          => $appDiskPct,
 
             'net_in_bytes_per_sec'  => round($netIn,  0),
@@ -524,99 +520,6 @@ class HostingerService
             // Shape do backup: ver getLatestBackup().
             'latest_backup'         => $latestBackup,
         ];
-    }
-
-    /**
-     * Mede o tamanho em bytes da pasta da aplicação (default: base_path(),
-     * que é a raiz da pasta alphacrm/). O VPS é compartilhado com outros
-     * sistemas — em vez de expor o disco total, a aba Sistema mostra
-     * "usado / quota reservada" com base nesta medição.
-     *
-     * Estratégia:
-     *   1. Cacheia o resultado por `appDiskCacheTtl` segundos (default 10min).
-     *      `du -sb` em pasta grande pode levar vários segundos; o valor
-     *      muda devagar, então cachear é seguro e protege de polling.
-     *   2. Primeira tentativa: `du -sb <path>` via Symfony Process. É
-     *      ordens de magnitude mais rápido que iterar em PHP quando tem
-     *      muito arquivo (ex.: vendor/, node_modules/ — mesmo que
-     *      node_modules do frontend esteja FORA do base_path()).
-     *   3. Fallback: RecursiveDirectoryIterator em PHP puro. Mais lento
-     *      mas não depende de comando externo (VPS com disabled_functions
-     *      restritivo, ambientes managed).
-     *   4. Em caso de erro total retorna 0 — UI mostra 0 GB em vez de
-     *      estourar, e o log tem a razão pra debug.
-     *
-     * `du` com `-b` já considera o tamanho real em bytes (apparent size).
-     * Symlinks não são seguidos por default no nosso fallback PHP —
-     * evita double-count e loops infinitos.
-     */
-    private function computeAppDiskUsage(): int
-    {
-        $path = $this->appDiskPath;
-        $cacheKey = 'alphacrm_disk_usage:' . md5($path);
-
-        return (int) Cache::remember($cacheKey, $this->appDiskCacheTtl, function () use ($path) {
-            if (!is_string($path) || $path === '' || !is_dir($path)) {
-                Log::warning('HostingerService.computeAppDiskUsage: path inválido', ['path' => $path]);
-                return 0;
-            }
-
-            // Tentativa 1: du -sb (rápido, único processo externo).
-            try {
-                $process = new Process(['du', '-sb', $path]);
-                $process->setTimeout(10);
-                $process->run();
-
-                if ($process->isSuccessful()) {
-                    $output = trim($process->getOutput());
-                    // Formato: "<bytes>\t<path>\n" — extrai os dígitos iniciais.
-                    if (preg_match('/^(\d+)/', $output, $m)) {
-                        return (int) $m[1];
-                    }
-                }
-                // Se rodou mas shape inesperado, cai pro fallback PHP.
-                Log::info('HostingerService.computeAppDiskUsage: du retornou output inesperado', [
-                    'exit_code' => $process->getExitCode(),
-                    'stderr'    => substr($process->getErrorOutput(), 0, 200),
-                ]);
-            } catch (ProcessFailedException $e) {
-                Log::info('HostingerService.computeAppDiskUsage: du falhou, usando fallback PHP', [
-                    'error' => $e->getMessage(),
-                ]);
-            } catch (\Throwable $e) {
-                // proc_open desabilitado, binário ausente, etc.
-                Log::info('HostingerService.computeAppDiskUsage: du indisponível, usando fallback PHP', [
-                    'error' => $e->getMessage(),
-                ]);
-            }
-
-            // Tentativa 2: iteração recursiva em PHP. SKIP_DOTS evita "."/"..";
-            // não seguimos symlinks (default do Iterator em PHP) pra não
-            // double-contar ou entrar em loop.
-            try {
-                $total = 0;
-                $iterator = new \RecursiveIteratorIterator(
-                    new \RecursiveDirectoryIterator(
-                        $path,
-                        \FilesystemIterator::SKIP_DOTS
-                    ),
-                    \RecursiveIteratorIterator::LEAVES_ONLY,
-                    \RecursiveIteratorIterator::CATCH_GET_CHILD  // ignora subpastas sem permissão em vez de crashar
-                );
-                foreach ($iterator as $file) {
-                    if ($file->isFile() && !$file->isLink()) {
-                        $total += (int) $file->getSize();
-                    }
-                }
-                return $total;
-            } catch (\Throwable $e) {
-                Log::warning('HostingerService.computeAppDiskUsage: fallback PHP falhou', [
-                    'error' => $e->getMessage(),
-                    'path'  => $path,
-                ]);
-                return 0;
-            }
-        });
     }
 
     /**
