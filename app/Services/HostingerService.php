@@ -267,7 +267,39 @@ class HostingerService
 
         $cpuAvg  = $this->avgSeries($series['cpu_usage'] ?? $series['cpu'] ?? []);
         $ramUsed = $this->lastBytes($series['ram_usage'] ?? $series['memory_usage'] ?? [], 'MB');
-        $diskUsed = $this->lastBytes($series['disk_usage'] ?? [], 'GB');
+
+        // Disco: a Hostinger tem inconsistências conhecidas aqui —
+        //  - alguns planos devolvem a série em `disk_usage`, outros em
+        //    `disk`, outros não retornam série nenhuma.
+        //  - alguns VMs já trazem `disk_used`/`disk_used_bytes` direto
+        //    no objeto da VM.
+        //  - último fallback: se sabemos `disk_total` e `disk_percent`,
+        //    derivamos o usado por multiplicação.
+        $diskUsed = $this->lastBytes(
+            $series['disk_usage'] ?? $series['disk'] ?? $series['disk_used'] ?? [],
+            'GB'
+        );
+        if ($diskUsed <= 0) {
+            // Tenta campos absolutos no próprio objeto da VM.
+            $diskUsed = $this->extractBytes(
+                $vmData,
+                ['disk_used_bytes', 'disk_used', 'used_disk', 'disk_usage'],
+                'GB'
+            );
+        }
+        // Percent direto (se o provedor expuser) — guardamos pra derivar
+        // no fallback e pra devolver com precisão correta mesmo quando
+        // disk_total está zero.
+        $diskPercentRaw = null;
+        foreach (['disk_percent', 'disk_usage_percent', 'disk_used_percent'] as $k) {
+            if (isset($vmData[$k]) && is_numeric($vmData[$k])) {
+                $diskPercentRaw = (float) $vmData[$k];
+                break;
+            }
+        }
+        if ($diskUsed <= 0 && $diskTotal > 0 && $diskPercentRaw !== null) {
+            $diskUsed = (int) round($diskTotal * ($diskPercentRaw / 100));
+        }
 
         $netIn  = $this->avgSeries($series['network_in']  ?? $series['net_in']  ?? []);
         $netOut = $this->avgSeries($series['network_out'] ?? $series['net_out'] ?? []);
@@ -296,7 +328,11 @@ class HostingerService
 
             'disk_total_bytes'      => $diskTotal,
             'disk_used_bytes'       => $diskUsed,
-            'disk_percent'          => $diskTotal > 0 ? round($diskUsed / $diskTotal * 100, 1) : 0.0,
+            // Prioridade: 1) percent que o provedor já mandou (mais
+            // preciso), 2) calculado de used/total, 3) zero.
+            'disk_percent'          => $diskPercentRaw !== null
+                ? round($diskPercentRaw, 1)
+                : ($diskTotal > 0 ? round($diskUsed / $diskTotal * 100, 1) : 0.0),
 
             'net_in_bytes_per_sec'  => round($netIn,  0),
             'net_out_bytes_per_sec' => round($netOut, 0),
