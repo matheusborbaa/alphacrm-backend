@@ -42,8 +42,8 @@ class ChatConversationController extends Controller
                 $q->where('user_a_id', $me)->orWhere('user_b_id', $me);
             })
             ->with([
-                'userA:id,name,email',
-                'userB:id,name,email',
+                'userA:id,name,email,avatar',
+                'userB:id,name,email,avatar',
                 // carregamos só a última mensagem de cada conversa via
                 // lastMessage() (latest), mas Eager load com hasMany
                 // traz todas. Alternativa: subquery. Pra MVP, limitamos
@@ -84,9 +84,10 @@ class ChatConversationController extends Controller
                 'id'              => $c->id,
                 'last_message_at' => $c->last_message_at,
                 'other_user'      => $other ? [
-                    'id'    => $other->id,
-                    'name'  => $other->name,
-                    'email' => $other->email,
+                    'id'     => $other->id,
+                    'name'   => $other->name,
+                    'email'  => $other->email,
+                    'avatar' => $other->avatar,
                 ] : null,
                 'last_message'    => $last ? [
                     'id'         => $last->id,
@@ -150,9 +151,10 @@ class ChatConversationController extends Controller
             'id'              => $conversation->id,
             'last_message_at' => $conversation->last_message_at,
             'other_user'      => [
-                'id'    => $otherUser->id,
-                'name'  => $otherUser->name,
-                'email' => $otherUser->email,
+                'id'     => $otherUser->id,
+                'name'   => $otherUser->name,
+                'email'  => $otherUser->email,
+                'avatar' => $otherUser->avatar,
             ],
             'unread_count'    => 0,
         ], $conversation->wasRecentlyCreated ? 201 : 200);
