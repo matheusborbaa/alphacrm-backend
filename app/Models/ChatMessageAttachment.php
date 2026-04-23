@@ -100,7 +100,14 @@ class ChatMessageAttachment extends Model
         }
         if ($this->type === self::TYPE_LEAD_DOCUMENT && $this->attachable_id) {
             // Reaproveita o endpoint existente de preview de doc do lead.
-            return "/lead-documents/{$this->attachable_id}/preview";
+            // A rota real é /leads/{lead}/documents/{document}/preview —
+            // o lead_id vem congelado no snapshot (ChatAttachmentResolver).
+            $leadId = $this->snapshot['lead_id'] ?? null;
+            if ($leadId) {
+                return "/leads/{$leadId}/documents/{$this->attachable_id}/preview";
+            }
+            // Fallback: snapshot antigo sem lead_id — nada a fazer.
+            return null;
         }
         return null;
     }
