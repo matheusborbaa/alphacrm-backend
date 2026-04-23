@@ -76,7 +76,10 @@ class HostingerService
             return [
                 'ok'     => false,
                 'reason' => 'not_configured',
-                'error'  => 'Integração com a Hostinger não está configurada. Defina HOSTINGER_API_KEY e HOSTINGER_VPS_ID no .env.',
+                // User-facing: genérico. Os nomes de env vars vivem só
+                // no .env.example e no comando artisan — quem vê esse
+                // texto é o admin do CRM, não o dev de infra.
+                'error'  => 'Monitoramento do servidor ainda não foi configurado.',
             ];
         }
 
@@ -127,14 +130,14 @@ class HostingerService
         try {
             $res = $this->request('GET', '/api/vps/v1/virtual-machines');
             if (!is_array($res)) {
-                return $this->errorResponse('upstream_error', 'A Hostinger não respondeu com uma lista de VPSes.');
+                return $this->errorResponse('upstream_error', 'O provedor não respondeu com uma lista de servidores.');
             }
 
             // A resposta pode vir direto como array OU envelopada em {data: [...]}
             // dependendo da versão da API. Aceitamos os dois.
             $vms = $res['data'] ?? $res;
             if (!is_array($vms)) {
-                return $this->errorResponse('upstream_shape', 'Formato inesperado da resposta da Hostinger.');
+                return $this->errorResponse('upstream_shape', 'Formato inesperado da resposta do provedor.');
             }
 
             $normalized = [];
@@ -142,23 +145,23 @@ class HostingerService
                 if (!is_array($vm)) continue;
                 $normalized[] = [
                     'id'       => $vm['id'] ?? null,
-                    'hostname' => (string) ($vm['hostname'] ?? ''),
-                    'plan'     => (string) ($vm['plan'] ?? $vm['plan_name'] ?? ''),
-                    'state'    => (string) ($vm['state'] ?? $vm['status'] ?? ''),
-                    'ipv4'     => (string) ($vm['ipv4'] ?? $vm['ip'] ?? ''),
-                    'cpus'     => $vm['cpus']   ?? null,
-                    'memory'   => $vm['memory'] ?? null,  // em MB (geralmente)
-                    'disk'     => $vm['disk']   ?? null,  // em MB (geralmente)
+                    'hostname' => $this->scalarFrom($vm['hostname'] ?? null),
+                    'plan'     => $this->scalarFrom($vm['plan']  ?? $vm['plan_name'] ?? null, ['name', 'title', 'label', 'slug']),
+                    'state'    => $this->scalarFrom($vm['state'] ?? $vm['status']    ?? null),
+                    'ipv4'     => $this->extractIpv4($vm),
+                    'cpus'     => is_scalar($vm['cpus']   ?? null) ? $vm['cpus']   : null,
+                    'memory'   => is_scalar($vm['memory'] ?? null) ? $vm['memory'] : null,  // em MB (geralmente)
+                    'disk'     => is_scalar($vm['disk']   ?? null) ? $vm['disk']   : null,  // em MB (geralmente)
                 ];
             }
 
-            return ['ok' => true, 'vms' => $normalized];
+            return ['ok' => true, 'vms' => $normalized, 'raw' => $vms];
 
         } catch (\Throwable $e) {
             Log::warning('HostingerService.listVirtualMachines falhou', [
                 'error' => $e->getMessage(),
             ]);
-            return $this->errorResponse('exception', 'Falha ao contatar a Hostinger: ' . $e->getMessage());
+            return $this->errorResponse('exception', 'Falha ao contatar o servidor: ' . $e->getMessage());
         }
     }
 
@@ -174,7 +177,7 @@ class HostingerService
         try {
             $vm = $this->request('GET', $vmPath);
             if (!$vm) {
-                return $this->errorResponse('upstream_error', 'Não foi possível obter informações do VPS na Hostinger.');
+                return $this->errorResponse('upstream_error', 'Não foi possível obter informações do servidor.');
             }
 
             // Métricas da última janela (10 min) — pegamos média do CPU,
@@ -191,7 +194,7 @@ class HostingerService
                 'error' => $e->getMessage(),
                 'vps_id' => $this->vpsId,
             ]);
-            return $this->errorResponse('exception', 'Falha ao contatar a Hostinger: ' . $e->getMessage());
+            return $this->errorResponse('exception', 'Falha ao contatar o servidor: ' . $e->getMessage());
         }
     }
 
@@ -234,12 +237,18 @@ class HostingerService
         // "data" wrapper é o padrão Hostinger pra respostas de entidade única.
         $vmData = $vm['data'] ?? $vm;
 
-        $status = (string) ($vmData['status'] ?? $vmData['state'] ?? 'unknown');
-        $uptime = (int) ($vmData['uptime'] ?? $vmData['uptime_seconds'] ?? 0);
+        // Usa scalarFrom() pra proteger contra campos que o provedor
+        // eventualmente devolve como objeto aninhado (vide bug
+        // "Array to string conversion" que pegava status/plan).
+        $status = $this->scalarFrom($vmData['status'] ?? $vmData['state'] ?? 'unknown') ?: 'unknown';
+        $uptime = (int) (is_numeric($vmData['uptime'] ?? null) ? $vmData['uptime']
+                      : (is_numeric($vmData['uptime_seconds'] ?? null) ? $vmData['uptime_seconds'] : 0));
 
         // RAM/disk totais vêm na info da VM (em MB na maioria das APIs
         // Hostinger — normalizamos pra bytes). Se aparecer no formato
         // novo (bytes) também funciona porque detectamos o tamanho.
+        // Obs.: API às vezes devolve como objeto em vez de escalar —
+        // extractBytes já tem guarda contra is_numeric().
         $ramTotal  = $this->extractBytes($vmData, ['memory_bytes', 'memory', 'ram_bytes', 'ram'], 'MB');
         $diskTotal = $this->extractBytes($vmData, ['disk_bytes', 'disk_space', 'disk'], 'GB');
 
@@ -289,7 +298,19 @@ class HostingerService
     {
         foreach ($keys as $k) {
             if (!isset($data[$k])) continue;
-            $v = (float) $data[$k];
+            $raw = $data[$k];
+            // Se vier como objeto aninhado ({value: X, unit: "MB"} ou similar)
+            // tentamos pegar a subchave numérica mais comum.
+            if (is_array($raw)) {
+                foreach (['value', 'bytes', 'size', 'total', 'used'] as $sub) {
+                    if (isset($raw[$sub]) && is_numeric($raw[$sub])) {
+                        $raw = $raw[$sub];
+                        break;
+                    }
+                }
+            }
+            if (!is_numeric($raw)) continue;
+            $v = (float) $raw;
             if ($v <= 0) return 0;
             // Heurística: se já parece ser bytes (> 10M) devolve direto.
             if ($v > 10_000_000) return (int) $v;
@@ -348,5 +369,77 @@ class HostingerService
     private function errorResponse(string $reason, string $msg): array
     {
         return ['ok' => false, 'reason' => $reason, 'error' => $msg];
+    }
+
+    /**
+     * Converte qualquer valor em string de forma segura. A Hostinger
+     * mistura string plain com objeto aninhado dependendo do campo
+     * (ex.: `plan` às vezes vem "KVM 4", outras vezes {name: "KVM 4",
+     * id: 123}), o que quebrava nosso cast `(string) $v` com o erro
+     * "Array to string conversion" em PHP 8+.
+     *
+     * - Se for escalar, devolve cast direto.
+     * - Se for array, tenta subchaves comuns (name, label, value, id)
+     *   na ordem — essas são as convenções mais frequentes em APIs REST.
+     * - Caso contrário (null ou array sem subchave scalar), devolve ''.
+     */
+    private function scalarFrom($value, array $subKeys = ['name', 'title', 'label', 'value']): string
+    {
+        if (is_scalar($value)) return (string) $value;
+        if (is_array($value)) {
+            foreach ($subKeys as $k) {
+                if (isset($value[$k]) && is_scalar($value[$k])) {
+                    return (string) $value[$k];
+                }
+            }
+        }
+        return '';
+    }
+
+    /**
+     * Extrai um IPv4 da resposta da VM. A Hostinger pode devolver:
+     *   - `ipv4` como string "198.51.100.10"
+     *   - `ip` string
+     *   - `ipv4` como array de objetos [{address: "..."}, ...]
+     *   - `addresses` / `ips` como array
+     *
+     * Cobrimos os formatos conhecidos e caímos em string vazia se nada
+     * casar (assim a tabela imprime "—" em vez de estourar).
+     */
+    private function extractIpv4(array $vm): string
+    {
+        foreach (['ipv4', 'ip', 'primary_ipv4', 'ip_address'] as $k) {
+            if (!isset($vm[$k])) continue;
+            $v = $vm[$k];
+            if (is_string($v) && $v !== '') return $v;
+            if (is_array($v)) {
+                // Pode ser lista de IPs ou lista de {address/ip/ipv4}
+                foreach ($v as $entry) {
+                    if (is_string($entry) && $entry !== '') return $entry;
+                    if (is_array($entry)) {
+                        foreach (['address', 'ipv4', 'ip', 'value'] as $sub) {
+                            if (!empty($entry[$sub]) && is_string($entry[$sub])) {
+                                return $entry[$sub];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Hostinger às vezes usa chaves plurais
+        foreach (['ipv4_addresses', 'addresses', 'ips'] as $k) {
+            if (!isset($vm[$k]) || !is_array($vm[$k])) continue;
+            foreach ($vm[$k] as $entry) {
+                if (is_string($entry) && $entry !== '') return $entry;
+                if (is_array($entry)) {
+                    foreach (['address', 'ipv4', 'ip', 'value'] as $sub) {
+                        if (!empty($entry[$sub]) && is_string($entry[$sub])) {
+                            return $entry[$sub];
+                        }
+                    }
+                }
+            }
+        }
+        return '';
     }
 }

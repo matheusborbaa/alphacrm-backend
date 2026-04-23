@@ -19,7 +19,7 @@ use Illuminate\Console\Command;
  */
 class ListHostingerVps extends Command
 {
-    protected $signature   = 'hostinger:list-vps';
+    protected $signature   = 'hostinger:list-vps {--raw : Imprime o JSON bruto da resposta (útil pra debug de schema)}';
     protected $description = 'Lista as VPSes da conta Hostinger pra descobrir o HOSTINGER_VPS_ID correto.';
 
     public function handle(HostingerService $hostinger): int
@@ -32,6 +32,14 @@ class ListHostingerVps extends Command
                 $this->line('  motivo: ' . $res['reason']);
             }
             return self::FAILURE;
+        }
+
+        // --raw imprime o JSON bruto retornado pelo provedor. Usado pra
+        // entender o shape real quando a API evolui e quebra nossa
+        // normalização (ex.: campos virarem objetos aninhados).
+        if ($this->option('raw')) {
+            $this->line(json_encode($res['raw'] ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            return self::SUCCESS;
         }
 
         $vms = $res['vms'] ?? [];
