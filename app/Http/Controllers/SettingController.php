@@ -122,6 +122,37 @@ class SettingController extends Controller
             'type'    => 'bool',
             'default' => true,
         ],
+
+        // =================== ALERTAS DE CAPACIDADE DO SERVIDOR ==========
+        // Monitoramento automático de disco/RAM disparado pelo comando
+        // agendado `servidor:check-capacity` (routes/console.php, hourly).
+        // Quando disco ou RAM cruza o threshold, todos os admins ativos
+        // recebem notificação DENTRO do CRM (sino + banner no dashboard)
+        // pra acionarem o upgrade do servidor. Sem e-mail — contido no
+        // próprio sistema. Dedup interno: depois de disparado, só
+        // re-alerta depois de 24h enquanto o problema persistir (evita
+        // spam do sino).
+        'server_alert_enabled' => [
+            'type'    => 'bool',
+            'default' => true,
+        ],
+        // Threshold de disco em percentual. Default 75 — deixa margem pra
+        // o admin agendar upgrade antes do disco estourar (backups, logs,
+        // uploads não param de crescer).
+        'server_alert_disk_threshold' => [
+            'type'    => 'int',
+            'default' => 75,
+            'min'     => 50,
+            'max'     => 99,
+        ],
+        // Threshold de RAM. Default 90 — mais apertado porque RAM
+        // saturada degrada performance rapidamente (swap, OOM killer).
+        'server_alert_ram_threshold' => [
+            'type'    => 'int',
+            'default' => 90,
+            'min'     => 50,
+            'max'     => 99,
+        ],
     ];
 
     /** Lista TODAS as configurações (chave => valor). Só chaves conhecidas. */

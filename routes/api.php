@@ -572,6 +572,12 @@ Route::middleware('auth:sanctum')->group(function () {
 */
 Route::middleware(['auth:sanctum', 'role:admin'])->group(function () {
     Route::get('/vps/status', [VpsStatusController::class, 'show']);
+
+    // /server/capacity-alerts — fonte dos alertas que aparecem no
+    // dashboard do admin. Diferente de /vps/status, só devolve o que
+    // está ACIMA do threshold (lista pode vir vazia). Usado por
+    // modules/home.js pra renderizar o banner de capacidade.
+    Route::get('/server/capacity-alerts', [VpsStatusController::class, 'capacityAlerts']);
 });
 
 

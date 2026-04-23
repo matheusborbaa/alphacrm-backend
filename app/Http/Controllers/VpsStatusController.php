@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Setting;
 use App\Services\HostingerService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -37,5 +38,89 @@ class VpsStatusController extends Controller
         // Mesmo quando ok=false devolvemos 200 — é informacional, não
         // é um erro de autenticação ou de regra de negócio da nossa API.
         return response()->json($payload);
+    }
+
+    /**
+     * GET /server/capacity-alerts
+     *
+     * Retorna SOMENTE as métricas atualmente em estado crítico (percent
+     * >= threshold) pra o bloco de alertas do dashboard do admin. Isso
+     * é diferente do /vps/status — aquele retorna tudo (números brutos),
+     * esse aqui é pro banner e só lista o que precisa de ação.
+     *
+     * Resposta:
+     *   {
+     *     "ok": true,
+     *     "enabled": true|false,           // reflete server_alert_enabled
+     *     "alerts": [
+     *       {
+     *         "metric": "disk"|"ram",
+     *         "percent": 78.3,
+     *         "threshold": 75,
+     *         "used_bytes": ...,
+     *         "total_bytes": ...
+     *       },
+     *       ...
+     *     ]
+     *   }
+     *
+     * Quando a integração não está configurada ou a API de métricas falha,
+     * devolvemos {ok:true, alerts:[]} — o dashboard simplesmente não
+     * mostra o banner (em vez de mostrar erro pro usuário). O monitoramento
+     * real acontece no job agendado `servidor:check-capacity`, que já tem
+     * tratamento próprio de falhas e dedup.
+     */
+    public function capacityAlerts(): JsonResponse
+    {
+        $enabled = (bool) Setting::get('server_alert_enabled', true);
+        if (!$enabled) {
+            return response()->json(['ok' => true, 'enabled' => false, 'alerts' => []]);
+        }
+
+        if (!$this->hostinger->isConfigured()) {
+            return response()->json(['ok' => true, 'enabled' => true, 'alerts' => []]);
+        }
+
+        $status = $this->hostinger->getStatus();
+        if (!($status['ok'] ?? false)) {
+            // Falha transiente de API — não bloqueia o dashboard. O job
+            // `servidor:check-capacity` (scheduler) é o ponto autoritativo;
+            // se estiver mesmo em estado crítico, o admin recebe notificação
+            // por outro canal (database + email), independente desse endpoint.
+            return response()->json(['ok' => true, 'enabled' => true, 'alerts' => []]);
+        }
+
+        $diskThreshold = (float) Setting::get('server_alert_disk_threshold', 75);
+        $ramThreshold  = (float) Setting::get('server_alert_ram_threshold',  90);
+
+        $alerts = [];
+
+        $diskPct = (float) ($status['disk_percent'] ?? 0);
+        if ($diskPct >= $diskThreshold) {
+            $alerts[] = [
+                'metric'      => 'disk',
+                'percent'     => round($diskPct, 1),
+                'threshold'   => (int) $diskThreshold,
+                'used_bytes'  => (int) ($status['disk_used_bytes']  ?? 0),
+                'total_bytes' => (int) ($status['disk_total_bytes'] ?? 0),
+            ];
+        }
+
+        $ramPct = (float) ($status['ram_percent'] ?? 0);
+        if ($ramPct >= $ramThreshold) {
+            $alerts[] = [
+                'metric'      => 'ram',
+                'percent'     => round($ramPct, 1),
+                'threshold'   => (int) $ramThreshold,
+                'used_bytes'  => (int) ($status['ram_used_bytes']  ?? 0),
+                'total_bytes' => (int) ($status['ram_total_bytes'] ?? 0),
+            ];
+        }
+
+        return response()->json([
+            'ok'      => true,
+            'enabled' => true,
+            'alerts'  => $alerts,
+        ]);
     }
 }

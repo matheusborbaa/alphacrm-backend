@@ -26,3 +26,14 @@ Schedule::command('leads:release-cooldowns')
     ->everyMinute()
     ->onOneServer()
     ->withoutOverlapping();
+
+// Monitoramento automático de capacidade do servidor (disco/RAM). Roda
+// de hora em hora — o comando tem dedup interno (24h entre lembretes
+// pra uma mesma métrica em estado crítico sustentado), então rodar
+// hourly não spamma mas também não deixa o admin descobrir tarde.
+// Thresholds e toggle vivem na tabela `settings` e são editáveis pela
+// UI — admin pode afrouxar ou apertar sem deploy.
+Schedule::command('servidor:check-capacity')
+    ->hourly()
+    ->onOneServer()
+    ->withoutOverlapping();
