@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\ChatConversation;
 use App\Models\ChatConversationRead;
 use App\Models\ChatMessage;
+use App\Models\ChatMessageAttachment;
+use App\Services\ChatAttachmentResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -21,21 +23,26 @@ use Illuminate\Support\Facades\DB;
  * Endpoint sob /chat/conversations/{id}/read:
  *   POST → upsert do last_read_message_id do user (Sprint 3 — não-lidas)
  *
+ * Sprint 2 — Anexos:
+ *  - index eager-loada attachments da msg, retorna no payload
+ *  - store aceita:
+ *      - pending_upload_ids: ids de anexos draft (type=upload) pra adotar
+ *      - references: [{type, id}] pros 3 tipos de referência (lead, emp, doc)
+ *    A msg pode ter body vazio SE tiver pelo menos 1 anexo.
+ *
  * Autorização: `ensureParticipant()` barra qualquer request de usuário
- * que não faz parte dos 2 participantes da conversa. Retorna 403 com
- * mensagem genérica (não vaza que a conversa existe).
+ * que não faz parte dos 2 participantes da conversa.
  */
 class ChatMessageController extends Controller
 {
+    public function __construct(private ChatAttachmentResolver $resolver) {}
+
     /**
-     * Lista mensagens da conversa.
+     * Lista mensagens da conversa, incluindo anexos.
      *
      * Query params:
-     *  - before_id (int, opcional): retorna mensagens com id < before_id.
-     *    Usado pro scroll infinito retrocedendo no histórico.
-     *  - after_id  (int, opcional): retorna mensagens com id > after_id.
-     *    Usado pelo polling pra buscar só o delta desde a última mensagem
-     *    que o cliente já tem.
+     *  - before_id (int): retorna mensagens com id < before_id (scroll histórico).
+     *  - after_id  (int): retorna mensagens com id > after_id (polling delta).
      *  - limit     (int, default 50, max 200)
      *
      * Ordem de resposta: crescente por id (cronológica).
@@ -54,35 +61,21 @@ class ChatMessageController extends Controller
         $limit = (int) ($data['limit'] ?? 50);
 
         $query = ChatMessage::query()
+            ->with('attachments') // Sprint 2: eager-load — evita N+1 no render
             ->where('conversation_id', $conversationId);
 
-        // Polling incremental: cliente pede "tudo depois do id X".
         if (!empty($data['after_id'])) {
             $query->where('id', '>', (int) $data['after_id']);
         }
 
-        // Histórico: cliente pede "50 mensagens antes do id X".
-        // Ordena desc pra pegar as mais recentes ANTES de X, depois inverte.
         if (!empty($data['before_id'])) {
             $query->where('id', '<', (int) $data['before_id']);
             $messages = $query->orderByDesc('id')->limit($limit)->get()->reverse()->values();
         } else {
-            // Default / polling: ordem cronológica direto.
-            // No polling (after_id) a tendência é pegar poucas msgs, mas
-            // limitamos mesmo assim pra não estourar em caso de catchup.
             $messages = $query->orderBy('id')->limit($limit)->get();
         }
 
-        // Shape consistente — frontend não quer saber de coluna crua.
-        $payload = $messages->map(function (ChatMessage $m) {
-            return [
-                'id'              => $m->id,
-                'conversation_id' => $m->conversation_id,
-                'sender_id'       => $m->sender_id,
-                'body'            => $m->body,
-                'created_at'      => $m->created_at,
-            ];
-        });
+        $payload = $messages->map(fn (ChatMessage $m) => $this->buildMessagePayload($m));
 
         return response()->json([
             'messages' => $payload,
@@ -91,13 +84,16 @@ class ChatMessageController extends Controller
     }
 
     /**
-     * Envia nova mensagem na conversa. Atomicamente:
-     *   - cria o row em chat_messages
-     *   - atualiza last_message_at da conversa (pra ordenação da sidebar)
+     * Envia nova mensagem. Aceita body + pending uploads (drafts) + references.
      *
-     * Limita o body a 5000 chars — mensagens de chat tipicamente são curtas,
-     * e texto MUITO longo indica que o usuário deveria estar anexando um
-     * documento em vez.
+     * Regra: msg precisa ter body OU anexo. Vazio total é 422.
+     *
+     * Transação:
+     *   1. Cria ChatMessage
+     *   2. Para cada pending_upload_id: valida (draft, dono=me), seta message_id
+     *   3. Para cada reference: resolver gera snapshot + cria ChatMessageAttachment
+     *   4. Bumpa conversation.last_message_at
+     *   5. Avança last_read do sender
      */
     public function store(Request $request, int $conversationId): JsonResponse
     {
@@ -105,57 +101,84 @@ class ChatMessageController extends Controller
         $this->ensureParticipant($conversation);
 
         $data = $request->validate([
-            'body' => ['required', 'string', 'min:1', 'max:5000'],
+            'body'                 => ['nullable', 'string', 'max:5000'],
+            'pending_upload_ids'   => ['nullable', 'array', 'max:10'],
+            'pending_upload_ids.*' => ['integer', 'min:1'],
+            'references'           => ['nullable', 'array', 'max:10'],
+            'references.*.type'    => ['required_with:references', 'string', 'in:lead,empreendimento,lead_document'],
+            'references.*.id'      => ['required_with:references', 'integer', 'min:1'],
         ]);
 
         $me = (int) Auth::id();
-        $body = trim($data['body']);
+        $body = isset($data['body']) ? trim($data['body']) : '';
+        $pendingIds = $data['pending_upload_ids'] ?? [];
+        $references = $data['references'] ?? [];
 
-        if ($body === '') {
+        $hasAnyAttachment = !empty($pendingIds) || !empty($references);
+        if ($body === '' && !$hasAnyAttachment) {
             return response()->json(['message' => 'Mensagem vazia.'], 422);
         }
 
-        $message = DB::transaction(function () use ($conversation, $me, $body) {
+        $message = DB::transaction(function () use ($conversation, $me, $body, $pendingIds, $references) {
+            // 1. Cria a mensagem (body pode ser '' se só tem anexo — front renderiza só o card).
             $msg = ChatMessage::create([
                 'conversation_id' => $conversation->id,
                 'sender_id'       => $me,
                 'body'            => $body,
             ]);
 
-            // Bumpa a conversa pro topo da sidebar dos dois participantes.
-            // Updates sem trigger de model events pra evitar overhead.
+            // 2. Adota drafts: valida um por um — evita adotar draft de outro user
+            //    ou draft que já foi vinculado a outra msg (race condition).
+            if (!empty($pendingIds)) {
+                $drafts = ChatMessageAttachment::whereIn('id', $pendingIds)
+                    ->where('uploader_user_id', $me)
+                    ->whereNull('message_id')
+                    ->where('type', ChatMessageAttachment::TYPE_UPLOAD)
+                    ->lockForUpdate()
+                    ->get();
+
+                $adoptedIds = $drafts->pluck('id')->all();
+                $missingIds = array_diff($pendingIds, $adoptedIds);
+                if (!empty($missingIds)) {
+                    // Algum draft sumiu/foi adotado por outra msg. Aborta a
+                    // transação pra não enviar msg com anexos faltando.
+                    abort(422, 'Anexos inválidos ou expirados: ' . implode(', ', $missingIds));
+                }
+
+                ChatMessageAttachment::whereIn('id', $adoptedIds)
+                    ->update(['message_id' => $msg->id]);
+            }
+
+            // 3. Referências: resolver + row novo pra cada.
+            foreach ($references as $ref) {
+                $resolved = $this->resolver->resolveReference($ref['type'], (int) $ref['id']);
+                ChatMessageAttachment::create([
+                    'message_id'       => $msg->id,
+                    'type'             => $resolved['type'],
+                    'attachable_id'    => $resolved['attachable_id'],
+                    'snapshot'         => $resolved['snapshot'],
+                    'uploader_user_id' => $me,
+                ]);
+            }
+
+            // 4. Bumpa a conversa pro topo da sidebar.
             ChatConversation::where('id', $conversation->id)
                 ->update(['last_message_at' => $msg->created_at]);
 
-            // Avança o last_read do próprio sender até essa msg — afinal,
-            // quem manda leu tudo até ali. Evita que msgs do próprio user
-            // fiquem contando como não-lidas pra ele mesmo (não contariam
-            // pela regra sender_id != me, mas isso mantém o valor em dia).
+            // 5. Avança last_read do sender (ele "leu" a própria msg).
             ChatConversationRead::updateOrCreate(
                 ['user_id' => $me, 'conversation_id' => $conversation->id],
                 ['last_read_message_id' => $msg->id, 'last_read_at' => now()]
             );
 
-            return $msg;
+            return $msg->load('attachments');
         });
 
-        return response()->json([
-            'id'              => $message->id,
-            'conversation_id' => $message->conversation_id,
-            'sender_id'       => $message->sender_id,
-            'body'            => $message->body,
-            'created_at'      => $message->created_at,
-        ], 201);
+        return response()->json($this->buildMessagePayload($message), 201);
     }
 
     /**
-     * Marca a conversa como lida pelo usuário logado, avançando o cursor
-     * last_read_message_id até o valor passado (ou até o maior id atual,
-     * se não vier no body).
-     *
-     * IMPORTANTE: é idempotente e monotônico — nunca regride o cursor.
-     * Se o cliente enviar um id menor que o atual (ex: desordem de requests),
-     * ignora a atualização.
+     * Marca conversa como lida (cursor monotônico).
      */
     public function markRead(Request $request, int $conversationId): JsonResponse
     {
@@ -168,27 +191,22 @@ class ChatMessageController extends Controller
 
         $me = (int) Auth::id();
 
-        // Se não informar id, usa o maior id atual da conversa.
         $targetId = $data['last_read_message_id'] ?? null;
         if ($targetId === null) {
-            $targetId = ChatMessage::where('conversation_id', $conversationId)
-                ->max('id') ?? 0;
+            $targetId = ChatMessage::where('conversation_id', $conversationId)->max('id') ?? 0;
         }
-
         $targetId = (int) $targetId;
 
         $read = ChatConversationRead::firstOrNew(
             ['user_id' => $me, 'conversation_id' => $conversationId]
         );
 
-        // Monotônico: nunca regride.
         $current = (int) ($read->last_read_message_id ?? 0);
         if ($targetId > $current) {
             $read->last_read_message_id = $targetId;
             $read->last_read_at = now();
             $read->save();
         } elseif (!$read->exists) {
-            // Primeiro registro com id 0 — ainda assim salvamos pra materializar.
             $read->last_read_message_id = $current;
             $read->last_read_at = now();
             $read->save();
@@ -201,9 +219,22 @@ class ChatMessageController extends Controller
     }
 
     /**
-     * Guarda: garante que o usuário logado é um dos 2 participantes.
-     * Retorna 403 genérico (não vaza se a conversa existe ou não).
+     * Shape unificado: body + timestamps + anexos.
      */
+    private function buildMessagePayload(ChatMessage $m): array
+    {
+        return [
+            'id'              => $m->id,
+            'conversation_id' => $m->conversation_id,
+            'sender_id'       => $m->sender_id,
+            'body'            => $m->body,
+            'created_at'      => $m->created_at,
+            'attachments'     => $m->attachments
+                ? $m->attachments->map(fn ($a) => $a->buildPayload())->all()
+                : [],
+        ];
+    }
+
     private function ensureParticipant(ChatConversation $conversation): void
     {
         $me = (int) Auth::id();

@@ -37,6 +37,7 @@ use App\Http\Controllers\UserMetaController;
 use App\Http\Controllers\HomeController;
 use App\Http\Controllers\ChatConversationController;
 use App\Http\Controllers\ChatMessageController;
+use App\Http\Controllers\ChatAttachmentController;
 
     Route::post('/me', [UserController::class, 'updateProfile'])->middleware(['auth:sanctum']);
     // Status do corretor (disponivel/ocupado/offline) — usado pelo rodízio.
@@ -760,6 +761,11 @@ Route::middleware('auth:sanctum')->post('/auth/logout', function (Request $reque
 |   POST /chat/conversations/{id}/messages        -> envia msg
 |   POST /chat/conversations/{id}/read            -> marca conversa como lida (Sprint 3)
 |   GET  /chat/unread-count                       -> total consolidado p/ badge global (Sprint 3)
+|
+| Sprint 2 - Anexos:
+|   POST /chat/attachments/upload                 -> upload draft (multipart file)
+|   GET  /chat/attachments/{id}/download          -> baixa/preview do anexo upload
+|   DELETE /chat/attachments/{id}/draft           -> cancela upload draft (antes de enviar msg)
 */
 Route::middleware('auth:sanctum')->prefix('chat')->group(function () {
     Route::get ('/unread-count',                  [ChatConversationController::class, 'unreadCount']);
@@ -771,6 +777,13 @@ Route::middleware('auth:sanctum')->prefix('chat')->group(function () {
     Route::post('/conversations/{id}/messages',   [ChatMessageController::class, 'store'])
         ->whereNumber('id');
     Route::post('/conversations/{id}/read',       [ChatMessageController::class, 'markRead'])
+        ->whereNumber('id');
+
+    // Sprint 2 — Anexos
+    Route::post  ('/attachments/upload',          [ChatAttachmentController::class, 'upload']);
+    Route::get   ('/attachments/{id}/download',   [ChatAttachmentController::class, 'download'])
+        ->whereNumber('id');
+    Route::delete('/attachments/{id}/draft',      [ChatAttachmentController::class, 'cancelDraft'])
         ->whereNumber('id');
 });
 

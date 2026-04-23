@@ -49,6 +49,9 @@ class ChatConversationController extends Controller
                 // traz todas. Alternativa: subquery. Pra MVP, limitamos
                 // manualmente depois no map().
                 'lastMessage:id,conversation_id,sender_id,body,created_at',
+                // Sprint 2: carrega anexos da última msg pra gerar preview
+                // "📎 Anexo" quando o body vem vazio.
+                'lastMessage.attachments:id,message_id,type,original_name,snapshot',
             ])
             ->orderByDesc('last_message_at')
             ->orderByDesc('id') // tiebreaker pra conversas sem mensagem
@@ -87,7 +90,10 @@ class ChatConversationController extends Controller
                 ] : null,
                 'last_message'    => $last ? [
                     'id'         => $last->id,
-                    'body'       => $last->body,
+                    // Preview: se body vazio mas tem anexo, mostra label curto
+                    // tipo "📎 Arquivo (contrato.pdf)" ou "📎 Lead: Fulano".
+                    // Evita linha vazia na sidebar.
+                    'body'       => $this->buildLastMessagePreview($last),
                     'sender_id'  => $last->sender_id,
                     'is_mine'    => $last->sender_id === $me,
                     'created_at' => $last->created_at,
@@ -150,6 +156,37 @@ class ChatConversationController extends Controller
             ],
             'unread_count'    => 0,
         ], $conversation->wasRecentlyCreated ? 201 : 200);
+    }
+
+    /**
+     * Monta preview textual da última mensagem pra sidebar. Quando body
+     * é vazio (msg só com anexo), compõe label curto a partir do primeiro
+     * anexo. Múltiplos anexos: mostra o primeiro + "+N".
+     */
+    private function buildLastMessagePreview(ChatMessage $msg): string
+    {
+        $body = trim($msg->body ?? '');
+        if ($body !== '') return $body;
+
+        $atts = $msg->attachments ?? collect();
+        if ($atts->isEmpty()) return '';
+
+        $first = $atts->first();
+        $label = $this->attachmentLabel($first);
+        $extra = $atts->count() > 1 ? ' +' . ($atts->count() - 1) : '';
+        return '📎 ' . $label . $extra;
+    }
+
+    private function attachmentLabel($att): string
+    {
+        $s = $att->snapshot ?? [];
+        switch ($att->type) {
+            case 'upload':         return $att->original_name ?? ($s['original_name'] ?? 'arquivo');
+            case 'lead':           return 'Lead: ' . ($s['name'] ?? '#' . $att->attachable_id);
+            case 'empreendimento': return 'Empr: ' . ($s['name'] ?? '#' . $att->attachable_id);
+            case 'lead_document':  return 'Doc: ' . ($s['original_name'] ?? '#' . $att->attachable_id);
+            default:               return 'anexo';
+        }
     }
 
     /**

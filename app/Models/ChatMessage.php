@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * Uma mensagem dentro de uma conversa.
@@ -34,5 +35,15 @@ class ChatMessage extends Model
     public function sender(): BelongsTo
     {
         return $this->belongsTo(User::class, 'sender_id');
+    }
+
+    /**
+     * Anexos da mensagem (0..N). Carregado sob demanda nos endpoints de
+     * index/store do ChatMessageController.
+     */
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(ChatMessageAttachment::class, 'message_id')
+            ->orderBy('id');
     }
 }
