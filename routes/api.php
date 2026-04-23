@@ -35,6 +35,8 @@ use App\Http\Controllers\LeadSubstatusController;
 use App\Http\Controllers\RelatoriosController;
 use App\Http\Controllers\UserMetaController;
 use App\Http\Controllers\HomeController;
+use App\Http\Controllers\ChatConversationController;
+use App\Http\Controllers\ChatMessageController;
 
     Route::post('/me', [UserController::class, 'updateProfile'])->middleware(['auth:sanctum']);
     // Status do corretor (disponivel/ocupado/offline) — usado pelo rodízio.
@@ -740,6 +742,30 @@ Route::middleware('auth:sanctum')->group(function () {
 Route::middleware('auth:sanctum')->post('/auth/logout', function (Request $request) {
     $request->user()->currentAccessToken()->delete();
     return response()->json(['message' => 'Logout realizado']);
+});
+
+
+/*
+|--------------------------------------------------------------------------
+| CHAT INTERNO (DM 1-a-1)
+|--------------------------------------------------------------------------
+| Fase D - Sprint 1: só texto, sem anexos (anexos vêm no Sprint 2).
+| Qualquer usuário autenticado pode abrir DM com qualquer outro ativo.
+| O controller garante autorização por conversa (ensureParticipant).
+|
+| Endpoints:
+|   GET  /chat/conversations                      -> lista conversas do user
+|   POST /chat/conversations                      -> abre/retorna DM com user_id
+|   GET  /chat/conversations/{id}/messages        -> lista msgs (paginada)
+|   POST /chat/conversations/{id}/messages        -> envia msg
+*/
+Route::middleware('auth:sanctum')->prefix('chat')->group(function () {
+    Route::get ('/conversations',                 [ChatConversationController::class, 'index']);
+    Route::post('/conversations',                 [ChatConversationController::class, 'store']);
+    Route::get ('/conversations/{id}/messages',   [ChatMessageController::class, 'index'])
+        ->whereNumber('id');
+    Route::post('/conversations/{id}/messages',   [ChatMessageController::class, 'store'])
+        ->whereNumber('id');
 });
 
 
