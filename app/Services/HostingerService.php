@@ -32,7 +32,13 @@ class HostingerService
     // já estava batendo em timeout com 8s. Como cacheamos 60s, o custo extra
     // só afeta o primeiro request da janela — não vira problema pra UX.
     private const HTTP_TIMEOUT = 15;
-    private const METRICS_WINDOW_MIN = 10; // olhar só os últimos 10min pras médias
+    // Janelas de consulta das métricas, em minutos. A Hostinger amostra
+    // a cada ~5min, então 10min é curto demais — tinha alinhamento ruim
+    // que fazia a série voltar vazia ("depois de limpar cache dá 0%"). A
+    // gente tenta da mais curta pra mais longa; assim que achar pontos,
+    // usa. Pior caso (VPS recém-criada) olha 24h pra não deixar a aba
+    // Sistema mostrando 0.0% indefinidamente.
+    private const METRICS_WINDOW_CASCADE = [60, 360, 1440]; // 1h → 6h → 24h
 
     private string $apiBase;
     private ?string $apiKey;
@@ -196,12 +202,27 @@ class HostingerService
                 return $this->errorResponse('upstream_error', 'Não foi possível obter o status do servidor no momento.');
             }
 
-            // Métricas da última janela (10 min) — pegamos média do CPU,
-            // último ponto de RAM/disk, e soma/delta pro tráfego de rede.
-            $metrics = $this->request('GET', $metricsPath, [
-                'date_from' => now()->subMinutes(self::METRICS_WINDOW_MIN)->toIso8601String(),
-                'date_to'   => now()->toIso8601String(),
-            ]) ?? [];
+            // Cascata de janelas: tenta 1h, 6h, 24h. Assim que a série
+            // principal (cpu/ram/disco) tiver pelo menos 1 ponto útil,
+            // para e usa essa resposta. Se todas as janelas vierem vazias,
+            // usa o último resultado mesmo (o builder cai nos fallbacks
+            // de vmData e rende 0 se nem isso existir).
+            $metrics = [];
+            foreach (self::METRICS_WINDOW_CASCADE as $minutes) {
+                $resp = $this->request('GET', $metricsPath, [
+                    'date_from' => now()->subMinutes($minutes)->toIso8601String(),
+                    'date_to'   => now()->toIso8601String(),
+                ]) ?? [];
+
+                if ($this->metricsHaveUsefulData($resp)) {
+                    $metrics = $resp;
+                    break;
+                }
+                // Mantém a última resposta mesmo vazia — melhor do que []
+                // se todas forem vazias (pode ter a shape das chaves e
+                // o builder ainda conseguir pegar unit/uptime).
+                $metrics = $resp ?: $metrics;
+            }
 
             return $this->buildPayload($vm, $metrics);
 
@@ -216,6 +237,30 @@ class HostingerService
             ]);
             return $this->errorResponse('exception', $this->humanizeException($e));
         }
+    }
+
+    /**
+     * Uma resposta de /metrics é "útil" se pelo menos uma das séries
+     * principais (cpu, ram, disk) trouxe algum ponto numérico. A resposta
+     * pode voltar com as chaves todas presentes mas `usage: {}` vazio —
+     * isso aqui detecta esse caso pra gente poder ampliar a janela.
+     */
+    private function metricsHaveUsefulData($resp): bool
+    {
+        if (!is_array($resp) || empty($resp)) return false;
+        $series = $resp['data'] ?? $resp;
+        foreach (['cpu_usage', 'ram_usage', 'disk_space'] as $key) {
+            $block = $series[$key] ?? null;
+            if (!is_array($block)) continue;
+            $usage = $block['usage'] ?? $block;
+            if (is_array($usage) && count($usage) > 0) {
+                // Achou pelo menos 1 ponto numérico em qualquer uma → útil.
+                foreach ($usage as $v) {
+                    if (is_numeric($v)) return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -263,6 +308,32 @@ class HostingerService
         $status = $this->scalarFrom($vmData['status'] ?? $vmData['state'] ?? 'unknown') ?: 'unknown';
         $uptime = (int) (is_numeric($vmData['uptime'] ?? null) ? $vmData['uptime']
                       : (is_numeric($vmData['uptime_seconds'] ?? null) ? $vmData['uptime_seconds'] : 0));
+
+        // Fallback de uptime: a doc oficial da Hostinger expõe
+        //   "uptime": {"unit": "milliseconds", "usage": {ts: val, ...}}
+        // na resposta do /metrics. Quando a VM info não devolve uptime
+        // (caso comum em alguns planos), a gente pega o último ponto
+        // dessa série e converte pra segundos. Sem isso o card de
+        // "Uptime" renderiza "—" permanentemente.
+        if ($uptime <= 0) {
+            $seriesTmp = $metrics['data'] ?? $metrics;
+            $uptimeBlock = $seriesTmp['uptime'] ?? null;
+            if (is_array($uptimeBlock)) {
+                $n = $this->normalizeMetric($uptimeBlock);
+                if (!empty($n['points'])) {
+                    $lastVal = (float) end($n['points']);
+                    $unit = strtolower($n['unit'] ?: 'milliseconds');
+                    // Converte pra segundos conforme a unidade declarada.
+                    $uptime = match ($unit) {
+                        'milliseconds', 'ms' => (int) round($lastVal / 1000),
+                        'microseconds', 'us' => (int) round($lastVal / 1_000_000),
+                        'minutes', 'm'       => (int) round($lastVal * 60),
+                        'hours', 'h'         => (int) round($lastVal * 3600),
+                        default              => (int) $lastVal, // 'seconds', 's' ou desconhecido
+                    };
+                }
+            }
+        }
 
         // RAM/disk totais vêm na info da VM (em MB na maioria das APIs
         // Hostinger — normalizamos pra bytes). Se aparecer no formato
