@@ -45,8 +45,10 @@ class CheckServerCapacity extends Command
 
     // Thresholds fixos. Se no futuro precisar reconfigurar, trocar aqui
     // e publicar — não há UI pra editar por decisão de produto.
-    private const DISK_THRESHOLD_PERCENT = 75.0;
-    private const RAM_THRESHOLD_PERCENT  = 90.0;
+    // ⚠️ TESTE: valores temporariamente em 10% pra forçar a notificação
+    // disparar. Reverter pra 75.0 / 90.0 assim que confirmar o visual.
+    private const DISK_THRESHOLD_PERCENT = 10.0;
+    private const RAM_THRESHOLD_PERCENT  = 10.0;
 
     public function handle(HostingerService $hostinger): int
     {

@@ -18,8 +18,10 @@ class VpsStatusController extends Controller
 {
     // Thresholds fixos — mesmos valores de CheckServerCapacity. A UI
     // não expõe edição por decisão de produto (operação previsível).
-    private const DISK_THRESHOLD_PERCENT = 75.0;
-    private const RAM_THRESHOLD_PERCENT  = 90.0;
+    // ⚠️ TESTE: valores temporariamente em 10% pra forçar o banner
+    // aparecer. Reverter pra 75.0 / 90.0 assim que confirmar o visual.
+    private const DISK_THRESHOLD_PERCENT = 10.0;
+    private const RAM_THRESHOLD_PERCENT  = 10.0;
 
     public function __construct(private HostingerService $hostinger) {}
 
