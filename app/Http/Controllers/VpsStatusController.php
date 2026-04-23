@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Setting;
 use App\Services\HostingerService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -17,6 +16,11 @@ use Illuminate\Http\Request;
  */
 class VpsStatusController extends Controller
 {
+    // Thresholds fixos — mesmos valores de CheckServerCapacity. A UI
+    // não expõe edição por decisão de produto (operação previsível).
+    private const DISK_THRESHOLD_PERCENT = 75.0;
+    private const RAM_THRESHOLD_PERCENT  = 90.0;
+
     public function __construct(private HostingerService $hostinger) {}
 
     /**
@@ -48,10 +52,13 @@ class VpsStatusController extends Controller
      * é diferente do /vps/status — aquele retorna tudo (números brutos),
      * esse aqui é pro banner e só lista o que precisa de ação.
      *
+     * Thresholds são fixos (75% disco, 90% RAM) pra manter a operação
+     * previsível — sem UI de configuração. Os mesmos valores estão em
+     * CheckServerCapacity (job agendado que dispara notificações).
+     *
      * Resposta:
      *   {
      *     "ok": true,
-     *     "enabled": true|false,           // reflete server_alert_enabled
      *     "alerts": [
      *       {
      *         "metric": "disk"|"ram",
@@ -72,13 +79,8 @@ class VpsStatusController extends Controller
      */
     public function capacityAlerts(): JsonResponse
     {
-        $enabled = (bool) Setting::get('server_alert_enabled', true);
-        if (!$enabled) {
-            return response()->json(['ok' => true, 'enabled' => false, 'alerts' => []]);
-        }
-
         if (!$this->hostinger->isConfigured()) {
-            return response()->json(['ok' => true, 'enabled' => true, 'alerts' => []]);
+            return response()->json(['ok' => true, 'alerts' => []]);
         }
 
         $status = $this->hostinger->getStatus();
@@ -86,41 +88,37 @@ class VpsStatusController extends Controller
             // Falha transiente de API — não bloqueia o dashboard. O job
             // `servidor:check-capacity` (scheduler) é o ponto autoritativo;
             // se estiver mesmo em estado crítico, o admin recebe notificação
-            // por outro canal (database + email), independente desse endpoint.
-            return response()->json(['ok' => true, 'enabled' => true, 'alerts' => []]);
+            // direto na UI (sino + banner), independente desse endpoint.
+            return response()->json(['ok' => true, 'alerts' => []]);
         }
-
-        $diskThreshold = (float) Setting::get('server_alert_disk_threshold', 75);
-        $ramThreshold  = (float) Setting::get('server_alert_ram_threshold',  90);
 
         $alerts = [];
 
         $diskPct = (float) ($status['disk_percent'] ?? 0);
-        if ($diskPct >= $diskThreshold) {
+        if ($diskPct >= self::DISK_THRESHOLD_PERCENT) {
             $alerts[] = [
                 'metric'      => 'disk',
                 'percent'     => round($diskPct, 1),
-                'threshold'   => (int) $diskThreshold,
+                'threshold'   => (int) self::DISK_THRESHOLD_PERCENT,
                 'used_bytes'  => (int) ($status['disk_used_bytes']  ?? 0),
                 'total_bytes' => (int) ($status['disk_total_bytes'] ?? 0),
             ];
         }
 
         $ramPct = (float) ($status['ram_percent'] ?? 0);
-        if ($ramPct >= $ramThreshold) {
+        if ($ramPct >= self::RAM_THRESHOLD_PERCENT) {
             $alerts[] = [
                 'metric'      => 'ram',
                 'percent'     => round($ramPct, 1),
-                'threshold'   => (int) $ramThreshold,
+                'threshold'   => (int) self::RAM_THRESHOLD_PERCENT,
                 'used_bytes'  => (int) ($status['ram_used_bytes']  ?? 0),
                 'total_bytes' => (int) ($status['ram_total_bytes'] ?? 0),
             ];
         }
 
         return response()->json([
-            'ok'      => true,
-            'enabled' => true,
-            'alerts'  => $alerts,
+            'ok'     => true,
+            'alerts' => $alerts,
         ]);
     }
 }

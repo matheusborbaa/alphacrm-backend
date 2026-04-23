@@ -17,10 +17,10 @@ use Illuminate\Support\Facades\Log;
  *   php artisan servidor:check-capacity
  *   php artisan servidor:check-capacity --force  (ignora dedup — útil pra testar)
  *
- * Thresholds (lidos da tabela `settings`, editáveis pela UI):
- *   server_alert_enabled          → liga/desliga tudo (default: true)
- *   server_alert_disk_threshold   → disco em % (default: 75)
- *   server_alert_ram_threshold    → RAM em %   (default: 90)
+ * Thresholds fixos: 75% pra disco, 90% pra RAM. Monitoramento sempre
+ * ativo — sem toggle na UI. Valores ajustados com base no uso esperado
+ * do CRM (disco cresce lento → margem pra agendar upgrade; RAM satura
+ * rápido → limiar mais apertado, pra antecipar swap/OOM).
  *
  * Dedup (pra não spammar o admin a cada hora que o problema persiste):
  *   - Se estava abaixo do threshold e agora passou → notifica imediatamente.
@@ -43,13 +43,13 @@ class CheckServerCapacity extends Command
     // sustentado. 24h = 86400s. Em segundos pra usar direto em timestamps.
     private const REMINDER_INTERVAL_SECONDS = 86_400;
 
+    // Thresholds fixos. Se no futuro precisar reconfigurar, trocar aqui
+    // e publicar — não há UI pra editar por decisão de produto.
+    private const DISK_THRESHOLD_PERCENT = 75.0;
+    private const RAM_THRESHOLD_PERCENT  = 90.0;
+
     public function handle(HostingerService $hostinger): int
     {
-        if (!Setting::get('server_alert_enabled', true)) {
-            $this->info('Alertas de capacidade desligados (server_alert_enabled=false). Saindo.');
-            return self::SUCCESS;
-        }
-
         if (!$hostinger->isConfigured()) {
             // Sem API key/VPS ID não dá pra checar. Não é erro — é config
             // incompleta. Log pra dev saber, return success pra scheduler
@@ -71,15 +71,12 @@ class CheckServerCapacity extends Command
             return self::SUCCESS;
         }
 
-        $diskThreshold = (float) Setting::get('server_alert_disk_threshold', 75);
-        $ramThreshold  = (float) Setting::get('server_alert_ram_threshold',  90);
-
         $force = (bool) $this->option('force');
 
         $this->evaluateMetric(
             metric:     'disk',
             percent:    (float) ($status['disk_percent'] ?? 0),
-            threshold:  $diskThreshold,
+            threshold:  self::DISK_THRESHOLD_PERCENT,
             usedBytes:  (int)   ($status['disk_used_bytes']  ?? 0),
             totalBytes: (int)   ($status['disk_total_bytes'] ?? 0),
             force:      $force,
@@ -88,7 +85,7 @@ class CheckServerCapacity extends Command
         $this->evaluateMetric(
             metric:     'ram',
             percent:    (float) ($status['ram_percent'] ?? 0),
-            threshold:  $ramThreshold,
+            threshold:  self::RAM_THRESHOLD_PERCENT,
             usedBytes:  (int)   ($status['ram_used_bytes']  ?? 0),
             totalBytes: (int)   ($status['ram_total_bytes'] ?? 0),
             force:      $force,
