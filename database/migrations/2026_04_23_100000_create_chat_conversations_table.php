@@ -26,8 +26,10 @@ return new class extends Migration {
 
             // FK soft: usuário pode ser deletado (soft delete ou hard); preferimos
             // deixar a conversa visível pros outros participantes em vez de cascade.
-            $table->foreignId('user_a_id')->constrained('users')->nullOnDelete();
-            $table->foreignId('user_b_id')->constrained('users')->nullOnDelete();
+            // IMPORTANTE: nullable() é obrigatório antes do nullOnDelete() — MySQL
+            // recusa FK SET NULL em coluna NOT NULL (erro 1830).
+            $table->foreignId('user_a_id')->nullable()->constrained('users')->nullOnDelete();
+            $table->foreignId('user_b_id')->nullable()->constrained('users')->nullOnDelete();
 
             // Cache da timestamp da última mensagem — evita subquery pesada na
             // listagem de conversas. Atualizado pelo controller quando envia msg.
