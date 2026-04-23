@@ -52,4 +52,16 @@ return [
         'vps_id'   => env('HOSTINGER_VPS_ID'),
     ],
 
+    // Monitoramento de disco da APLICAÇÃO (aba Sistema + alertas).
+    // O VPS é compartilhado com outros sistemas; em vez de expor o disco
+    // inteiro, reservamos uma quota fictícia pro AlphaCRM e mostramos o
+    // consumo relativo a ela. `monitor_path` vazio = usa base_path() do
+    // Laravel (= raiz da pasta alphacrm/). O cálculo usa `du -sb` com
+    // fallback PHP e cache pra não repetir a soma toda request.
+    'alphacrm_disk' => [
+        'monitor_path' => env('ALPHACRM_DISK_MONITOR_PATH'),
+        'quota_gb'     => (int) env('ALPHACRM_DISK_QUOTA_GB', 30),
+        'cache_ttl'    => (int) env('ALPHACRM_DISK_CACHE_TTL', 600),
+    ],
+
 ];

@@ -5,6 +5,8 @@ namespace App\Services;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Process\Exception\ProcessFailedException;
+use Symfony\Component\Process\Process;
 
 /**
  * HostingerService — wrapper fino da API pública da Hostinger
@@ -44,11 +46,32 @@ class HostingerService
     private ?string $apiKey;
     private ?string $vpsId;
 
+    // --- Monitoramento de disco da APLICAÇÃO ---
+    // O servidor físico é compartilhado com outros sistemas. A aba
+    // Sistema e os alertas mostram o consumo da pasta alphacrm/ dividido
+    // por uma quota fictícia reservada pro CRM, e não o disco inteiro.
+    private string $appDiskPath;           // caminho absoluto a medir
+    private int    $appDiskQuotaBytes;     // denominador (quota em bytes)
+    private int    $appDiskCacheTtl;       // TTL do cache do `du` em segundos
+
     public function __construct()
     {
         $this->apiBase = rtrim((string) config('services.hostinger.api_base', 'https://developers.hostinger.com'), '/');
         $this->apiKey  = config('services.hostinger.api_key');
         $this->vpsId   = config('services.hostinger.vps_id');
+
+        // Resolve o path de monitoramento em runtime: .env vence, senão
+        // usa base_path() (raiz do Laravel = pasta alphacrm/). Quota em
+        // GB → bytes. TTL com piso de 60s pra evitar thrash em mis-config.
+        $configuredPath = config('services.alphacrm_disk.monitor_path');
+        $this->appDiskPath = is_string($configuredPath) && $configuredPath !== ''
+            ? $configuredPath
+            : base_path();
+
+        $quotaGb = max(1, (int) config('services.alphacrm_disk.quota_gb', 30));
+        $this->appDiskQuotaBytes = $quotaGb * 1024 * 1024 * 1024;
+
+        $this->appDiskCacheTtl = max(60, (int) config('services.alphacrm_disk.cache_ttl', 600));
     }
 
     /**
@@ -109,10 +132,16 @@ class HostingerService
         return $fresh;
     }
 
-    /** Força um refresh ignorando cache. Usado quando o admin clica "Atualizar". */
+    /**
+     * Força um refresh ignorando cache. Usado quando o admin clica "Atualizar".
+     * Invalida TANTO o cache de status quanto o de backup — senão o botão
+     * "Atualizar" mostraria info fresca de CPU/RAM/disco mas data de backup
+     * travada (o cache de backup é mais longo, 15min).
+     */
     public function refreshStatus(): array
     {
         Cache::forget(self::CACHE_PREFIX . 'status:' . $this->vpsId);
+        Cache::forget(self::CACHE_PREFIX . 'latest_backup:' . $this->vpsId);
         return $this->getStatus();
     }
 
@@ -433,6 +462,27 @@ class HostingerService
         $netIn  = $this->avgFromMetric($series['incoming_traffic'] ?? $series['network_in']  ?? $series['net_in']  ?? []);
         $netOut = $this->avgFromMetric($series['outgoing_traffic'] ?? $series['network_out'] ?? $series['net_out'] ?? []);
 
+        // -------- Disco: sobrescreve com o consumo da aplicação --------
+        // O VPS é compartilhado; não faz sentido expor o disco total. Em
+        // vez disso, medimos a pasta do CRM e comparamos com a quota
+        // configurada em .env. Se o cálculo falhar (du indisponível, path
+        // sem permissão), appDiskUsedBytes vem 0 e o card mostra 0 GB de
+        // 30 GB — preferível a vazar info do disco compartilhado.
+        $appDiskUsed  = $this->computeAppDiskUsage();
+        $appDiskTotal = $this->appDiskQuotaBytes;
+        $appDiskPct   = $appDiskTotal > 0
+            ? round(min(100.0, $appDiskUsed / $appDiskTotal * 100), 1)
+            : 0.0;
+
+        // -------- Último backup (API /backups da Hostinger) --------
+        // Cache interno de 15min — é seguro embutir no payload de status
+        // sem virar gargalo. Se der qualquer erro, deixa null pra UI
+        // renderizar "—" em vez de quebrar o card.
+        $latestBackupResp = $this->getLatestBackup();
+        $latestBackup = ($latestBackupResp['ok'] ?? false) === true
+            ? ($latestBackupResp['backup'] ?? null)
+            : null;
+
         return [
             'ok'                    => true,
             'fetched_at'            => now()->toIso8601String(),
@@ -458,17 +508,203 @@ class HostingerService
                 ? round($ramPercentRaw, 1)
                 : ($ramTotal > 0 ? round($ramUsed / $ramTotal * 100, 1) : 0.0),
 
-            'disk_total_bytes'      => $diskTotal,
-            'disk_used_bytes'       => $diskUsed,
-            // Prioridade: 1) percent que o provedor já mandou (mais
-            // preciso), 2) calculado de used/total, 3) zero.
-            'disk_percent'          => $diskPercentRaw !== null
-                ? round($diskPercentRaw, 1)
-                : ($diskTotal > 0 ? round($diskUsed / $diskTotal * 100, 1) : 0.0),
+            // ⚠️ Disco NÃO reflete o VPS: é a pasta alphacrm/ dividida
+            // pela quota de .env (ALPHACRM_DISK_QUOTA_GB, default 30 GB).
+            // O VPS é compartilhado com outros sistemas — expor o disco
+            // total misturaria o uso de quem não é do CRM.
+            'disk_total_bytes'      => $appDiskTotal,
+            'disk_used_bytes'       => $appDiskUsed,
+            'disk_percent'          => $appDiskPct,
 
             'net_in_bytes_per_sec'  => round($netIn,  0),
             'net_out_bytes_per_sec' => round($netOut, 0),
+
+            // Último backup disponível no VPS — pode ser null se a API
+            // de backups falhar ou se a VPS ainda não tem snapshot.
+            // Shape do backup: ver getLatestBackup().
+            'latest_backup'         => $latestBackup,
         ];
+    }
+
+    /**
+     * Mede o tamanho em bytes da pasta da aplicação (default: base_path(),
+     * que é a raiz da pasta alphacrm/). O VPS é compartilhado com outros
+     * sistemas — em vez de expor o disco total, a aba Sistema mostra
+     * "usado / quota reservada" com base nesta medição.
+     *
+     * Estratégia:
+     *   1. Cacheia o resultado por `appDiskCacheTtl` segundos (default 10min).
+     *      `du -sb` em pasta grande pode levar vários segundos; o valor
+     *      muda devagar, então cachear é seguro e protege de polling.
+     *   2. Primeira tentativa: `du -sb <path>` via Symfony Process. É
+     *      ordens de magnitude mais rápido que iterar em PHP quando tem
+     *      muito arquivo (ex.: vendor/, node_modules/ — mesmo que
+     *      node_modules do frontend esteja FORA do base_path()).
+     *   3. Fallback: RecursiveDirectoryIterator em PHP puro. Mais lento
+     *      mas não depende de comando externo (VPS com disabled_functions
+     *      restritivo, ambientes managed).
+     *   4. Em caso de erro total retorna 0 — UI mostra 0 GB em vez de
+     *      estourar, e o log tem a razão pra debug.
+     *
+     * `du` com `-b` já considera o tamanho real em bytes (apparent size).
+     * Symlinks não são seguidos por default no nosso fallback PHP —
+     * evita double-count e loops infinitos.
+     */
+    private function computeAppDiskUsage(): int
+    {
+        $path = $this->appDiskPath;
+        $cacheKey = 'alphacrm_disk_usage:' . md5($path);
+
+        return (int) Cache::remember($cacheKey, $this->appDiskCacheTtl, function () use ($path) {
+            if (!is_string($path) || $path === '' || !is_dir($path)) {
+                Log::warning('HostingerService.computeAppDiskUsage: path inválido', ['path' => $path]);
+                return 0;
+            }
+
+            // Tentativa 1: du -sb (rápido, único processo externo).
+            try {
+                $process = new Process(['du', '-sb', $path]);
+                $process->setTimeout(10);
+                $process->run();
+
+                if ($process->isSuccessful()) {
+                    $output = trim($process->getOutput());
+                    // Formato: "<bytes>\t<path>\n" — extrai os dígitos iniciais.
+                    if (preg_match('/^(\d+)/', $output, $m)) {
+                        return (int) $m[1];
+                    }
+                }
+                // Se rodou mas shape inesperado, cai pro fallback PHP.
+                Log::info('HostingerService.computeAppDiskUsage: du retornou output inesperado', [
+                    'exit_code' => $process->getExitCode(),
+                    'stderr'    => substr($process->getErrorOutput(), 0, 200),
+                ]);
+            } catch (ProcessFailedException $e) {
+                Log::info('HostingerService.computeAppDiskUsage: du falhou, usando fallback PHP', [
+                    'error' => $e->getMessage(),
+                ]);
+            } catch (\Throwable $e) {
+                // proc_open desabilitado, binário ausente, etc.
+                Log::info('HostingerService.computeAppDiskUsage: du indisponível, usando fallback PHP', [
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
+            // Tentativa 2: iteração recursiva em PHP. SKIP_DOTS evita "."/"..";
+            // não seguimos symlinks (default do Iterator em PHP) pra não
+            // double-contar ou entrar em loop.
+            try {
+                $total = 0;
+                $iterator = new \RecursiveIteratorIterator(
+                    new \RecursiveDirectoryIterator(
+                        $path,
+                        \FilesystemIterator::SKIP_DOTS
+                    ),
+                    \RecursiveIteratorIterator::LEAVES_ONLY,
+                    \RecursiveIteratorIterator::CATCH_GET_CHILD  // ignora subpastas sem permissão em vez de crashar
+                );
+                foreach ($iterator as $file) {
+                    if ($file->isFile() && !$file->isLink()) {
+                        $total += (int) $file->getSize();
+                    }
+                }
+                return $total;
+            } catch (\Throwable $e) {
+                Log::warning('HostingerService.computeAppDiskUsage: fallback PHP falhou', [
+                    'error' => $e->getMessage(),
+                    'path'  => $path,
+                ]);
+                return 0;
+            }
+        });
+    }
+
+    /**
+     * Busca o último backup disponível do VPS. Usado pela aba Sistema pra
+     * mostrar "Último backup: DD/MM/AAAA HH:mm" — útil pra admin saber se
+     * o snapshot automático da Hostinger está fresco antes de tentar uma
+     * restauração.
+     *
+     * A API devolve uma lista paginada (15 por página); a gente só precisa
+     * do mais recente. Como backups são criados ~1x/dia, cacheamos por
+     * 15min — evita bater na API Hostinger a cada polling de 60s.
+     *
+     * Retorno:
+     *   [
+     *     'ok' => true,
+     *     'backup' => [
+     *       'id' => int,
+     *       'created_at' => ISO-8601 string,
+     *       'size_bytes' => int,
+     *       'location' => string,                  // ex.: "nl-srv-nodebackups"
+     *       'restore_time_seconds' => int,         // tempo estimado de restore
+     *     ] | null,                                 // null se não houver backups
+     *   ]
+     * Em erro: ['ok' => false, 'reason' => ..., 'error' => ...]. A UI não
+     * deve derrubar o resto do card por causa disso — é informacional.
+     */
+    public function getLatestBackup(): array
+    {
+        if (!$this->isConfigured()) {
+            return $this->errorResponse('not_configured', 'Monitoramento do servidor ainda não foi configurado.');
+        }
+
+        $cacheKey = self::CACHE_PREFIX . 'latest_backup:' . $this->vpsId;
+
+        $cached = Cache::get($cacheKey);
+        if (is_array($cached) && ($cached['ok'] ?? false) === true) {
+            return $cached;
+        }
+
+        try {
+            // page=1 vem ordenada do mais recente pro mais antigo (confirmado
+            // na doc: created_at desc). Pegamos só a primeira entrada.
+            $resp = $this->request('GET', "/api/vps/v1/virtual-machines/{$this->vpsId}/backups", [
+                'page' => 1,
+            ]);
+
+            if (!is_array($resp)) {
+                return $this->errorResponse('upstream_error', 'Não foi possível obter o histórico de backups.');
+            }
+
+            $list = $resp['data'] ?? $resp;
+            if (!is_array($list) || empty($list)) {
+                // Sem backups é estado válido — não é erro. Pode acontecer
+                // em VPS nova. Cacheamos pra não ficar batendo na API.
+                $result = ['ok' => true, 'backup' => null];
+                Cache::put($cacheKey, $result, 900);
+                return $result;
+            }
+
+            $first = is_array($list[0] ?? null) ? $list[0] : [];
+            $backup = [
+                'id'                   => isset($first['id']) && is_numeric($first['id']) ? (int) $first['id'] : null,
+                'created_at'           => $this->scalarFrom($first['created_at'] ?? null),
+                'size_bytes'           => isset($first['size']) && is_numeric($first['size']) ? (int) $first['size'] : 0,
+                'location'             => $this->scalarFrom($first['location'] ?? null),
+                'restore_time_seconds' => isset($first['restore_time']) && is_numeric($first['restore_time'])
+                    ? (int) $first['restore_time']
+                    : 0,
+            ];
+
+            $result = ['ok' => true, 'backup' => $backup];
+            Cache::put($cacheKey, $result, 900); // 15min
+            return $result;
+
+        } catch (\Throwable $e) {
+            Log::warning('HostingerService.getLatestBackup falhou', [
+                'error'  => $e->getMessage(),
+                'vps_id' => $this->vpsId,
+            ]);
+            return $this->errorResponse('exception', $this->humanizeException($e));
+        }
+    }
+
+    /** Força refresh do cache do último backup — usado no botão "Atualizar". */
+    public function refreshLatestBackup(): array
+    {
+        Cache::forget(self::CACHE_PREFIX . 'latest_backup:' . $this->vpsId);
+        return $this->getLatestBackup();
     }
 
     /**
