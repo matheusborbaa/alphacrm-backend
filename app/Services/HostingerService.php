@@ -99,6 +99,69 @@ class HostingerService
         return !empty($this->apiKey) && !empty($this->vpsId);
     }
 
+    /**
+     * Lista todas as VMs do dono da API key — usado apenas pro comando
+     * artisan `hostinger:list-vps` na hora de descobrir qual é o VPS_ID
+     * certo pra colocar no .env. Não usa cache (roda uma vez e morre).
+     *
+     * Retorna:
+     *   [
+     *     'ok' => true,
+     *     'vms' => [
+     *       ['id' => 17923, 'hostname' => '...', 'plan' => '...',
+     *        'state' => '...', 'ipv4' => '...'],
+     *       ...
+     *     ]
+     *   ]
+     * Ou em erro:
+     *   ['ok' => false, 'reason' => ..., 'error' => ...]
+     *
+     * Só precisa da API key — o VPS_ID pode estar vazio.
+     */
+    public function listVirtualMachines(): array
+    {
+        if (empty($this->apiKey)) {
+            return $this->errorResponse('not_configured', 'HOSTINGER_API_KEY não está definida no .env.');
+        }
+
+        try {
+            $res = $this->request('GET', '/api/vps/v1/virtual-machines');
+            if (!is_array($res)) {
+                return $this->errorResponse('upstream_error', 'A Hostinger não respondeu com uma lista de VPSes.');
+            }
+
+            // A resposta pode vir direto como array OU envelopada em {data: [...]}
+            // dependendo da versão da API. Aceitamos os dois.
+            $vms = $res['data'] ?? $res;
+            if (!is_array($vms)) {
+                return $this->errorResponse('upstream_shape', 'Formato inesperado da resposta da Hostinger.');
+            }
+
+            $normalized = [];
+            foreach ($vms as $vm) {
+                if (!is_array($vm)) continue;
+                $normalized[] = [
+                    'id'       => $vm['id'] ?? null,
+                    'hostname' => (string) ($vm['hostname'] ?? ''),
+                    'plan'     => (string) ($vm['plan'] ?? $vm['plan_name'] ?? ''),
+                    'state'    => (string) ($vm['state'] ?? $vm['status'] ?? ''),
+                    'ipv4'     => (string) ($vm['ipv4'] ?? $vm['ip'] ?? ''),
+                    'cpus'     => $vm['cpus']   ?? null,
+                    'memory'   => $vm['memory'] ?? null,  // em MB (geralmente)
+                    'disk'     => $vm['disk']   ?? null,  // em MB (geralmente)
+                ];
+            }
+
+            return ['ok' => true, 'vms' => $normalized];
+
+        } catch (\Throwable $e) {
+            Log::warning('HostingerService.listVirtualMachines falhou', [
+                'error' => $e->getMessage(),
+            ]);
+            return $this->errorResponse('exception', 'Falha ao contatar a Hostinger: ' . $e->getMessage());
+        }
+    }
+
     /* ==================================================================
      * Internals
      * ================================================================== */
