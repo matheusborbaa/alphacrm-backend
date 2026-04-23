@@ -181,6 +181,14 @@ Route::post(
     [EmpreendimentoImageController::class, 'store']
 )->middleware(['auth:sanctum', 'role:admin,gestor']);
 
+// Remover imagem da galeria (admin/gestor). A rota usa a FK direta da
+// image (não aninhada no empreendimento) porque o frontend só tem o id
+// da imagem no contexto de delete.
+Route::delete(
+    '/empreendimento-images/{image}',
+    [EmpreendimentoImageController::class, 'destroy']
+)->middleware(['auth:sanctum', 'role:admin,gestor']);
+
 
 /*
 |--------------------------------------------------------------------------
