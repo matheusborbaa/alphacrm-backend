@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\ChatConversation;
+use App\Models\ChatConversationRead;
+use App\Models\ChatMessage;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -26,6 +28,7 @@ class ChatConversationController extends Controller
      *  - other_user: {id, name, email, photo_url} do outro participante
      *  - last_message: {body, sender_id, created_at} ou null
      *  - last_message_at (pra ordenação no cliente, reforço)
+     *  - unread_count: número de msgs do outro participante ainda não lidas
      *
      * Paginação não é necessária aqui — usuário típico tem <100 conversas.
      * Se virar problema, trocar por cursor().
@@ -51,11 +54,28 @@ class ChatConversationController extends Controller
             ->orderByDesc('id') // tiebreaker pra conversas sem mensagem
             ->get();
 
-        $result = $conversations->map(function (ChatConversation $c) use ($me) {
+        // Carrega registros de leitura do user em UMA query, indexa por conv_id.
+        $convIds = $conversations->pluck('id')->all();
+        $reads   = ChatConversationRead::where('user_id', $me)
+            ->whereIn('conversation_id', $convIds)
+            ->get()
+            ->keyBy('conversation_id');
+
+        $result = $conversations->map(function (ChatConversation $c) use ($me, $reads) {
             $other = $c->otherParticipant($me);
 
             // lastMessage() retorna a coleção ordenada desc; pega o primeiro.
             $last = $c->lastMessage->first();
+
+            // Unread = msgs do OUTRO com id > last_read_message_id do user.
+            // N+1 aqui: 1 count por conversa. Aceitável pra MVP (<100 convs).
+            // Se virar gargalo, migrar pra subquery única com CASE sum.
+            $read = $reads->get($c->id);
+            $lastReadId = $read?->last_read_message_id ?? 0;
+            $unreadCount = ChatMessage::where('conversation_id', $c->id)
+                ->where('sender_id', '!=', $me)
+                ->where('id', '>', $lastReadId)
+                ->count();
 
             return [
                 'id'              => $c->id,
@@ -72,6 +92,7 @@ class ChatConversationController extends Controller
                     'is_mine'    => $last->sender_id === $me,
                     'created_at' => $last->created_at,
                 ] : null,
+                'unread_count'    => $unreadCount,
             ];
         });
 
@@ -127,6 +148,43 @@ class ChatConversationController extends Controller
                 'name'  => $otherUser->name,
                 'email' => $otherUser->email,
             ],
+            'unread_count'    => 0,
         ], $conversation->wasRecentlyCreated ? 201 : 200);
+    }
+
+    /**
+     * Total consolidado de mensagens não-lidas do usuário logado, somando
+     * todas as conversas. Consumido pelo badge global na sidebar
+     * (polling curto, todas as páginas).
+     *
+     * Resposta: {"total": N}
+     *
+     * Implementação: soma por conversa de (msgs do outro com id > last_read_id).
+     * Usa uma única query agregada com join — não faz N+1.
+     */
+    public function unreadCount(Request $request): JsonResponse
+    {
+        $me = (int) Auth::id();
+
+        // Conversas onde o user participa + reads dele (LEFT JOIN — conversa
+        // sem registro de leitura conta TODAS as msgs como não-lidas).
+        $total = DB::table('chat_conversations as c')
+            ->join('chat_messages as m', 'm.conversation_id', '=', 'c.id')
+            ->leftJoin('chat_conversation_reads as r', function ($join) use ($me) {
+                $join->on('r.conversation_id', '=', 'c.id')
+                     ->where('r.user_id', '=', $me);
+            })
+            ->where(function ($q) use ($me) {
+                $q->where('c.user_a_id', $me)->orWhere('c.user_b_id', $me);
+            })
+            ->where('m.sender_id', '!=', $me)
+            ->where(function ($q) {
+                // msg.id > last_read_message_id (ou last_read_message_id IS NULL)
+                $q->whereColumn('m.id', '>', 'r.last_read_message_id')
+                  ->orWhereNull('r.last_read_message_id');
+            })
+            ->count();
+
+        return response()->json(['total' => $total]);
     }
 }

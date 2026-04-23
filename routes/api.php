@@ -754,17 +754,23 @@ Route::middleware('auth:sanctum')->post('/auth/logout', function (Request $reque
 | O controller garante autorização por conversa (ensureParticipant).
 |
 | Endpoints:
-|   GET  /chat/conversations                      -> lista conversas do user
+|   GET  /chat/conversations                      -> lista conversas do user (com unread_count)
 |   POST /chat/conversations                      -> abre/retorna DM com user_id
 |   GET  /chat/conversations/{id}/messages        -> lista msgs (paginada)
 |   POST /chat/conversations/{id}/messages        -> envia msg
+|   POST /chat/conversations/{id}/read            -> marca conversa como lida (Sprint 3)
+|   GET  /chat/unread-count                       -> total consolidado p/ badge global (Sprint 3)
 */
 Route::middleware('auth:sanctum')->prefix('chat')->group(function () {
+    Route::get ('/unread-count',                  [ChatConversationController::class, 'unreadCount']);
+
     Route::get ('/conversations',                 [ChatConversationController::class, 'index']);
     Route::post('/conversations',                 [ChatConversationController::class, 'store']);
     Route::get ('/conversations/{id}/messages',   [ChatMessageController::class, 'index'])
         ->whereNumber('id');
     Route::post('/conversations/{id}/messages',   [ChatMessageController::class, 'store'])
+        ->whereNumber('id');
+    Route::post('/conversations/{id}/read',       [ChatMessageController::class, 'markRead'])
         ->whereNumber('id');
 });
 
