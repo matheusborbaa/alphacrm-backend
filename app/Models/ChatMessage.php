@@ -25,6 +25,14 @@ class ChatMessage extends Model
         'conversation_id',
         'sender_id',
         'body',
+        'is_pinned',
+        'pinned_at',
+        'pinned_by_user_id',
+    ];
+
+    protected $casts = [
+        'is_pinned' => 'boolean',
+        'pinned_at' => 'datetime',
     ];
 
     public function conversation(): BelongsTo
@@ -35,6 +43,15 @@ class ChatMessage extends Model
     public function sender(): BelongsTo
     {
         return $this->belongsTo(User::class, 'sender_id');
+    }
+
+    /**
+     * Quem pinou essa mensagem. Nullable quando is_pinned=false ou quando
+     * o user que pinou foi deletado (nullOnDelete).
+     */
+    public function pinnedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'pinned_by_user_id');
     }
 
     /**

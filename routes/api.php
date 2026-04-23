@@ -782,6 +782,14 @@ Route::middleware('auth:sanctum')->prefix('chat')->group(function () {
     Route::post('/conversations/{id}/read',       [ChatMessageController::class, 'markRead'])
         ->whereNumber('id');
 
+    // Sprint 4.1 — Pin de mensagens importantes
+    Route::get   ('/conversations/{id}/pinned',   [ChatMessageController::class, 'pinned'])
+        ->whereNumber('id');
+    Route::post  ('/messages/{id}/pin',           [ChatMessageController::class, 'togglePin'])
+        ->whereNumber('id');
+    Route::delete('/messages/{id}/pin',           [ChatMessageController::class, 'togglePin'])
+        ->whereNumber('id');
+
     // Sprint 2 — Anexos
     Route::post  ('/attachments/upload',          [ChatAttachmentController::class, 'upload']);
     Route::get   ('/attachments/{id}/download',   [ChatAttachmentController::class, 'download'])

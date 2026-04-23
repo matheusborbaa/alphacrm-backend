@@ -185,6 +185,60 @@ class ChatMessageController extends Controller
     }
 
     /**
+     * Lista mensagens pinadas (is_pinned=true) da conversa.
+     * Ordem: pinned_at DESC (mais recente no topo, igual convenção do Slack/WhatsApp).
+     *
+     * Sprint 4.1 — aba "Importantes" do chat.
+     */
+    public function pinned(Request $request, int $conversationId): JsonResponse
+    {
+        $conversation = ChatConversation::findOrFail($conversationId);
+        $this->ensureParticipant($conversation);
+
+        $messages = ChatMessage::query()
+            ->with('attachments')
+            ->where('conversation_id', $conversationId)
+            ->where('is_pinned', true)
+            ->orderByDesc('pinned_at')
+            ->orderByDesc('id')
+            ->limit(100) // cap defensivo — improvável passar disso
+            ->get();
+
+        $payload = $messages->map(fn (ChatMessage $m) => $this->buildMessagePayload($m));
+
+        return response()->json(['messages' => $payload]);
+    }
+
+    /**
+     * Toggle pin/unpin de uma mensagem. POST pina, DELETE despina.
+     * Qualquer participante da conversa pode pinar/despinar qualquer msg dela —
+     * a ideia é "marcar essa conversa pra mim e pro outro como importante",
+     * não é posse individual.
+     */
+    public function togglePin(Request $request, int $messageId): JsonResponse
+    {
+        $message = ChatMessage::findOrFail($messageId);
+        $conversation = ChatConversation::findOrFail($message->conversation_id);
+        $this->ensureParticipant($conversation);
+
+        $me = (int) Auth::id();
+
+        // POST = pinar, DELETE = despinar. Método HTTP define o estado alvo.
+        if ($request->isMethod('delete')) {
+            $message->is_pinned = false;
+            $message->pinned_at = null;
+            $message->pinned_by_user_id = null;
+        } else {
+            $message->is_pinned = true;
+            $message->pinned_at = now();
+            $message->pinned_by_user_id = $me;
+        }
+        $message->save();
+
+        return response()->json($this->buildMessagePayload($message->load('attachments')));
+    }
+
+    /**
      * Marca conversa como lida (cursor monotônico).
      */
     public function markRead(Request $request, int $conversationId): JsonResponse
@@ -226,17 +280,21 @@ class ChatMessageController extends Controller
     }
 
     /**
-     * Shape unificado: body + timestamps + anexos.
+     * Shape unificado: body + timestamps + anexos + pin.
      */
     private function buildMessagePayload(ChatMessage $m): array
     {
         return [
-            'id'              => $m->id,
-            'conversation_id' => $m->conversation_id,
-            'sender_id'       => $m->sender_id,
-            'body'            => $m->body,
-            'created_at'      => $m->created_at,
-            'attachments'     => $m->attachments
+            'id'                  => $m->id,
+            'conversation_id'     => $m->conversation_id,
+            'sender_id'           => $m->sender_id,
+            'body'                => $m->body,
+            'created_at'          => $m->created_at,
+            // Sprint 4.1 — pin de mensagens importantes.
+            'is_pinned'           => (bool) $m->is_pinned,
+            'pinned_at'           => $m->pinned_at,
+            'pinned_by_user_id'   => $m->pinned_by_user_id,
+            'attachments'         => $m->attachments
                 ? $m->attachments->map(fn ($a) => $a->buildPayload())->all()
                 : [],
         ];
