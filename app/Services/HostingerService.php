@@ -259,37 +259,81 @@ class HostingerService
         // novo (bytes) também funciona porque detectamos o tamanho.
         // Obs.: API às vezes devolve como objeto em vez de escalar —
         // extractBytes já tem guarda contra is_numeric().
+        //
+        // IMPORTANTE sobre a unidade do disco: confirmado via
+        // `hostinger:list-vps` que a Hostinger devolve `disk: 51200` pra
+        // um plano de 50 GB — ou seja, está em MB, não em GB. Quem vinha
+        // com 'GB' aqui gerava "51200 GB" na UI (= 51 TB). Agora tratamos
+        // como MB; a heurística de `extractBytes` ainda detecta valores
+        // grandes como bytes puros caso a API mude no futuro.
         $ramTotal  = $this->extractBytes($vmData, ['memory_bytes', 'memory', 'ram_bytes', 'ram'], 'MB');
-        $diskTotal = $this->extractBytes($vmData, ['disk_bytes', 'disk_space', 'disk'], 'GB');
+        $diskTotal = $this->extractBytes($vmData, ['disk_bytes', 'disk_space', 'disk'], 'MB');
 
-        // Séries temporais: formato esperado {metric: [[ts, value], ...]}
+        // Shape REAL da resposta /metrics confirmado na doc oficial:
+        //   {
+        //     "cpu_usage":       {"unit": "%",            "usage": {ts: val, ...}},
+        //     "ram_usage":       {"unit": "bytes",        "usage": {ts: val, ...}},
+        //     "disk_space":      {"unit": "bytes",        "usage": {ts: val, ...}},
+        //     "incoming_traffic":{"unit": "bytes",        "usage": {ts: val, ...}},
+        //     "outgoing_traffic":{"unit": "bytes",        "usage": {ts: val, ...}},
+        //     "uptime":          {"unit": "milliseconds", "usage": {ts: val, ...}}
+        //   }
+        // NOTA: A resposta vem flat no topo — sem wrapper "data". Mantemos
+        // o `?? $metrics` só pra robustez caso a API mude no futuro.
+        // NOTA 2: A chave de disco é `disk_space`, NÃO `disk_usage`. Era
+        // essa a razão do "—" na UI.
         $series = $metrics['data'] ?? $metrics;
 
-        $cpuAvg  = $this->avgSeries($series['cpu_usage'] ?? $series['cpu'] ?? []);
-        $ramUsed = $this->lastBytes($series['ram_usage'] ?? $series['memory_usage'] ?? [], 'MB');
+        // CPU: unit "%", o valor já é percent — não precisa conversão.
+        $cpuAvg = $this->avgFromMetric($series['cpu_usage'] ?? []);
+        // Fallback: algumas respostas antigas da Hostinger expõem cpu direto
+        // no /virtual-machines/{id} em vez de série. Tentamos caso a série
+        // venha vazia (VPS recém-criada, sem histórico ainda).
+        if ($cpuAvg <= 0) {
+            foreach (['cpu_usage', 'cpu_percent', 'cpu_load'] as $k) {
+                if (isset($vmData[$k]) && is_numeric($vmData[$k])) {
+                    $cpuAvg = (float) $vmData[$k];
+                    break;
+                }
+            }
+        }
 
-        // Disco: a Hostinger tem inconsistências conhecidas aqui —
-        //  - alguns planos devolvem a série em `disk_usage`, outros em
-        //    `disk`, outros não retornam série nenhuma.
-        //  - alguns VMs já trazem `disk_used`/`disk_used_bytes` direto
-        //    no objeto da VM.
-        //  - último fallback: se sabemos `disk_total` e `disk_percent`,
-        //    derivamos o usado por multiplicação.
-        $diskUsed = $this->lastBytes(
-            $series['disk_usage'] ?? $series['disk'] ?? $series['disk_used'] ?? [],
-            'GB'
+        // RAM usada: unit "bytes" na série. Pegamos o ponto mais recente.
+        $ramUsed = $this->lastBytesFromMetric($series['ram_usage'] ?? []);
+        if ($ramUsed <= 0) {
+            // Fallback: campo absoluto no objeto da VM (alguns planos expõem).
+            $ramUsed = $this->extractBytes(
+                $vmData,
+                ['ram_used_bytes', 'ram_used', 'memory_used_bytes', 'memory_used', 'used_memory'],
+                'MB'
+            );
+        }
+        // Percent direto de RAM no VM info (raro mas coberto) — último fallback.
+        $ramPercentRaw = null;
+        foreach (['ram_percent', 'memory_percent', 'ram_usage_percent', 'memory_usage_percent'] as $k) {
+            if (isset($vmData[$k]) && is_numeric($vmData[$k])) {
+                $ramPercentRaw = (float) $vmData[$k];
+                break;
+            }
+        }
+        if ($ramUsed <= 0 && $ramTotal > 0 && $ramPercentRaw !== null) {
+            $ramUsed = (int) round($ramTotal * ($ramPercentRaw / 100));
+        }
+
+        // Disco usado: chave oficial `disk_space` (em bytes). Mantemos
+        // alternativas pra robustez caso a API expanda.
+        $diskUsed = $this->lastBytesFromMetric(
+            $series['disk_space'] ?? $series['disk_usage'] ?? $series['disk_used'] ?? $series['disk'] ?? []
         );
         if ($diskUsed <= 0) {
-            // Tenta campos absolutos no próprio objeto da VM.
+            // Fallback: campos absolutos no próprio objeto da VM.
             $diskUsed = $this->extractBytes(
                 $vmData,
                 ['disk_used_bytes', 'disk_used', 'used_disk', 'disk_usage'],
-                'GB'
+                'MB'
             );
         }
-        // Percent direto (se o provedor expuser) — guardamos pra derivar
-        // no fallback e pra devolver com precisão correta mesmo quando
-        // disk_total está zero.
+        // Percent direto (se o provedor expuser) — última camada pra derivar.
         $diskPercentRaw = null;
         foreach (['disk_percent', 'disk_usage_percent', 'disk_used_percent'] as $k) {
             if (isset($vmData[$k]) && is_numeric($vmData[$k])) {
@@ -301,8 +345,12 @@ class HostingerService
             $diskUsed = (int) round($diskTotal * ($diskPercentRaw / 100));
         }
 
-        $netIn  = $this->avgSeries($series['network_in']  ?? $series['net_in']  ?? []);
-        $netOut = $this->avgSeries($series['network_out'] ?? $series['net_out'] ?? []);
+        // Tráfego: chaves oficiais são `incoming_traffic` / `outgoing_traffic`.
+        // Os valores são bytes por ponto amostral — usar avg dá ordem de
+        // grandeza razoável (é mais pra indicador de "rede viva" do que
+        // medida precisa). Mantemos network_in/out como fallback de nome.
+        $netIn  = $this->avgFromMetric($series['incoming_traffic'] ?? $series['network_in']  ?? $series['net_in']  ?? []);
+        $netOut = $this->avgFromMetric($series['outgoing_traffic'] ?? $series['network_out'] ?? $series['net_out'] ?? []);
 
         return [
             'ok'                    => true,
@@ -324,7 +372,10 @@ class HostingerService
 
             'ram_total_bytes'       => $ramTotal,
             'ram_used_bytes'        => $ramUsed,
-            'ram_percent'           => $ramTotal > 0 ? round($ramUsed / $ramTotal * 100, 1) : 0.0,
+            // Prioridade idêntica à do disco: percent direto do provedor > calculado.
+            'ram_percent'           => $ramPercentRaw !== null
+                ? round($ramPercentRaw, 1)
+                : ($ramTotal > 0 ? round($ramUsed / $ramTotal * 100, 1) : 0.0),
 
             'disk_total_bytes'      => $diskTotal,
             'disk_used_bytes'       => $diskUsed,
@@ -375,7 +426,80 @@ class HostingerService
         return 0;
     }
 
-    /** Média numérica de uma série [[ts, value], ...] — 0 se vazia. */
+    /**
+     * Normaliza um bloco de métrica da Hostinger pro formato canônico
+     * que nossos helpers consomem.
+     *
+     * Formato canônico devolvido:
+     *   ['unit' => '%'|'bytes'|'milliseconds'|..., 'points' => [float, float, ...]]
+     * onde `points` está em ordem cronológica.
+     *
+     * Aceita dois shapes de entrada:
+     *   A) Oficial atual (confirmado na doc):
+     *      {"unit": "bytes", "usage": {"1742269632": 554176512, ...}}
+     *   B) Legado / outras APIs parecidas:
+     *      [[ts, value], ...] ou [value, value, ...]
+     *
+     * Qualquer outra coisa devolve ['unit' => '', 'points' => []].
+     */
+    private function normalizeMetric($block): array
+    {
+        if (!is_array($block) || empty($block)) {
+            return ['unit' => '', 'points' => []];
+        }
+
+        // Shape A: {unit, usage: {ts: val, ...}} — oficial.
+        if (isset($block['usage']) && is_array($block['usage'])) {
+            $unit = is_string($block['unit'] ?? null) ? (string) $block['unit'] : '';
+            // Ordena por timestamp (chave) pra lastBytes pegar o mais recente.
+            $usage = $block['usage'];
+            ksort($usage, SORT_NUMERIC);
+            $points = [];
+            foreach ($usage as $v) {
+                if (is_numeric($v)) $points[] = (float) $v;
+            }
+            return ['unit' => $unit, 'points' => $points];
+        }
+
+        // Shape B: lista [[ts, val], ...] ou [val, val, ...]
+        $points = [];
+        foreach ($block as $pt) {
+            $v = is_array($pt) ? ($pt[1] ?? $pt['value'] ?? null) : $pt;
+            if (is_numeric($v)) $points[] = (float) $v;
+        }
+        return ['unit' => '', 'points' => $points];
+    }
+
+    /** Média do bloco de métrica — respeita o shape oficial da Hostinger. */
+    private function avgFromMetric($block): float
+    {
+        $n = $this->normalizeMetric($block);
+        if (empty($n['points'])) return 0.0;
+        return array_sum($n['points']) / count($n['points']);
+    }
+
+    /**
+     * Último valor do bloco de métrica, convertido pra bytes conforme a
+     * unit declarada. Se a unit for ausente, usa $defaultUnit como palpite.
+     */
+    private function lastBytesFromMetric($block, string $defaultUnit = 'bytes'): int
+    {
+        $n = $this->normalizeMetric($block);
+        if (empty($n['points'])) return 0;
+        $v = (float) end($n['points']);
+        if ($v <= 0) return 0;
+        $unit = strtolower($n['unit'] ?: $defaultUnit);
+        return match ($unit) {
+            'bytes', 'b'             => (int) $v,
+            'kb', 'kib', 'kilobytes' => (int) ($v * 1024),
+            'mb', 'mib', 'megabytes' => (int) ($v * 1024 * 1024),
+            'gb', 'gib', 'gigabytes' => (int) ($v * 1024 * 1024 * 1024),
+            // Unit desconhecida: cai na heurística "grande demais pra não ser bytes".
+            default                  => $v > 10_000_000 ? (int) $v : (int) ($v * 1024 * 1024),
+        };
+    }
+
+    /** Média numérica de uma série [[ts, value], ...] — 0 se vazia. Legado. */
     private function avgSeries(array $series): float
     {
         if (empty($series)) return 0.0;
