@@ -83,11 +83,21 @@ class HostingerService
             ];
         }
 
-        return Cache::remember(
-            self::CACHE_PREFIX . 'status:' . $this->vpsId,
-            self::CACHE_TTL,
-            fn() => $this->fetchStatusNow()
-        );
+        $key = self::CACHE_PREFIX . 'status:' . $this->vpsId;
+
+        // Cache manual (em vez de Cache::remember) pra NÃO cachear
+        // respostas de erro — senão um erro transiente fica preso 60s e
+        // a UI mostra o erro mesmo depois de o problema ser resolvido.
+        $cached = Cache::get($key);
+        if (is_array($cached) && ($cached['ok'] ?? false) === true) {
+            return $cached;
+        }
+
+        $fresh = $this->fetchStatusNow();
+        if (($fresh['ok'] ?? false) === true) {
+            Cache::put($key, $fresh, self::CACHE_TTL);
+        }
+        return $fresh;
     }
 
     /** Força um refresh ignorando cache. Usado quando o admin clica "Atualizar". */
@@ -268,10 +278,15 @@ class HostingerService
             'status'                => $status,
             'uptime_seconds'        => $uptime,
             'uptime_human'          => $this->humanUptime($uptime),
-            'plan'                  => (string) ($vmData['plan_name'] ?? $vmData['plan'] ?? ''),
-            'os'                    => (string) ($vmData['os_name']   ?? $vmData['os']   ?? ''),
-            'hostname'              => (string) ($vmData['hostname']  ?? ''),
-            'ipv4'                  => (string) ($vmData['ipv4']      ?? $vmData['ip'] ?? ''),
+            // Todos esses campos passaram pra scalarFrom()/extractIpv4()
+            // porque a Hostinger devolve plan/os/image frequentemente como
+            // {name: "...", id: N} em vez de string simples, e ipv4 pode
+            // vir como array de objetos. Sem o helper, batia em
+            // "Array to string conversion".
+            'plan'                  => $this->scalarFrom($vmData['plan_name'] ?? $vmData['plan'] ?? null, ['name', 'title', 'label', 'slug']),
+            'os'                    => $this->scalarFrom($vmData['os_name']   ?? $vmData['os']   ?? $vmData['template'] ?? null, ['name', 'title', 'label', 'slug']),
+            'hostname'              => $this->scalarFrom($vmData['hostname']  ?? null),
+            'ipv4'                  => $this->extractIpv4($vmData),
 
             'cpu_percent'           => round($cpuAvg, 1),
 
