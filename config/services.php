@@ -40,4 +40,16 @@ return [
     'user' => env('WHM_USER'),
 ],
 
+    // Hostinger API — usado pela aba Configurações → Sistema pra exibir
+    // status/RAM/disco/CPU do VPS onde o CRM está hospedado. Docs:
+    // https://developers.hostinger.com. O token é gerado no painel
+    // Hostinger (Conta → API), é um Bearer com escopo de VPS ou global.
+    // HOSTINGER_VPS_ID é o numérico de cada VM, visível na URL do painel
+    // ao abrir o VPS.
+    'hostinger' => [
+        'api_base' => env('HOSTINGER_API_BASE', 'https://developers.hostinger.com'),
+        'api_key'  => env('HOSTINGER_API_KEY'),
+        'vps_id'   => env('HOSTINGER_VPS_ID'),
+    ],
+
 ];

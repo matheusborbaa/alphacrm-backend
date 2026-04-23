@@ -38,6 +38,7 @@ use App\Http\Controllers\HomeController;
 use App\Http\Controllers\ChatConversationController;
 use App\Http\Controllers\ChatMessageController;
 use App\Http\Controllers\ChatAttachmentController;
+use App\Http\Controllers\VpsStatusController;
 
     Route::post('/me', [UserController::class, 'updateProfile'])->middleware(['auth:sanctum']);
     // Status do corretor (disponivel/ocupado/offline) — usado pelo rodízio.
@@ -556,6 +557,21 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/settings',            [SettingController::class, 'index']);
     Route::get('/settings/{key}',      [SettingController::class, 'show']);
     Route::put('/settings/{key}',      [SettingController::class, 'update']);
+});
+
+
+/*
+|--------------------------------------------------------------------------
+| INFRA / VPS — MONITORAMENTO DA HOSTINGER
+|--------------------------------------------------------------------------
+| GET /vps/status        → status + uptime + RAM + disco + CPU + rede
+|   ?refresh=1           → força bypass do cache de 60s
+| Admin-only. Se a integração não estiver configurada (HOSTINGER_API_KEY
+| + HOSTINGER_VPS_ID no .env), devolve ok=false sem 5xx — o frontend
+| renderiza um estado amigável com instruções.
+*/
+Route::middleware(['auth:sanctum', 'role:admin'])->group(function () {
+    Route::get('/vps/status', [VpsStatusController::class, 'show']);
 });
 
 
