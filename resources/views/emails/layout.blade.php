@@ -48,11 +48,27 @@
                 <table role="presentation" width="560" cellpadding="0" cellspacing="0" class="container" style="width:560px;max-width:560px;">
 
                     {{-- HEADER --}}
+                    {{--
+                        Logo é servido pelo mesmo domínio do frontend
+                        (FRONTEND_URL no .env). Tem que ser URL absoluta —
+                        clientes de email NUNCA carregam imagem relativa.
+                        O <a> em volta manda o clique no logo pro CRM.
+                        Fallback em texto (alt) continua legível mesmo se
+                        o cliente bloquear imagens (comportamento default
+                        do Gmail e Outlook pra remetentes novos).
+                    --}}
+                    @php
+                        $brandBase = rtrim(config('app.frontend_url') ?: config('app.url'), '/');
+                        $logoUrl   = $brandBase . '/img/logo-alpha.png';
+                    @endphp
                     <tr>
-                        <td align="center" style="padding:0 0 24px 0;">
-                            <div style="font-size:22px;font-weight:700;letter-spacing:3px;color:#ffffff;">
-                                ALPHA DOMUS <span style="color:#2d6cdf;">CRM</span>
-                            </div>
+                        <td align="center" style="padding:0 0 20px 0;">
+                            <a href="{{ $brandBase }}" style="text-decoration:none;">
+                                <img src="{{ $logoUrl }}"
+                                     alt="Alpha Domus CRM"
+                                     width="180"
+                                     style="display:block;border:0;outline:none;max-width:180px;height:auto;margin:0 auto;">
+                            </a>
                         </td>
                     </tr>
 
