@@ -6,6 +6,7 @@ use App\Models\ChatMessageAttachment;
 use App\Models\Empreendimento;
 use App\Models\Lead;
 use App\Models\LeadDocument;
+use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\ValidationException;
 
@@ -29,26 +30,46 @@ class ChatAttachmentResolver
      *   - snapshot (dados pro card)
      *   - type (o mesmo recebido, pra conveniência)
      *
-     * Lança ValidationException se o recurso não existir.
+     * $peerUser é o OUTRO participante da conversa — usado pra validar
+     * ACL conjunto no caso de lead e lead_document (ambos precisam
+     * enxergar o recurso). Se null, só valida o sender.
+     *
+     * Lança ValidationException se o recurso não existir ou a ACL falhar.
      */
-    public function resolveReference(string $type, int $id): array
+    public function resolveReference(string $type, int $id, ?User $peerUser = null): array
     {
         return match ($type) {
-            ChatMessageAttachment::TYPE_LEAD            => $this->resolveLead($id),
+            ChatMessageAttachment::TYPE_LEAD            => $this->resolveLead($id, $peerUser),
             ChatMessageAttachment::TYPE_EMPREENDIMENTO  => $this->resolveEmpreendimento($id),
-            ChatMessageAttachment::TYPE_LEAD_DOCUMENT   => $this->resolveLeadDocument($id),
+            ChatMessageAttachment::TYPE_LEAD_DOCUMENT   => $this->resolveLeadDocument($id, $peerUser),
             default                                     => throw ValidationException::withMessages([
                 'attachments' => "Tipo de anexo inválido: {$type}",
             ]),
         };
     }
 
-    private function resolveLead(int $id): array
+    private function resolveLead(int $id, ?User $peerUser = null): array
     {
         $lead = Lead::with(['status:id,name,color_hex', 'corretor:id,name'])->find($id);
         if (!$lead) {
             throw ValidationException::withMessages([
                 'attachments' => "Lead #{$id} não encontrado.",
+            ]);
+        }
+
+        // ACL conjunto: ambos sender e peer precisam enxergar o lead.
+        // Sender: re-checa (mesmo que o frontend já filtre, nunca confiar em cliente).
+        // Peer: evita enviar lead pra colega que não tem acesso — vaza PII.
+        /** @var \App\Models\User|null $me */
+        $me = Auth::user();
+        if ($me && !$lead->isVisibleTo($me)) {
+            throw ValidationException::withMessages([
+                'attachments' => "Você não tem acesso ao lead #{$id}.",
+            ]);
+        }
+        if ($peerUser && !$lead->isVisibleTo($peerUser)) {
+            throw ValidationException::withMessages([
+                'attachments' => "O destinatário não tem acesso ao lead #{$id}. Peça pro gestor atribuir o lead ou envie como mensagem de texto.",
             ]);
         }
 
@@ -90,9 +111,9 @@ class ChatAttachmentResolver
         ];
     }
 
-    private function resolveLeadDocument(int $id): array
+    private function resolveLeadDocument(int $id, ?User $peerUser = null): array
     {
-        $doc = LeadDocument::with('lead:id,name')->find($id);
+        $doc = LeadDocument::with('lead:id,name,assigned_user_id')->find($id);
         if (!$doc) {
             throw ValidationException::withMessages([
                 'attachments' => "Documento #{$id} não encontrado.",
@@ -103,6 +124,23 @@ class ChatAttachmentResolver
             throw ValidationException::withMessages([
                 'attachments' => "Documento #{$id} foi removido e não pode ser anexado.",
             ]);
+        }
+
+        // ACL conjunto: acesso ao documento segue o acesso ao lead dono.
+        // Se o corretor-peer não vê o lead, também não deve receber o doc.
+        if ($doc->lead) {
+            /** @var \App\Models\User|null $me */
+            $me = Auth::user();
+            if ($me && !$doc->lead->isVisibleTo($me)) {
+                throw ValidationException::withMessages([
+                    'attachments' => "Você não tem acesso ao documento #{$id}.",
+                ]);
+            }
+            if ($peerUser && !$doc->lead->isVisibleTo($peerUser)) {
+                throw ValidationException::withMessages([
+                    'attachments' => "O destinatário não tem acesso ao documento #{$id}.",
+                ]);
+            }
         }
 
         return [

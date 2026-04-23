@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -10,6 +11,50 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Lead extends Model
 {
+    /* -------------------------------------------------------------
+     * ACL helpers
+     *
+     * Regra única de visibilidade de lead:
+     *   - admin/gestor  → vê TODOS
+     *   - corretor      → vê apenas onde assigned_user_id = user.id
+     *
+     * Centralizado aqui pra evitar divergência entre controllers
+     * (Chat, Kanban, Reports etc). Se amanhã surgir "equipe" ou
+     * "grupo de leads", troca aqui e o resto herda.
+     * ------------------------------------------------------------- */
+
+    /**
+     * Scope: aplica filtro "leads visíveis por $user".
+     * Uso: Lead::query()->visibleTo($user)->get().
+     * Se $user for null, retorna nenhum lead (fail-safe).
+     */
+    public function scopeVisibleTo(Builder $query, ?User $user): Builder
+    {
+        if (!$user) {
+            return $query->whereRaw('1 = 0');
+        }
+
+        $role = strtolower(trim((string) ($user->role ?? '')));
+        if (in_array($role, ['admin', 'gestor'], true)) {
+            return $query; // sem restrição
+        }
+
+        // corretor (ou qualquer outro role default): só os próprios
+        return $query->where('assigned_user_id', $user->id);
+    }
+
+    /**
+     * Helper booleano: a instância atual pode ser vista por $user?
+     * Útil em validações pontuais (ex: anexar lead no chat).
+     */
+    public function isVisibleTo(?User $user): bool
+    {
+        if (!$user) return false;
+        $role = strtolower(trim((string) ($user->role ?? '')));
+        if (in_array($role, ['admin', 'gestor'], true)) return true;
+        return (int) $this->assigned_user_id === (int) $user->id;
+    }
+
     protected $fillable = [
         'name',
         'phone',

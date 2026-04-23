@@ -6,6 +6,7 @@ use App\Models\ChatConversation;
 use App\Models\ChatConversationRead;
 use App\Models\ChatMessage;
 use App\Models\ChatMessageAttachment;
+use App\Models\User;
 use App\Services\ChatAttachmentResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -119,7 +120,12 @@ class ChatMessageController extends Controller
             return response()->json(['message' => 'Mensagem vazia.'], 422);
         }
 
-        $message = DB::transaction(function () use ($conversation, $me, $body, $pendingIds, $references) {
+        // Identifica o OUTRO participante — usado pra validar ACL de lead
+        // e lead_document (ambos precisam enxergar o recurso referenciado).
+        $peerId = $conversation->user_a_id === $me ? $conversation->user_b_id : $conversation->user_a_id;
+        $peerUser = User::find($peerId);
+
+        $message = DB::transaction(function () use ($conversation, $me, $body, $pendingIds, $references, $peerUser) {
             // 1. Cria a mensagem (body pode ser '' se só tem anexo — front renderiza só o card).
             $msg = ChatMessage::create([
                 'conversation_id' => $conversation->id,
@@ -150,8 +156,9 @@ class ChatMessageController extends Controller
             }
 
             // 3. Referências: resolver + row novo pra cada.
+            //    Passa $peerUser pro resolver aplicar ACL conjunto (lead/doc).
             foreach ($references as $ref) {
-                $resolved = $this->resolver->resolveReference($ref['type'], (int) $ref['id']);
+                $resolved = $this->resolver->resolveReference($ref['type'], (int) $ref['id'], $peerUser);
                 ChatMessageAttachment::create([
                     'message_id'       => $msg->id,
                     'type'             => $resolved['type'],

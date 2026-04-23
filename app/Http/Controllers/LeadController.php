@@ -339,9 +339,33 @@ private function saveCustomValues(Lead $lead, array $values): array
     |--------------------------------------------------------------------------
     | admin / gestor -> veem todos
     | corretor -> vê apenas os próprios leads
+    |
+    | Delega pro scope centralizado (Lead::visibleTo) — mesma regra
+    | que o chat usa pra decidir se o anexo de lead é permitido.
     */
-    if ($user->role === 'corretor') {
-        $query->where('assigned_user_id', $user->id);
+    $query->visibleTo($user);
+
+    /*
+    |--------------------------------------------------------------------------
+    | INTERSECÇÃO DE ACL (usado pelo chat)
+    |--------------------------------------------------------------------------
+    | Quando o frontend está montando a lista de leads pra anexar numa
+    | conversa, ele passa `visible_to_user_id=<peer>`. Isso restringe a
+    | lista a leads que TANTO o usuário logado QUANTO o peer enxergam,
+    | evitando que o sender anexe um lead que o outro não tem acesso.
+    |
+    | Se o peer for admin/gestor, o scope não adiciona restrição.
+    | Se o peer for corretor, força assigned_user_id = peer.id.
+    | Dois corretores distintos → intersecção vazia (só um pode ser dono).
+    */
+    if ($request->filled('visible_to_user_id')) {
+        $peer = \App\Models\User::find((int) $request->visible_to_user_id);
+        if (!$peer) {
+            // peer inválido: fail-safe, não vaza nada.
+            $query->whereRaw('1 = 0');
+        } else {
+            $query->visibleTo($peer);
+        }
     }
 
     // 🔍 Filtros
