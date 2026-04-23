@@ -77,13 +77,25 @@ return [
     | Application Timezone
     |--------------------------------------------------------------------------
     |
-    | Here you may specify the default timezone for your application, which
-    | will be used by the PHP date and date-time functions. The timezone
-    | is set to "UTC" by default as it is suitable for most use cases.
+    | Fuso da aplicação. O CRM é operado em horário de Brasília — todos os
+    | usuários (admin, gestor, corretor) preenchem formulários com datas e
+    | horas pensando em BRT. Se deixássemos UTC, o horário digitado no
+    | datetime-local (ex.: "14:00") seria interpretado pelo Laravel como
+    | 14:00 UTC e voltaria exibido ao frontend como 11:00 (após conversão
+    | automática UTC→local do new Date() do JS), causando o sintoma de
+    | "a hora da tarefa não bate com o que foi salvo".
+    |
+    | Com America/Sao_Paulo, o Carbon salva/serializa com offset -03:00
+    | (-02:00 em horário de verão, se/quando existir) e o frontend exibe
+    | corretamente via toLocaleString('pt-BR').
+    |
+    | Obs.: dados legados criados antes dessa mudança ficam ~3h deslocados
+    | na exibição (foram salvos como strings UTC sem TZ). Como o banco
+    | ainda tem poucos registros, assumimos o deslocamento.
     |
     */
 
-    'timezone' => 'UTC',
+    'timezone' => 'America/Sao_Paulo',
 
     /*
     |--------------------------------------------------------------------------

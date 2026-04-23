@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Empreendimento;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * @group Empreendimentos
@@ -235,6 +236,10 @@ public function cities()
 
     public function update(Request $request, Empreendimento $empreendimento)
     {
+        // Só admin/gestor pode editar. A rota já limita a admin,gestor,corretor
+        // via middleware do grupo, então aqui blindamos o corretor.
+        abort_unless(in_array($request->user()?->role, ['admin', 'gestor'], true), 403);
+
         $data = $request->validate([
             'name'                  => 'sometimes|required|string|max:255',
             'code'                  => 'nullable|string|max:255',
@@ -252,11 +257,64 @@ public function cities()
             'ends_at'               => 'nullable|date',
             'shortdescription'      => 'nullable|string',
             'description'           => 'nullable|string',
+            // ATENÇÃO: precisa estar na validação pra o file ser aceito — sem
+            // isso o Laravel só dropa silenciosamente o arquivo (bug antigo
+            // onde "trocar a capa" não funcionava).
+            'cover_image'           => 'nullable|image|mimes:jpg,jpeg,png,webp|max:4096',
         ]);
+
+        // Quando o usuário troca a capa: sobe o novo arquivo, apaga o antigo.
+        if ($request->hasFile('cover_image')) {
+            $oldPath = $empreendimento->cover_image;
+
+            $data['cover_image'] = $request->file('cover_image')
+                ->store('empreendimentos', 'public');
+
+            if ($oldPath && Storage::disk('public')->exists($oldPath)) {
+                // Best-effort: se falhar por permissão, segue sem derrubar o update.
+                try { Storage::disk('public')->delete($oldPath); } catch (\Throwable $e) {}
+            }
+        }
 
         $empreendimento->update($data);
 
         return $empreendimento;
+    }
+
+    /**
+     * Exclui um empreendimento.
+     *
+     * Regras:
+     *   - Só admin/gestor. Corretor nunca apaga.
+     *   - Se tem leads vinculados (pivot lead_empreendimentos OU FK direta
+     *     em leads.empreendimento_id), recusa pra não deixar lead órfão.
+     *   - Apaga a capa do storage (best-effort). Imagens da galeria caem em
+     *     cascata via FK da tabela empreendimento_images (onDelete cascade).
+     */
+    public function destroy(Request $request, Empreendimento $empreendimento)
+    {
+        abort_unless(in_array($request->user()?->role, ['admin', 'gestor'], true), 403);
+
+        // Leads vinculados — protege contra exclusão acidental.
+        $leadsByPivot = $empreendimento->leads()->count();
+        $leadsByFk    = \App\Models\Lead::where('empreendimento_id', $empreendimento->id)->count();
+
+        if ($leadsByPivot + $leadsByFk > 0) {
+            return response()->json([
+                'message' => 'Este empreendimento tem leads vinculados e não pode ser excluído. '
+                    . 'Desvincule ou reatribua os leads antes de excluir.',
+                'leads_count' => $leadsByPivot + $leadsByFk,
+            ], 409);
+        }
+
+        // Apaga capa do storage (se existir)
+        if ($empreendimento->cover_image && Storage::disk('public')->exists($empreendimento->cover_image)) {
+            try { Storage::disk('public')->delete($empreendimento->cover_image); } catch (\Throwable $e) {}
+        }
+
+        $empreendimento->delete();
+
+        return response()->json(['deleted' => true]);
     }
 
 

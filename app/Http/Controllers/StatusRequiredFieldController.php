@@ -3,10 +3,13 @@
 namespace App\Http\Controllers;
 
 use App\Models\CustomField;
+use App\Models\Empreendimento;
 use App\Models\Lead;
+use App\Models\LeadSource;
 use App\Models\LeadStatus;
 use App\Models\LeadSubstatus;
 use App\Models\StatusRequiredField;
+use App\Models\User;
 use App\Services\LeadStatusRequirementValidator;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -133,8 +136,8 @@ class StatusRequiredFieldController extends Controller
             if ($rule->isLeadColumn()) {
                 $row['field_key']  = $rule->lead_column;
                 $row['field_name'] = $this->humanizeColumn($rule->lead_column);
-                $row['field_type'] = 'text';
-                $row['options']    = null;
+                $row['field_type'] = $this->fieldTypeForColumn($rule->lead_column);
+                $row['options']    = $this->optionsForColumn($rule->lead_column);
                 $row['mask']       = $this->defaultMaskForColumn($rule->lead_column);
                 $row['current_value'] = $lead?->getAttribute($rule->lead_column);
             } else {
@@ -166,6 +169,57 @@ class StatusRequiredFieldController extends Controller
         return match ($column) {
             'phone'    => 'celular',
             default    => null,
+        };
+    }
+
+    /**
+     * Tipo de input sugerido por coluna do lead. Pra FKs (empreendimento,
+     * source, corretor) o modal deve renderizar como <select>, não texto.
+     */
+    private function fieldTypeForColumn(string $column): string
+    {
+        return match ($column) {
+            'empreendimento_id', 'source_id', 'assigned_user_id' => 'select',
+            default => 'text',
+        };
+    }
+
+    /**
+     * Options pra colunas que são FK. Devolve array de
+     * [{value, label}] — o frontend aceita ambos (array de string e
+     * array de objeto com value/label).
+     *
+     * Evita quebrar o modal quando a tabela está vazia: devolve array
+     * vazio e o select fica com só "Selecione".
+     */
+    private function optionsForColumn(string $column): ?array
+    {
+        return match ($column) {
+            'empreendimento_id' => Empreendimento::query()
+                ->where('active', true)
+                ->orderBy('name')
+                ->get(['id', 'name'])
+                ->map(fn ($e) => ['value' => (string) $e->id, 'label' => $e->name])
+                ->values()
+                ->toArray(),
+
+            'source_id' => LeadSource::query()
+                ->orderBy('name')
+                ->get(['id', 'name'])
+                ->map(fn ($s) => ['value' => (string) $s->id, 'label' => $s->name])
+                ->values()
+                ->toArray(),
+
+            'assigned_user_id' => User::query()
+                ->where('active', true)
+                ->whereIn('role', ['corretor', 'gestor'])
+                ->orderBy('name')
+                ->get(['id', 'name'])
+                ->map(fn ($u) => ['value' => (string) $u->id, 'label' => $u->name])
+                ->values()
+                ->toArray(),
+
+            default => null,
         };
     }
 

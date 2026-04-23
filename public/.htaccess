@@ -23,3 +23,29 @@
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteRule ^ index.php [L]
 </IfModule>
+
+# Upload limits — documentos de lead podem chegar até 15 MB. Hostinger
+# normalmente já vem com 128M, mas em alguns planos o default do PHP é
+# 2M/8M e o upload falha silencioso (POST vazio), mostrando só "Falha no
+# upload" no frontend. Forçamos aqui pra blindar.
+<IfModule mod_php.c>
+    php_value upload_max_filesize 20M
+    php_value post_max_size       25M
+    php_value memory_limit        256M
+    php_value max_execution_time  120
+    php_value max_input_time      120
+</IfModule>
+<IfModule mod_php7.c>
+    php_value upload_max_filesize 20M
+    php_value post_max_size       25M
+    php_value memory_limit        256M
+    php_value max_execution_time  120
+    php_value max_input_time      120
+</IfModule>
+<IfModule mod_php8.c>
+    php_value upload_max_filesize 20M
+    php_value post_max_size       25M
+    php_value memory_limit        256M
+    php_value max_execution_time  120
+    php_value max_input_time      120
+</IfModule>

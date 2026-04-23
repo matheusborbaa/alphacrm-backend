@@ -124,18 +124,77 @@ class LeadDocumentController extends Controller
     {
         $this->authorize('view', $lead);
 
-        $request->validate([
-            'file'        => 'required|file|max:' . (self::MAX_UPLOAD_BYTES / 1024),
-            'category'    => 'nullable|string|max:50',
-            'description' => 'nullable|string|max:500',
-        ]);
+        // ⚠️ Guard contra post_max_size estourado no PHP.
+        // Quando o payload passa do post_max_size do php.ini, o PHP descarta
+        // $_POST e $_FILES silenciosamente — só sobra Content-Length no header.
+        // Sem esse check, o validate() abaixo reclama de "The file field is
+        // required" e o usuário vê uma mensagem sem sentido, porque ele sabe
+        // que selecionou o arquivo. Detectamos aqui e devolvemos 413 com
+        // mensagem clara, apontando o limite.
+        $contentLength = (int) $request->server('CONTENT_LENGTH', 0);
+        $postMax       = $this->iniBytes(ini_get('post_max_size'));
+        if ($contentLength > 0 && $postMax > 0 && $contentLength > $postMax
+            && empty($_POST) && empty($_FILES)) {
+            return response()->json([
+                'message' => 'Arquivo muito grande para o servidor. Limite atual: '
+                    . $this->formatBytes($postMax) . '.',
+            ], 413);
+        }
+
+        try {
+            $request->validate([
+                'file'        => 'required|file|max:' . (self::MAX_UPLOAD_BYTES / 1024),
+                'category'    => 'nullable|string|max:50',
+                'description' => 'nullable|string|max:500',
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            // Mensagens PT-BR amigáveis pros erros mais comuns do uploader.
+            $errors = $e->errors();
+            $first  = collect($errors)->flatten()->first() ?: 'Dados inválidos.';
+            // Se o erro é "file required" mas o upload veio com tamanho > 0,
+            // quase sempre é upload_max_filesize estourado (o PHP descarta o
+            // arquivo individualmente mas mantém $_POST). Mostra mensagem clara.
+            if (($errors['file'][0] ?? null)
+                && str_contains(strtolower($errors['file'][0]), 'required')
+                && $contentLength > 0) {
+                $uploadMax = $this->iniBytes(ini_get('upload_max_filesize'));
+                return response()->json([
+                    'message' => 'Arquivo muito grande para o servidor. Limite atual por arquivo: '
+                        . $this->formatBytes($uploadMax ?: $postMax) . '.',
+                ], 413);
+            }
+            return response()->json([
+                'message' => $first,
+                'errors'  => $errors,
+            ], 422);
+        }
 
         $file = $request->file('file');
+
+        // Safety-net: em cenários raros (erros de I/O do upload) o PHP marca
+        // o file com isValid() false. O validate() já pega isso quase sempre,
+        // mas tratamos aqui pra nunca chamar getMimeType() num arquivo inválido.
+        if (!$file || !$file->isValid()) {
+            $errMap = [
+                UPLOAD_ERR_INI_SIZE   => 'Arquivo excede upload_max_filesize do servidor.',
+                UPLOAD_ERR_FORM_SIZE  => 'Arquivo excede MAX_FILE_SIZE do formulário.',
+                UPLOAD_ERR_PARTIAL    => 'Upload foi interrompido. Tente novamente.',
+                UPLOAD_ERR_NO_FILE    => 'Nenhum arquivo foi enviado.',
+                UPLOAD_ERR_NO_TMP_DIR => 'Servidor sem diretório temporário configurado.',
+                UPLOAD_ERR_CANT_WRITE => 'Servidor não conseguiu gravar o arquivo em disco.',
+                UPLOAD_ERR_EXTENSION  => 'Upload bloqueado por extensão do PHP.',
+            ];
+            $code = $file ? $file->getError() : UPLOAD_ERR_NO_FILE;
+            return response()->json([
+                'message' => $errMap[$code] ?? 'Falha no upload do arquivo.',
+            ], 422);
+        }
+
         $mime = $file->getMimeType();
 
         if (!in_array($mime, self::ALLOWED_MIMES, true)) {
             return response()->json([
-                'message' => 'Tipo de arquivo não permitido.',
+                'message' => 'Tipo de arquivo não permitido (' . $mime . ').',
                 'mime'    => $mime,
             ], 422);
         }
@@ -143,11 +202,21 @@ class LeadDocumentController extends Controller
         $ext      = $file->getClientOriginalExtension();
         $diskName = (string) Str::uuid() . ($ext ? '.' . strtolower($ext) : '');
 
-        $storagePath = Storage::disk('local')->putFileAs(
-            "leads/{$lead->id}",
-            $file,
-            $diskName
-        );
+        try {
+            $storagePath = Storage::disk('local')->putFileAs(
+                "leads/{$lead->id}",
+                $file,
+                $diskName
+            );
+        } catch (\Throwable $e) {
+            Log::error('LeadDocument upload: falha ao gravar no storage', [
+                'lead_id' => $lead->id,
+                'error'   => $e->getMessage(),
+            ]);
+            return response()->json([
+                'message' => 'Falha ao gravar o arquivo no servidor. Verifique permissões do diretório storage/.',
+            ], 500);
+        }
 
         if (!$storagePath) {
             return response()->json([
@@ -536,6 +605,39 @@ class LeadDocumentController extends Controller
         if ((int) $document->lead_id !== (int) $lead->id) {
             abort(404);
         }
+    }
+
+    /**
+     * Converte valor de ini (ex.: "15M", "1G", "8388608") em bytes.
+     * Retorna 0 quando não consegue parsear.
+     */
+    private function iniBytes(?string $val): int
+    {
+        if ($val === null || $val === '') return 0;
+        $val = trim($val);
+        $last = strtolower(substr($val, -1));
+        $num  = (int) $val;
+        switch ($last) {
+            case 'g': $num *= 1024;
+            case 'm': $num *= 1024;
+            case 'k': $num *= 1024;
+        }
+        return $num;
+    }
+
+    /** Formata bytes em "15 MB" / "512 KB" pra mostrar na mensagem de erro. */
+    private function formatBytes(int $bytes): string
+    {
+        if ($bytes <= 0) return '0 B';
+        $units = ['B', 'KB', 'MB', 'GB'];
+        $i = 0;
+        $n = (float) $bytes;
+        while ($n >= 1024 && $i < count($units) - 1) {
+            $n /= 1024;
+            $i++;
+        }
+        return (($n == (int) $n) ? (string) (int) $n : number_format($n, 1, '.', ''))
+            . ' ' . $units[$i];
     }
 
     private function userIsAdmin(): bool
