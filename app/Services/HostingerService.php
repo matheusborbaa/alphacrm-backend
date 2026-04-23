@@ -28,7 +28,10 @@ class HostingerService
 {
     private const CACHE_PREFIX = 'hostinger:vps:';
     private const CACHE_TTL    = 60;       // segundos
-    private const HTTP_TIMEOUT = 8;        // segundos — a API pode ser lenta
+    // 15s: a API do provedor tem latência alta em horário de pico e a gente
+    // já estava batendo em timeout com 8s. Como cacheamos 60s, o custo extra
+    // só afeta o primeiro request da janela — não vira problema pra UX.
+    private const HTTP_TIMEOUT = 15;
     private const METRICS_WINDOW_MIN = 10; // olhar só os últimos 10min pras médias
 
     private string $apiBase;
@@ -171,7 +174,10 @@ class HostingerService
             Log::warning('HostingerService.listVirtualMachines falhou', [
                 'error' => $e->getMessage(),
             ]);
-            return $this->errorResponse('exception', 'Falha ao contatar o servidor: ' . $e->getMessage());
+            // Mesmo caso do fetchStatusNow(): mensagem genérica pra UI/CLI,
+            // detalhes só no log. O comando artisan é admin-only, mas o
+            // texto ainda pode aparecer num print/bug report.
+            return $this->errorResponse('exception', $this->humanizeException($e));
         }
     }
 
@@ -187,7 +193,7 @@ class HostingerService
         try {
             $vm = $this->request('GET', $vmPath);
             if (!$vm) {
-                return $this->errorResponse('upstream_error', 'Não foi possível obter informações do servidor.');
+                return $this->errorResponse('upstream_error', 'Não foi possível obter o status do servidor no momento.');
             }
 
             // Métricas da última janela (10 min) — pegamos média do CPU,
@@ -200,11 +206,15 @@ class HostingerService
             return $this->buildPayload($vm, $metrics);
 
         } catch (\Throwable $e) {
+            // Log: detalhes técnicos (URL, ID, stack) — pra dev/ops debugar.
+            // User-facing: mensagem genérica sem nenhum detalhe de infra.
+            // NUNCA concatenar $e->getMessage() na resposta porque o cURL
+            // enfia a URL com VPS_ID no texto do erro, vazando infra pra UI.
             Log::warning('HostingerService.fetchStatusNow falhou', [
                 'error' => $e->getMessage(),
                 'vps_id' => $this->vpsId,
             ]);
-            return $this->errorResponse('exception', 'Falha ao contatar o servidor: ' . $e->getMessage());
+            return $this->errorResponse('exception', $this->humanizeException($e));
         }
     }
 
@@ -544,6 +554,41 @@ class HostingerService
     private function errorResponse(string $reason, string $msg): array
     {
         return ['ok' => false, 'reason' => $reason, 'error' => $msg];
+    }
+
+    /**
+     * Converte qualquer exception (cURL, timeout, conexão recusada,
+     * resolução DNS falha, etc.) em uma mensagem user-facing genérica
+     * que NÃO vaza URL, ID de VPS, IP, nada de infra.
+     *
+     * A gente nunca concatena $e->getMessage() na resposta porque o
+     * cURL formata o texto do erro incluindo a URL completa — por ex.:
+     *   "Operation timed out ... for https://developers.hostinger.com/api/vps/v1/virtual-machines/1231138"
+     * Isso estava aparecendo no card de "Sistema" e expondo o provedor +
+     * ID da VM pra qualquer admin com acesso ao CRM.
+     *
+     * Classificamos por palavra-chave no motivo (timeout / conexão /
+     * DNS) só pra dar uma dica útil ao admin — se precisar debugar de
+     * verdade, os detalhes completos estão no log (storage/logs).
+     */
+    private function humanizeException(\Throwable $e): string
+    {
+        $msg = strtolower($e->getMessage());
+
+        if (str_contains($msg, 'timed out') || str_contains($msg, 'timeout')) {
+            return 'O servidor demorou demais pra responder. Tente novamente em alguns instantes.';
+        }
+        if (str_contains($msg, 'could not resolve host') || str_contains($msg, 'name or service not known')) {
+            return 'Não foi possível resolver o endereço do servidor de monitoramento.';
+        }
+        if (str_contains($msg, 'connection refused') || str_contains($msg, 'failed to connect')) {
+            return 'Não foi possível estabelecer conexão com o servidor de monitoramento.';
+        }
+        if (str_contains($msg, 'ssl') || str_contains($msg, 'certificate')) {
+            return 'Problema de certificado na conexão com o servidor de monitoramento.';
+        }
+
+        return 'Não foi possível obter o status do servidor no momento.';
     }
 
     /**
