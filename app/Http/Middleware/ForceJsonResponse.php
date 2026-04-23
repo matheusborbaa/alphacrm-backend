@@ -34,6 +34,13 @@ class ForceJsonResponse
             return $response;
         }
 
+        // Rotas de documentação (Scribe / OpenAPI / Postman) servem HTML e YAML
+        // deliberadamente — não podem ser reescritas pra JSON ou o browser não
+        // renderiza. Scribe publica /docs, /docs.openapi e /docs.postman.
+        if ($request->is('docs', 'docs/*', 'docs.openapi', 'docs.postman')) {
+            return $response;
+        }
+
         // Se a rota já definiu um Content-Type explícito diferente de HTML
         // (default quando nada foi setado), respeitamos. O "text/html" sem
         // configuração é tipicamente erro renderizado pelo framework — esse
