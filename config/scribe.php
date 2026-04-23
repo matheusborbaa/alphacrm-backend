@@ -103,17 +103,20 @@ return [
     // How is your API authenticated? This information will be used in the displayed docs, generated examples and response calls.
     'auth' => [
         // Set this to true if ANY endpoints in your API use authentication.
-        'enabled' => false,
+        'enabled' => true,
 
         // Set this to true if your API should be authenticated by default. If so, you must also set `enabled` (above) to true.
         // You can then use @unauthenticated or @authenticated on individual endpoints to change their status from the default.
-        'default' => false,
+        // A strategy `GroupByAuth` (em app/Docs/Strategies) decide por endpoint
+        // com base no middleware real da rota, então esse default serve só
+        // como fallback — o valor correto vem da strategy.
+        'default' => true,
 
         // Where is the auth value meant to be sent in a request?
         'in' => AuthIn::BEARER->value,
 
         // The name of the auth parameter (e.g. token, key, apiKey) or header (e.g. Authorization, Api-Key).
-        'name' => 'key',
+        'name' => 'Authorization',
 
         // The value of the parameter to be used by Scribe to authenticate response calls.
         // This will NOT be included in the generated documentation. If empty, Scribe will use a random value.
@@ -173,11 +176,13 @@ return [
         // Endpoints which don't have a @group will be placed in this default group.
         'default' => 'Endpoints',
 
-        // By default, Scribe will sort groups alphabetically, and endpoints in the order their routes are defined.
-        // You can override this by listing the groups, subgroups and endpoints here in the order you want them.
-        // See https://scribe.knuckles.wtf/blog/laravel-v4#easier-sorting and https://scribe.knuckles.wtf/laravel/reference/config#order for details
-        // Note: does not work for `external` docs types
-        'order' => [],
+        // Ordem manual: "Publicas" em cima pra chamar atenção de auditoria.
+        // Dentro de cada grupo, os subgroups (derivados do path) aparecem
+        // em ordem alfabética por padrão.
+        'order' => [
+            'Rotas Publicas (SEM autenticacao)',
+            'Rotas Autenticadas (exigem token)',
+        ],
     ],
 
     // Custom logo path. This will be used as the value of the src attribute for the <img> tag,
@@ -213,6 +218,13 @@ return [
     'strategies' => [
         'metadata' => [
             ...Defaults::METADATA_STRATEGIES,
+            // Sobrepõe o groupName por endpoint baseado no middleware real
+            // da rota. Isso divide a doc em duas seções claras:
+            //   - "Rotas Publicas (SEM autenticacao)"
+            //   - "Rotas Autenticadas (exigem token)"
+            // Também seta o flag `authenticated` que o Scribe usa pra
+            // mostrar/esconder o cadeado nas rotas.
+            \App\Docs\Strategies\GroupByAuth::class,
         ],
         'headers' => [
             ...Defaults::HEADERS_STRATEGIES,
