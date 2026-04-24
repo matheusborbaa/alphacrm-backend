@@ -25,6 +25,7 @@ class ChatMessage extends Model
         'conversation_id',
         'sender_id',
         'body',
+        'read_at',
         'is_pinned',
         'pinned_at',
         'pinned_by_user_id',
@@ -33,6 +34,9 @@ class ChatMessage extends Model
     protected $casts = [
         'is_pinned' => 'boolean',
         'pinned_at' => 'datetime',
+        // Sprint 3.8c — timestamp exato de leitura por msg (ver migration
+        // add_read_at_to_chat_messages). Null = ainda não foi lida.
+        'read_at'   => 'datetime',
     ];
 
     public function conversation(): BelongsTo

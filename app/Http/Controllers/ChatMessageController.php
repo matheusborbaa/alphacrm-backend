@@ -248,7 +248,15 @@ class ChatMessageController extends Controller
     }
 
     /**
-     * Marca conversa como lida (cursor monotônico).
+     * Marca conversa como lida — cursor monotônico em
+     * `chat_conversation_reads` MAIS timestamp individual em cada
+     * chat_message (Sprint 3.8c).
+     *
+     * O cursor continua servindo pros unread counts e pro fallback
+     * de msgs antigas (pré-sprint) que ainda não têm read_at. O update
+     * por mensagem roda em UMA query com WHERE read_at IS NULL — só
+     * escreve na primeira vez e preserva o timestamp original em
+     * aberturas subsequentes.
      */
     public function markRead(Request $request, int $conversationId): JsonResponse
     {
@@ -282,6 +290,17 @@ class ChatMessageController extends Controller
             $read->save();
         }
 
+        // Sprint 3.8c — grava timestamp individual em cada msg do OUTRO
+        // participante que ainda não foi lida. Roda só se target > 0 pra
+        // economizar query em conversas sem histórico.
+        if ($targetId > 0) {
+            ChatMessage::where('conversation_id', $conversationId)
+                ->where('sender_id', '!=', $me)
+                ->where('id', '<=', $targetId)
+                ->whereNull('read_at')
+                ->update(['read_at' => now()]);
+        }
+
         return response()->json([
             'conversation_id'      => $conversationId,
             'last_read_message_id' => (int) $read->last_read_message_id,
@@ -299,6 +318,10 @@ class ChatMessageController extends Controller
             'sender_id'           => $m->sender_id,
             'body'                => $m->body,
             'created_at'          => $m->created_at,
+            // Sprint 3.8c — timestamp exato de quando o destinatário leu
+            // essa msg pela primeira vez. Null = ainda não lida. Frontend
+            // usa pra tooltip "Lido às HH:MM" preciso.
+            'read_at'             => $m->read_at,
             // Sprint 4.1 — pin de mensagens importantes.
             'is_pinned'           => (bool) $m->is_pinned,
             'pinned_at'           => $m->pinned_at,
