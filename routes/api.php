@@ -261,6 +261,35 @@ Route::middleware(['auth:sanctum', 'can:status_required_fields.manage'])
 
 /*
 |--------------------------------------------------------------------------
+| LEAD SOURCES / CHANNELS / CAMPAIGNS — cadastros base
+|--------------------------------------------------------------------------
+| GET é liberado pra qualquer user autenticado (corretor também lê pra
+| popular os selects dos formulários). Write (POST/PUT/DELETE) só admin
+| e gestor, que gerenciam esses cadastros em Configurações.
+*/
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/lead-sources',   [App\Http\Controllers\LeadSourceController::class,   'index']);
+    Route::get('/lead-channels',  [App\Http\Controllers\LeadChannelController::class,  'index']);
+    Route::get('/lead-campaigns', [App\Http\Controllers\LeadCampaignController::class, 'index']);
+});
+
+Route::middleware(['auth:sanctum', 'role:admin,gestor'])->group(function () {
+    Route::apiResource('lead-sources',   App\Http\Controllers\LeadSourceController::class)
+        ->parameters(['lead-sources' => 'leadSource'])
+        ->only(['store', 'update', 'destroy']);
+
+    Route::apiResource('lead-channels',  App\Http\Controllers\LeadChannelController::class)
+        ->parameters(['lead-channels' => 'leadChannel'])
+        ->only(['store', 'update', 'destroy']);
+
+    Route::apiResource('lead-campaigns', App\Http\Controllers\LeadCampaignController::class)
+        ->parameters(['lead-campaigns' => 'leadCampaign'])
+        ->only(['store', 'update', 'destroy']);
+});
+
+
+/*
+|--------------------------------------------------------------------------
 | ADMIN — GERENCIAMENTO DE USUÁRIOS (CORRETORES)
 |--------------------------------------------------------------------------
 | Usa UserPolicy via authorize() dentro do controller.
