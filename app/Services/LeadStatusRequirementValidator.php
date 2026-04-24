@@ -76,6 +76,28 @@ class LeadStatusRequirementValidator
         foreach ($rules as $rule) {
             if (!$rule->required) continue;
 
+            // Regra de tarefa obrigatória: bloqueia avanço se o lead não
+            // tem ao menos 1 appointment do tipo 'task' registrada. Dedup
+            // por stage — se várias etapas intermediárias exigirem, o
+            // corretor só vê 1 pedido (basta registrar 1 tarefa).
+            if ($rule->isTaskRequirement()) {
+                $dedupeKey = 'task:' . ($rule->_stage_label ?? 'global');
+                if (isset($seen[$dedupeKey])) continue;
+
+                $hasTask = $lead->appointments()->where('type', 'task')->exists();
+                if (!$hasTask) {
+                    $missing[] = [
+                        'field_key'  => '__task__',
+                        'field_name' => 'Registrar tarefa',
+                        'is_custom'  => false,
+                        'is_task'    => true,
+                        'stage'      => $rule->_stage_label ?? null,
+                    ];
+                    $seen[$dedupeKey] = true;
+                }
+                continue;
+            }
+
             $dedupeKey = $rule->isLeadColumn()
                 ? 'col:' . $rule->lead_column
                 : 'cf:'  . $rule->custom_field_id;

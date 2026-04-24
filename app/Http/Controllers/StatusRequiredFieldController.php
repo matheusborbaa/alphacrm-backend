@@ -119,6 +119,33 @@ class StatusRequiredFieldController extends Controller
         foreach ($rules as $rule) {
             if (!$rule->required) continue;
 
+            // Regra-tarefa: não tem campo, checa se o lead tem pelo menos 1
+            // appointment do tipo 'task'. Dedup por stage pra não duplicar
+            // se várias etapas intermediárias exigirem tarefa.
+            if ($rule->isTaskRequirement()) {
+                $dedupeKey = 'task:' . ($rule->_stage_label ?? 'global');
+                if (isset($seen[$dedupeKey])) continue;
+                $seen[$dedupeKey] = true;
+
+                $hasTask = $lead
+                    ? $lead->appointments()->where('type', 'task')->exists()
+                    : false;
+
+                $result[] = [
+                    'id'         => $rule->id,
+                    'required'   => true,
+                    'is_custom'  => false,
+                    'is_task'    => true,
+                    'stage'      => $rule->_stage_label ?? null,
+                    'field_key'  => '__task__',
+                    'field_name' => 'Registrar tarefa',
+                    'field_type' => 'task',
+                    'current_value' => null,
+                    'is_filled'  => $hasTask,
+                ];
+                continue;
+            }
+
             $dedupeKey = $rule->isLeadColumn()
                 ? 'col:' . $rule->lead_column
                 : 'cf:'  . $rule->custom_field_id;
@@ -130,6 +157,7 @@ class StatusRequiredFieldController extends Controller
                 'id'        => $rule->id,
                 'required'  => $rule->required,
                 'is_custom' => !$rule->isLeadColumn(),
+                'is_task'   => false,
                 'stage'     => $rule->_stage_label ?? null,
             ];
 
@@ -248,7 +276,8 @@ class StatusRequiredFieldController extends Controller
      *
      * Regras de integridade:
      *   - Deve informar EXATAMENTE UM de (lead_status_id, lead_substatus_id)
-     *   - Deve informar EXATAMENTE UM de (lead_column, custom_field_id)
+     *   - Se require_task=true: nao informa lead_column nem custom_field_id
+     *   - Se require_task=false: EXATAMENTE UM de (lead_column, custom_field_id)
      *   - Se lead_column, tem que estar na whitelist
      */
     private function validateData(Request $request): array
@@ -259,12 +288,14 @@ class StatusRequiredFieldController extends Controller
             'lead_column'       => ['nullable', 'string', Rule::in(StatusRequiredField::ALLOWED_LEAD_COLUMNS)],
             'custom_field_id'   => 'nullable|exists:custom_fields,id',
             'required'          => 'boolean',
+            'require_task'      => 'boolean',
         ]);
 
         $hasStatus    = !empty($data['lead_status_id']);
         $hasSubstatus = !empty($data['lead_substatus_id']);
         $hasColumn    = !empty($data['lead_column']);
         $hasCustom    = !empty($data['custom_field_id']);
+        $hasTaskRule  = !empty($data['require_task']);
 
         if ($hasStatus === $hasSubstatus) {
             throw ValidationException::withMessages([
@@ -272,10 +303,19 @@ class StatusRequiredFieldController extends Controller
             ]);
         }
 
-        if ($hasColumn === $hasCustom) {
-            throw ValidationException::withMessages([
-                'field' => 'Informe exatamente um entre lead_column e custom_field_id.',
-            ]);
+        // Regra-tarefa é mutuamente exclusiva com regra-campo.
+        if ($hasTaskRule) {
+            if ($hasColumn || $hasCustom) {
+                throw ValidationException::withMessages([
+                    'field' => 'Regra de tarefa obrigatória não aceita lead_column nem custom_field_id.',
+                ]);
+            }
+        } else {
+            if ($hasColumn === $hasCustom) {
+                throw ValidationException::withMessages([
+                    'field' => 'Informe exatamente um entre lead_column e custom_field_id, ou marque require_task=true.',
+                ]);
+            }
         }
 
         return $data;

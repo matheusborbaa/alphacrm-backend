@@ -11,7 +11,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  *
  * Regras de integridade (garantidas no controller, não no banco):
  *   - Exatamente 1 de {lead_status_id, lead_substatus_id}
- *   - Exatamente 1 de {lead_column, custom_field_id}
+ *   - Se require_task=true: não precisa de lead_column nem custom_field_id
+ *     (é uma regra "precisa ter tarefa registrada")
+ *   - Se require_task=false: exatamente 1 de {lead_column, custom_field_id}
  */
 class StatusRequiredField extends Model
 {
@@ -23,10 +25,12 @@ class StatusRequiredField extends Model
         'lead_column',
         'custom_field_id',
         'required',
+        'require_task',
     ];
 
     protected $casts = [
-        'required' => 'boolean',
+        'required'     => 'boolean',
+        'require_task' => 'boolean',
     ];
 
     /**
@@ -65,5 +69,13 @@ class StatusRequiredField extends Model
     public function isLeadColumn(): bool
     {
         return !empty($this->lead_column);
+    }
+
+    /**
+     * Atalho: é regra que exige tarefa registrada (true) em vez de campo?
+     */
+    public function isTaskRequirement(): bool
+    {
+        return (bool) $this->require_task;
     }
 }
