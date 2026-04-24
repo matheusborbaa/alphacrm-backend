@@ -26,11 +26,14 @@ class StatusRequiredField extends Model
         'custom_field_id',
         'required',
         'require_task',
+        'require_task_kind',
+        'require_task_completed',
     ];
 
     protected $casts = [
-        'required'     => 'boolean',
-        'require_task' => 'boolean',
+        'required'               => 'boolean',
+        'require_task'           => 'boolean',
+        'require_task_completed' => 'boolean',
     ];
 
     /**

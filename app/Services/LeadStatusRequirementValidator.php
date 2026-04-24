@@ -77,21 +77,33 @@ class LeadStatusRequirementValidator
             if (!$rule->required) continue;
 
             // Regra de tarefa obrigatória: bloqueia avanço se o lead não
-            // tem ao menos 1 appointment do tipo 'task' registrada. Dedup
-            // por stage — se várias etapas intermediárias exigirem, o
-            // corretor só vê 1 pedido (basta registrar 1 tarefa).
+            // tem ao menos 1 appointment do tipo 'task' que bate com o
+            // kind/completed exigidos. Dedup por (stage, kind, completed).
             if ($rule->isTaskRequirement()) {
-                $dedupeKey = 'task:' . ($rule->_stage_label ?? 'global');
+                $kind     = $rule->require_task_kind ?: 'any';
+                $needDone = (bool) $rule->require_task_completed;
+                $dedupeKey = 'task:' . ($rule->_stage_label ?? 'global')
+                            . ':' . $kind . ':' . ($needDone ? '1' : '0');
                 if (isset($seen[$dedupeKey])) continue;
 
-                $hasTask = $lead->appointments()->where('type', 'task')->exists();
+                $q = $lead->appointments()->where('type', 'task');
+                if ($rule->require_task_kind) {
+                    $q->where('task_kind', $rule->require_task_kind);
+                }
+                if ($needDone) {
+                    $q->whereNotNull('completed_at');
+                }
+                $hasTask = $q->exists();
+
                 if (!$hasTask) {
                     $missing[] = [
-                        'field_key'  => '__task__',
-                        'field_name' => 'Registrar tarefa',
-                        'is_custom'  => false,
-                        'is_task'    => true,
-                        'stage'      => $rule->_stage_label ?? null,
+                        'field_key'      => '__task__',
+                        'field_name'     => $this->humanizeTaskRule($rule),
+                        'is_custom'      => false,
+                        'is_task'        => true,
+                        'task_kind'      => $rule->require_task_kind,
+                        'task_completed' => $needDone,
+                        'stage'          => $rule->_stage_label ?? null,
                     ];
                     $seen[$dedupeKey] = true;
                 }
@@ -276,5 +288,21 @@ class LeadStatusRequirementValidator
         ];
 
         return $labels[$column] ?? ucfirst(str_replace('_', ' ', $column));
+    }
+
+    /** Espelha o método do controller pra manter a mensagem consistente. */
+    private function humanizeTaskRule(StatusRequiredField $rule): string
+    {
+        $kinds = [
+            'ligacao'  => 'ligação',
+            'visita'   => 'visita',
+            'anotacao' => 'anotação',
+            'generica' => 'tarefa',
+        ];
+        $noun   = $rule->require_task_kind
+            ? ($kinds[$rule->require_task_kind] ?? 'tarefa')
+            : 'tarefa';
+        $suffix = $rule->require_task_completed ? ' concluída' : '';
+        return 'Registrar ' . $noun . $suffix;
     }
 }

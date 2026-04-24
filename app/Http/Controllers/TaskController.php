@@ -129,6 +129,9 @@ class TaskController extends Controller
             'due_at'      => 'nullable|date',
             'priority'    => 'nullable|in:low,medium,high',
             'reminder_at' => 'nullable|date',
+            // Subtipo da tarefa — usado pelas regras de obrigatoriedade
+            // pra exigir tipo específico (ligação, visita, anotação, genérica).
+            'task_kind'   => 'nullable|in:ligacao,visita,anotacao,generica',
             // admin/gestor podem atribuir a outro user
             'user_id'     => 'nullable|exists:users,id',
             // admin/gestor podem marcar a tarefa como da EMPRESA (visível pra todos)
@@ -156,6 +159,7 @@ class TaskController extends Controller
             'priority'    => $data['priority'] ?? Appointment::PRIORITY_MEDIUM,
             'reminder_at' => $data['reminder_at'] ?? null,
             'type'        => Appointment::TYPE_TASK,
+            'task_kind'   => $data['task_kind'] ?? Appointment::KIND_GENERICA,
             'status'      => Appointment::STATUS_PENDING,
             'user_id'     => $assigneeId,
             'scope'       => $scope,
@@ -204,6 +208,7 @@ class TaskController extends Controller
             'due_at'      => 'nullable|date',
             'priority'    => 'nullable|in:low,medium,high',
             'reminder_at' => 'nullable|date',
+            'task_kind'   => 'nullable|in:ligacao,visita,anotacao,generica',
             'user_id'     => 'nullable|exists:users,id',
             'scope'       => 'nullable|in:private,company',
         ]);

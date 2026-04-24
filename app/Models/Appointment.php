@@ -27,6 +27,21 @@ class Appointment extends Model
     public const TYPE_CALL    = 'call';
     public const TYPE_MEETING = 'meeting';
 
+    // Subtipos dentro de type='task' — escolhidos pelo corretor ao criar
+    // a tarefa. Permite que as regras de obrigatoriedade exijam
+    // especificamente "ligação concluída" em vez de qualquer tarefa.
+    public const KIND_LIGACAO  = 'ligacao';
+    public const KIND_VISITA   = 'visita';
+    public const KIND_ANOTACAO = 'anotacao';
+    public const KIND_GENERICA = 'generica';
+
+    public const KINDS = [
+        self::KIND_LIGACAO,
+        self::KIND_VISITA,
+        self::KIND_ANOTACAO,
+        self::KIND_GENERICA,
+    ];
+
     public const PRIORITY_LOW    = 'low';
     public const PRIORITY_MEDIUM = 'medium';
     public const PRIORITY_HIGH   = 'high';
@@ -43,6 +58,7 @@ class Appointment extends Model
         'lead_id',
         'user_id',
         'type',
+        'task_kind',
         'description',
         'starts_at',
         'ends_at',

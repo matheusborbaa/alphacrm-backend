@@ -120,28 +120,41 @@ class StatusRequiredFieldController extends Controller
             if (!$rule->required) continue;
 
             // Regra-tarefa: não tem campo, checa se o lead tem pelo menos 1
-            // appointment do tipo 'task'. Dedup por stage pra não duplicar
-            // se várias etapas intermediárias exigirem tarefa.
+            // tarefa que bate com o kind/completed exigidos. Dedup por stage
+            // + kind + completed pra não duplicar entre etapas com mesma regra.
             if ($rule->isTaskRequirement()) {
-                $dedupeKey = 'task:' . ($rule->_stage_label ?? 'global');
+                $kind     = $rule->require_task_kind ?: 'any';
+                $needDone = (bool) $rule->require_task_completed;
+                $dedupeKey = 'task:' . ($rule->_stage_label ?? 'global')
+                            . ':' . $kind . ':' . ($needDone ? '1' : '0');
                 if (isset($seen[$dedupeKey])) continue;
                 $seen[$dedupeKey] = true;
 
-                $hasTask = $lead
-                    ? $lead->appointments()->where('type', 'task')->exists()
-                    : false;
+                $hasTask = false;
+                if ($lead) {
+                    $q = $lead->appointments()->where('type', 'task');
+                    if ($rule->require_task_kind) {
+                        $q->where('task_kind', $rule->require_task_kind);
+                    }
+                    if ($needDone) {
+                        $q->whereNotNull('completed_at');
+                    }
+                    $hasTask = $q->exists();
+                }
 
                 $result[] = [
-                    'id'         => $rule->id,
-                    'required'   => true,
-                    'is_custom'  => false,
-                    'is_task'    => true,
-                    'stage'      => $rule->_stage_label ?? null,
-                    'field_key'  => '__task__',
-                    'field_name' => 'Registrar tarefa',
-                    'field_type' => 'task',
-                    'current_value' => null,
-                    'is_filled'  => $hasTask,
+                    'id'               => $rule->id,
+                    'required'         => true,
+                    'is_custom'        => false,
+                    'is_task'          => true,
+                    'stage'            => $rule->_stage_label ?? null,
+                    'field_key'        => '__task__',
+                    'field_name'       => $this->humanizeTaskRule($rule),
+                    'field_type'       => 'task',
+                    'task_kind'        => $rule->require_task_kind,
+                    'task_completed'   => $needDone,
+                    'current_value'    => null,
+                    'is_filled'        => $hasTask,
                 ];
                 continue;
             }
@@ -272,6 +285,25 @@ class StatusRequiredFieldController extends Controller
     }
 
     /**
+     * Rótulo legível pra regra de tarefa, combinando kind + completed.
+     * Ex.: "Registrar ligação concluída", "Registrar visita", "Registrar tarefa".
+     */
+    private function humanizeTaskRule(StatusRequiredField $rule): string
+    {
+        $kinds = [
+            'ligacao'  => 'ligação',
+            'visita'   => 'visita',
+            'anotacao' => 'anotação',
+            'generica' => 'tarefa',
+        ];
+        $noun   = $rule->require_task_kind
+            ? ($kinds[$rule->require_task_kind] ?? 'tarefa')
+            : 'tarefa';
+        $suffix = $rule->require_task_completed ? ' concluída' : '';
+        return 'Registrar ' . $noun . $suffix;
+    }
+
+    /**
      * Validação compartilhada entre store e update.
      *
      * Regras de integridade:
@@ -283,12 +315,14 @@ class StatusRequiredFieldController extends Controller
     private function validateData(Request $request): array
     {
         $data = $request->validate([
-            'lead_status_id'    => 'nullable|exists:lead_status,id',
-            'lead_substatus_id' => 'nullable|exists:lead_substatus,id',
-            'lead_column'       => ['nullable', 'string', Rule::in(StatusRequiredField::ALLOWED_LEAD_COLUMNS)],
-            'custom_field_id'   => 'nullable|exists:custom_fields,id',
-            'required'          => 'boolean',
-            'require_task'      => 'boolean',
+            'lead_status_id'         => 'nullable|exists:lead_status,id',
+            'lead_substatus_id'      => 'nullable|exists:lead_substatus,id',
+            'lead_column'            => ['nullable', 'string', Rule::in(StatusRequiredField::ALLOWED_LEAD_COLUMNS)],
+            'custom_field_id'        => 'nullable|exists:custom_fields,id',
+            'required'               => 'boolean',
+            'require_task'           => 'boolean',
+            'require_task_kind'      => ['nullable', 'string', Rule::in(\App\Models\Appointment::KINDS)],
+            'require_task_completed' => 'boolean',
         ]);
 
         $hasStatus    = !empty($data['lead_status_id']);
