@@ -325,6 +325,148 @@ class ChatMessageController extends Controller
     }
 
     /**
+     * Sprint 4.2 — Busca no histórico do chat.
+     *
+     * Query params:
+     *   - q (string, obrigatório, >=2 chars): termo de busca.
+     *   - conversation_id (int, opcional): restringe a uma conversa.
+     *     Quando omitido, busca em todas as conversas do user.
+     *   - limit (int, default 30, max 100): quantos resultados por página.
+     *
+     * Retorna:
+     *   {
+     *     query: "termo",
+     *     results: [
+     *       {
+     *         id, conversation_id, sender_id, created_at,
+     *         snippet: "…trecho com o termo…",
+     *         other_user: {id, name, avatar} // pra renderizar quando busca é global
+     *       }
+     *     ],
+     *     count: N
+     *   }
+     *
+     * Ordem: mais RECENTES primeiro — faz mais sentido num chat (msgs
+     * novas tendem a ser as relevantes). Se virar problema com histórico
+     * grande, paginar por before_id no próximo sprint.
+     *
+     * Segurança: o WHERE filtra só conversas onde o user é participante.
+     * Admin NÃO tem escape aqui (auditoria é outro fluxo, ?audit=1 lá).
+     */
+    public function search(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'q'               => ['required', 'string', 'min:2', 'max:200'],
+            'conversation_id' => ['nullable', 'integer', 'min:1'],
+            'limit'           => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        $q     = trim($data['q']);
+        $limit = (int) ($data['limit'] ?? 30);
+        $me    = (int) Auth::id();
+
+        // IDs das conversas que o user pode pesquisar (participante em
+        // alguma das pontas). Single query, retorna inteiros.
+        $convQuery = ChatConversation::query()
+            ->where(function ($q) use ($me) {
+                $q->where('user_a_id', $me)->orWhere('user_b_id', $me);
+            });
+
+        if (!empty($data['conversation_id'])) {
+            $convQuery->where('id', (int) $data['conversation_id']);
+        }
+
+        $conversationIds = $convQuery->pluck('id');
+
+        if ($conversationIds->isEmpty()) {
+            return response()->json([
+                'query'   => $q,
+                'results' => [],
+                'count'   => 0,
+            ]);
+        }
+
+        // Busca case-insensitive. LIKE com wildcard nos dois lados — OK
+        // pra volumes pequenos/médios (equipe); se virar gargalo, trocar
+        // por FULLTEXT INDEX no MySQL depois.
+        $rows = ChatMessage::query()
+            ->whereIn('conversation_id', $conversationIds)
+            ->where('body', 'LIKE', '%' . $this->escapeLike($q) . '%')
+            ->orderByDesc('id')
+            ->limit($limit)
+            ->get([
+                'id', 'conversation_id', 'sender_id', 'body', 'created_at',
+            ]);
+
+        // Monta mapa de "outro lado" por conversation_id pra renderizar
+        // "Conversa com Fulano" nos resultados. Uma query só.
+        $convs = ChatConversation::with(['userA:id,name,avatar', 'userB:id,name,avatar'])
+            ->whereIn('id', $rows->pluck('conversation_id')->unique())
+            ->get()
+            ->keyBy('id');
+
+        $results = $rows->map(function (ChatMessage $m) use ($q, $convs, $me) {
+            $conv  = $convs->get($m->conversation_id);
+            $other = $conv ? $conv->otherParticipant($me) : null;
+
+            return [
+                'id'              => $m->id,
+                'conversation_id' => $m->conversation_id,
+                'sender_id'       => $m->sender_id,
+                'is_mine'         => $m->sender_id === $me,
+                'created_at'      => $m->created_at,
+                'snippet'         => $this->buildSnippet($m->body, $q),
+                'other_user'      => $other ? [
+                    'id'     => $other->id,
+                    'name'   => $other->name,
+                    'avatar' => $other->avatar,
+                ] : null,
+            ];
+        });
+
+        return response()->json([
+            'query'   => $q,
+            'results' => $results,
+            'count'   => $results->count(),
+        ]);
+    }
+
+    /**
+     * Constrói um trecho curto (~160 chars) centrado na primeira ocorrência
+     * do termo. Se o body é mais curto, retorna inteiro. Usado pra UI
+     * mostrar "contexto" do match sem truncar feio.
+     */
+    private function buildSnippet(?string $body, string $query): string
+    {
+        $body = trim((string) $body);
+        if ($body === '') return '';
+
+        $len = mb_strlen($body);
+        if ($len <= 160) return $body;
+
+        $pos = mb_stripos($body, $query);
+        if ($pos === false) {
+            return mb_substr($body, 0, 160) . '…';
+        }
+
+        // 60 chars antes do match + 100 depois = ~160 chars centrado.
+        $start  = max(0, $pos - 60);
+        $prefix = $start > 0 ? '…' : '';
+        $suffix = ($start + 160 < $len) ? '…' : '';
+        return $prefix . mb_substr($body, $start, 160) . $suffix;
+    }
+
+    /**
+     * Escapa caracteres especiais do LIKE (% e _) pra não virarem
+     * coringa. Usado no search — sem isso, "50%" viraria "qualquer
+     * coisa que começa com 50" no LIKE.
+     */
+    private function escapeLike(string $v): string
+    {
+        return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $v);
+    }
+
+    /**
      * Shape unificado: body + timestamps + anexos + pin.
      */
     private function buildMessagePayload(ChatMessage $m, bool $exposeRead = true): array

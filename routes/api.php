@@ -947,6 +947,10 @@ Route::middleware(['auth:sanctum', 'chat.enabled'])->prefix('chat')->group(funct
     Route::delete('/messages/{id}/pin',           [ChatMessageController::class, 'togglePin'])
         ->whereNumber('id');
 
+    // Sprint 4.2 — Busca no histórico. Escopa por default só às conversas
+    // do user; conversation_id (opcional) restringe a uma conversa específica.
+    Route::get   ('/search',                      [ChatMessageController::class, 'search']);
+
     // Sprint 2 — Anexos
     Route::post  ('/attachments/upload',          [ChatAttachmentController::class, 'upload']);
     Route::get   ('/attachments/{id}/download',   [ChatAttachmentController::class, 'download'])
