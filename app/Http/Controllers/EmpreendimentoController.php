@@ -218,6 +218,14 @@ public function cities()
         $data['cover_image'] = $path;
     }
 
+    // Regra de negócio: empreendimento sem capa não pode ficar ativo —
+    // força active=false independente do que veio no payload. Quando o
+    // admin subir a primeira imagem e marcar como capa (ou já mandar
+    // capa junto), a ativação é feita em outro ponto.
+    if (empty($data['cover_image'])) {
+        $data['active'] = false;
+    }
+
     $empreendimento = Empreendimento::create($data);
 
     return response()->json($empreendimento,201);
@@ -274,6 +282,15 @@ public function cities()
                 // Best-effort: se falhar por permissão, segue sem derrubar o update.
                 try { Storage::disk('public')->delete($oldPath); } catch (\Throwable $e) {}
             }
+        }
+
+        // Regra: sem capa → empreendimento fica inativo. Se o admin tentar
+        // ativar via UI sem ter capa, o backend sobrescreve pra false.
+        $effectiveCover = $data['cover_image']
+            ?? $empreendimento->cover_image;
+
+        if (empty($effectiveCover) && !empty($data['active'])) {
+            $data['active'] = false;
         }
 
         $empreendimento->update($data);

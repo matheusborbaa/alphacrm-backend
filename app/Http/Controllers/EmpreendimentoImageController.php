@@ -112,9 +112,13 @@ class EmpreendimentoImageController extends Controller
             ]);
 
             // Espelha a capa na coluna cover_image do empreendimento pra manter
-            // compat com listagens antigas que leem direto.
+            // compat com listagens antigas que leem direto. Se o empreendimento
+            // ainda não tinha cover_image, auto-ativa (regra: sem capa = inativo).
             if ($wantCover) {
-                $empreendimento->update(['cover_image' => $img->image_path]);
+                $empreendimento->update([
+                    'cover_image' => $img->image_path,
+                    'active'      => true,
+                ]);
             }
 
             return $img;
@@ -143,12 +147,20 @@ class EmpreendimentoImageController extends Controller
 
         $image->update(['is_cover' => true]);
 
-        Empreendimento::where('id', $image->empreendimento_id)
-            ->update(['cover_image' => $image->image_path]);
+        // Atualiza a capa e — se era a primeira capa — auto-ativa o empreendimento.
+        $emp = Empreendimento::find($image->empreendimento_id);
+        $wasInactive = !$emp->active;
+
+        $emp->update([
+            'cover_image' => $image->image_path,
+            'active'      => true,
+        ]);
 
         return response()->json([
-            'success' => true,
-            'image'   => $image->fresh(),
+            'success'         => true,
+            'image'           => $image->fresh(),
+            'just_activated'  => $wasInactive, // frontend usa pra exibir toast "ativado!"
+            'empreendimento_active' => true,
         ]);
     }
 
@@ -176,9 +188,39 @@ class EmpreendimentoImageController extends Controller
             }
         }
 
+        $wasCover         = (bool) $image->is_cover;
+        $empreendimentoId = $image->empreendimento_id;
+
         $image->delete();
 
-        return response()->json(['deleted' => true]);
+        // Se removeu a capa: desativa o empreendimento e tenta eleger
+        // outra imagem da mesma categoria ('imagens' de preferência)
+        // como nova capa. Se não há mais imagens, fica sem capa e inativo.
+        $justDeactivated = false;
+        if ($wasCover) {
+            $next = EmpreendimentoImage::where('empreendimento_id', $empreendimentoId)
+                ->orderByRaw("CASE WHEN category = 'imagens' THEN 0 ELSE 1 END")
+                ->orderBy('order')
+                ->orderBy('id')
+                ->first();
+
+            if ($next) {
+                $next->update(['is_cover' => true]);
+                Empreendimento::where('id', $empreendimentoId)
+                    ->update(['cover_image' => $next->image_path]);
+            } else {
+                Empreendimento::where('id', $empreendimentoId)->update([
+                    'cover_image' => null,
+                    'active'      => false,
+                ]);
+                $justDeactivated = true;
+            }
+        }
+
+        return response()->json([
+            'deleted'           => true,
+            'just_deactivated'  => $justDeactivated,
+        ]);
     }
 
     /* =========================================================================
