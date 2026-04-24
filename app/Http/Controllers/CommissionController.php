@@ -6,10 +6,13 @@ use App\Models\Commission;
 use App\Models\CommissionComment;
 use App\Models\FinanceEntry;
 use App\Models\Lead;
+use App\Models\User;
+use App\Notifications\CommissionStatusChangedNotification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
@@ -208,6 +211,36 @@ class CommissionController extends Controller
      * TRANSITIONS
      * ================================================================== */
 
+    /**
+     * Sprint 3.8b — notifica o corretor dono da comissão sobre mudança de
+     * estado. Chamado DEPOIS do commit da transaction pra garantir que a
+     * notificação não sai se a operação falhar.
+     *
+     * Falha no envio não propaga — loggamos e seguimos. Um Notification
+     * quebrado não pode derrubar a aprovação de uma comissão.
+     */
+    private function notifyBroker(Commission $commission, string $event, ?string $reason = null): void
+    {
+        $broker = User::find($commission->user_id);
+        if (!$broker) return; // comissão sem corretor (edge case) — nada a notificar
+
+        try {
+            $broker->notify(new CommissionStatusChangedNotification(
+                $commission->load('lead:id,name'),
+                $event,
+                $reason,
+            ));
+        } catch (\Throwable $e) {
+            // Silencioso — email off, DB quebrado no canal notifications, etc.
+            // A ação primária (commissão) já rodou com sucesso.
+            Log::warning('Falha ao notificar corretor de comissão', [
+                'commission_id' => $commission->id,
+                'event'         => $event,
+                'error'         => $e->getMessage(),
+            ]);
+        }
+    }
+
     /** draft → pending. Gera a fatura + registra entrada financeira. */
     public function confirm(Request $request, int $id)
     {
@@ -238,7 +271,10 @@ class CommissionController extends Controller
             ]);
         });
 
-        return response()->json($commission->fresh());
+        $commission = $commission->fresh();
+        $this->notifyBroker($commission, CommissionStatusChangedNotification::EVENT_CONFIRMED);
+
+        return response()->json($commission);
     }
 
     /** pending → approved. Gestor revisou %/valor final. */
@@ -255,7 +291,10 @@ class CommissionController extends Controller
         $commission->approved_by = $user->id;
         $commission->save();
 
-        return response()->json($commission->fresh());
+        $commission = $commission->fresh();
+        $this->notifyBroker($commission, CommissionStatusChangedNotification::EVENT_APPROVED);
+
+        return response()->json($commission);
     }
 
     /** approved/partial → paid. Aceita upload de comprovante opcional. */
@@ -305,7 +344,10 @@ class CommissionController extends Controller
             ]);
         });
 
-        return response()->json($commission->fresh());
+        $commission = $commission->fresh();
+        $this->notifyBroker($commission, CommissionStatusChangedNotification::EVENT_PAID);
+
+        return response()->json($commission);
     }
 
     /** approved → partial. Marca pagamento parcial (sem data de quitação). */
@@ -348,7 +390,10 @@ class CommissionController extends Controller
             ]);
         });
 
-        return response()->json($commission->fresh());
+        $commission = $commission->fresh();
+        $this->notifyBroker($commission, CommissionStatusChangedNotification::EVENT_PARTIAL);
+
+        return response()->json($commission);
     }
 
     /** Qualquer estado pré-pago → cancelled. Estorna entrada se já tiver. */
@@ -395,7 +440,14 @@ class CommissionController extends Controller
             }
         });
 
-        return response()->json($commission->fresh());
+        $commission = $commission->fresh();
+        $this->notifyBroker(
+            $commission,
+            CommissionStatusChangedNotification::EVENT_CANCELLED,
+            $data['reason'],
+        );
+
+        return response()->json($commission);
     }
 
     /* ==================================================================

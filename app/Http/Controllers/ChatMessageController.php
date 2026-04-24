@@ -79,8 +79,13 @@ class ChatMessageController extends Controller
         $payload = $messages->map(fn (ChatMessage $m) => $this->buildMessagePayload($m));
 
         return response()->json([
-            'messages' => $payload,
-            'has_more' => $messages->count() === $limit,
+            'messages'  => $payload,
+            'has_more'  => $messages->count() === $limit,
+            // Sprint 3.8a — leitura do OUTRO participante. Frontend usa isso
+            // pra decidir ✓ (enviada) vs ✓✓ (lida) em cada msg minha. Cada
+            // polling atualiza esse cursor, então o indicador se acende na
+            // hora que o peer abre a conversa.
+            'peer_read' => $this->loadPeerReadState($conversation),
         ]);
     }
 
@@ -306,5 +311,39 @@ class ChatMessageController extends Controller
         if ($conversation->user_a_id !== $me && $conversation->user_b_id !== $me) {
             abort(403, 'Você não faz parte dessa conversa.');
         }
+    }
+
+    /**
+     * Sprint 3.8a — Devolve o cursor de leitura do OUTRO participante
+     * (peer) pra essa conversa. Usado pelo frontend pra render do ✓/✓✓
+     * nas mensagens que EU enviei.
+     *
+     * Shape:
+     *   ['last_read_message_id' => int, 'last_read_at' => string|null]
+     *
+     * Quando o peer nunca abriu a conversa, retorna (0, null). Nesse caso
+     * todas as minhas msgs aparecem como "enviada" (não lida) — correto.
+     */
+    private function loadPeerReadState(ChatConversation $conversation): array
+    {
+        $me     = (int) Auth::id();
+        $peerId = $conversation->user_a_id === $me
+            ? $conversation->user_b_id
+            : $conversation->user_a_id;
+
+        if (!$peerId) {
+            // Peer foi removido (nullOnDelete no FK). Não dá pra ter "lido" —
+            // trata como nunca-leu pra UI não mostrar checkmark azul.
+            return ['last_read_message_id' => 0, 'last_read_at' => null];
+        }
+
+        $row = ChatConversationRead::where('user_id', $peerId)
+            ->where('conversation_id', $conversation->id)
+            ->first();
+
+        return [
+            'last_read_message_id' => (int) ($row->last_read_message_id ?? 0),
+            'last_read_at'         => $row?->last_read_at?->toISOString(),
+        ];
     }
 }
