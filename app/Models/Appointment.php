@@ -57,12 +57,17 @@ class Appointment extends Model
         'created_at',
     ];
 
+    // Formato "Y-m-d H:i:s" sem `Z` força o frontend a interpretar as datas
+    // como horário local (timezone do navegador/usuário) em vez de UTC.
+    // Sem isso, o Laravel serializa `2026-04-23 14:00:00` como
+    // `2026-04-23T14:00:00.000000Z` e o browser reinterpreta pra BRT,
+    // mudando o dia e a hora que o corretor vê no card/calendário.
     protected $casts = [
-        'starts_at'    => 'datetime',
-        'ends_at'      => 'datetime',
-        'due_at'       => 'datetime',
-        'completed_at' => 'datetime',
-        'reminder_at'  => 'datetime',
+        'starts_at'    => 'datetime:Y-m-d H:i:s',
+        'ends_at'      => 'datetime:Y-m-d H:i:s',
+        'due_at'       => 'datetime:Y-m-d H:i:s',
+        'completed_at' => 'datetime:Y-m-d H:i:s',
+        'reminder_at'  => 'datetime:Y-m-d H:i:s',
     ];
 
     /* ------------------------------------------------------------------

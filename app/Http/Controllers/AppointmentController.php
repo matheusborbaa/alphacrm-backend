@@ -159,19 +159,32 @@ public function byMonth(Request $request)
 
     $user = auth()->user();
 
-    $appointments = Appointment::whereYear('starts_at', $request->year)
-        ->whereMonth('starts_at', $request->month)
+    // Pega tudo no mês tanto pelo starts_at (visitas/reuniões) quanto pelo
+    // due_at (tasks/follow-ups). Sem essa union, tasks com só due_at nunca
+    // apareciam no calendário, apesar de aparecerem na lista.
+    $appointments = Appointment::where(function ($q) use ($request) {
+            $q->where(function ($q2) use ($request) {
+                $q2->whereYear('starts_at', $request->year)
+                   ->whereMonth('starts_at', $request->month);
+            })->orWhere(function ($q2) use ($request) {
+                $q2->whereYear('due_at', $request->year)
+                   ->whereMonth('due_at', $request->month);
+            });
+        })
         ->when(!in_array($user->role, ['admin','gestor']), function ($q) use ($user) {
             $q->where('user_id', $user->id);
         })
-        ->get(['id','starts_at','type','status']);
+        ->get(['id','starts_at','due_at','type','status']);
 
     // Marca itens atrasados pra que o calendário mostre o indicador vermelho.
+    // Considera o prazo efetivo (due_at tem prioridade pra tasks; starts_at
+    // pra visitas).
     $now = \Carbon\Carbon::now();
     $appointments->transform(function ($app) use ($now) {
+        $effective = $app->due_at ?: $app->starts_at;
         $app->overdue = $app->status === 'pending'
-            && $app->starts_at
-            && $app->starts_at->lt($now);
+            && $effective
+            && $effective->lt($now);
         return $app;
     });
 
