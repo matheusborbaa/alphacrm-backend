@@ -1,0 +1,464 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Commission;
+use App\Models\CommissionComment;
+use App\Models\FinanceEntry;
+use App\Models\Lead;
+use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
+
+/**
+ * Sprint 3.7b — Gestão completa de comissões.
+ *
+ * Endpoints:
+ *   GET    /commissions                      lista com filtros
+ *   GET    /commissions/summary              KPIs (total bruto, pago,
+ *                                            pendente, receita Alpha)
+ *   GET    /commissions/{id}                 detalhe + lead + comments
+ *   PUT    /commissions/{id}                 edita %/valor/notes/expected
+ *   POST   /commissions/{id}/confirm         draft → pending (+ FinanceEntry)
+ *   POST   /commissions/{id}/approve         pending → approved
+ *   POST   /commissions/{id}/pay             → paid + comprovante opcional
+ *   POST   /commissions/{id}/partial         → partial (com amount parcial)
+ *   POST   /commissions/{id}/cancel          → cancelled + motivo
+ *   POST   /commissions/{id}/comments        adiciona comentário
+ *   GET    /commissions/{id}/comments        lista thread
+ *
+ * Autorização:
+ *   - admin/gestor: tudo
+ *   - corretor: só GET das próprias + POST comments
+ */
+class CommissionController extends Controller
+{
+    /* ==================================================================
+     * LISTA
+     * ================================================================== */
+    public function index(Request $request)
+    {
+        $user = $request->user();
+
+        $query = Commission::query()
+            ->with([
+                'lead:id,name,empreendimento_id',
+                'lead.empreendimento:id,name',
+                'corretor:id,name',
+            ])
+            ->when($user->role === 'corretor', fn ($q) => $q->where('user_id', $user->id));
+
+        // Status — aceita CSV pra múltiplos selecionados.
+        if ($request->filled('status')) {
+            $statuses = $this->csv($request->input('status'));
+            if (!empty($statuses)) $query->whereIn('status', $statuses);
+        }
+
+        if ($request->filled('corretor')) {
+            // Admin/gestor filtram por corretor; corretor não pode
+            // (index já restringe user_id pra ele mesmo).
+            if (in_array($user->role, ['admin', 'gestor'], true)) {
+                $query->where('user_id', (int) $request->corretor);
+            }
+        }
+
+        if ($request->filled('empreendimento')) {
+            $empId = (int) $request->empreendimento;
+            $query->whereHas('lead', fn ($q) => $q->where('empreendimento_id', $empId));
+        }
+
+        if ($request->filled('search')) {
+            $s = $request->search;
+            $query->whereHas('lead', fn ($q) => $q->where('name', 'like', "%{$s}%"));
+        }
+
+        if ($request->filled('from')) {
+            $query->whereDate('created_at', '>=', $request->from);
+        }
+        if ($request->filled('to')) {
+            $query->whereDate('created_at', '<=', $request->to);
+        }
+
+        $perPage = min(100, max(10, (int) $request->input('per_page', 25)));
+
+        return response()->json($query->orderByDesc('created_at')->paginate($perPage));
+    }
+
+    /* ==================================================================
+     * SUMMARY — cards do topo
+     * ================================================================== */
+    public function summary(Request $request)
+    {
+        $user = $request->user();
+
+        $base = Commission::query()
+            ->when($user->role === 'corretor', fn ($q) => $q->where('user_id', $user->id));
+
+        if ($request->filled('from')) $base->whereDate('created_at', '>=', $request->from);
+        if ($request->filled('to'))   $base->whereDate('created_at', '<=', $request->to);
+
+        $clone = fn () => (clone $base);
+
+        // Comissões "vivas" (não draft/cancelled) pra contas de totais.
+        $live = $clone()->whereNotIn('status', [
+            Commission::STATUS_DRAFT,
+            Commission::STATUS_CANCELLED,
+        ]);
+
+        $totalSales       = (clone $live)->sum('sale_value');
+        $totalCommissions = (clone $live)->sum('commission_value');
+
+        return response()->json([
+            'total_draft'     => (float) $clone()->where('status', Commission::STATUS_DRAFT)->sum('commission_value'),
+            'total_pending'   => (float) $clone()->where('status', Commission::STATUS_PENDING)->sum('commission_value'),
+            'total_approved'  => (float) $clone()->where('status', Commission::STATUS_APPROVED)->sum('commission_value'),
+            'total_partial'   => (float) $clone()->where('status', Commission::STATUS_PARTIAL)->sum('commission_value'),
+            'total_paid'      => (float) $clone()->where('status', Commission::STATUS_PAID)->sum('commission_value'),
+
+            'count_draft'     => (int)   $clone()->where('status', Commission::STATUS_DRAFT)->count(),
+            'count_pending'   => (int)   $clone()->where('status', Commission::STATUS_PENDING)->count(),
+            'count_approved'  => (int)   $clone()->where('status', Commission::STATUS_APPROVED)->count(),
+            'count_paid'      => (int)   $clone()->where('status', Commission::STATUS_PAID)->count(),
+
+            'total_sales'        => (float) $totalSales,
+            'total_commissions'  => (float) $totalCommissions,
+            // "Receita Alpha" = valor que fica pra empresa. No modelo atual,
+            // sale_value é o VGV total e commission_value é o que o corretor
+            // recebe. A diferença NÃO é exatamente lucro da Alpha (construtora
+            // pega a maior parte), mas representa "o que NÃO saiu como
+            // comissão do corretor" — útil pra ter uma noção.
+            'alpha_net_revenue'  => (float) ($totalSales - $totalCommissions),
+        ]);
+    }
+
+    /* ==================================================================
+     * DETAIL
+     * ================================================================== */
+    public function show(Request $request, int $id)
+    {
+        $user = $request->user();
+
+        $commission = Commission::with([
+            'lead:id,name,phone,email,empreendimento_id,value',
+            'lead.empreendimento:id,name,commission_percentage',
+            'corretor:id,name,email',
+            'approver:id,name',
+            'canceller:id,name',
+            'comments.user:id,name',
+        ])->findOrFail($id);
+
+        $this->authorizeRead($commission, $user);
+
+        // Adiciona URL pública do comprovante se houver (acesso restrito por
+        // auth:sanctum — Storage::url em `public` disk é ok pra staging).
+        $data = $commission->toArray();
+        $data['payment_receipt_url'] = $commission->payment_receipt_path
+            ? Storage::url($commission->payment_receipt_path)
+            : null;
+
+        return response()->json($data);
+    }
+
+    /* ==================================================================
+     * UPDATE — edita campos editáveis
+     * ================================================================== */
+    public function update(Request $request, int $id)
+    {
+        $user = $request->user();
+        $this->ensureManager($user);
+
+        $commission = Commission::findOrFail($id);
+
+        // Depois de `paid` ou `cancelled` não deixa mais editar — seria
+        // mexer em registro contábil já fechado. Se precisar ajustar,
+        // cancela e cria uma nova manual.
+        if (in_array($commission->status, [
+            Commission::STATUS_PAID,
+            Commission::STATUS_CANCELLED,
+        ], true)) {
+            return response()->json([
+                'message' => 'Comissão quitada/cancelada não pode mais ser editada.',
+            ], 422);
+        }
+
+        $data = $request->validate([
+            'commission_percentage' => 'nullable|numeric|min:0|max:100',
+            'commission_value'      => 'nullable|numeric|min:0',
+            'sale_value'            => 'nullable|numeric|min:0',
+            'expected_payment_date' => 'nullable|date',
+            'notes'                 => 'nullable|string|max:2000',
+        ]);
+
+        // Se o gestor só enviou o %, recalcula o value. Se enviou value,
+        // usa aquele (pode ter ajustado manualmente independente do %).
+        if (isset($data['commission_percentage']) && !isset($data['commission_value'])) {
+            $sale = $data['sale_value'] ?? $commission->sale_value;
+            $data['commission_value'] = round($sale * $data['commission_percentage'] / 100, 2);
+        }
+
+        $commission->fill($data)->save();
+
+        return response()->json($commission->fresh());
+    }
+
+    /* ==================================================================
+     * TRANSITIONS
+     * ================================================================== */
+
+    /** draft → pending. Gera a fatura + registra entrada financeira. */
+    public function confirm(Request $request, int $id)
+    {
+        $user = $request->user();
+        $this->ensureManager($user);
+
+        $commission = Commission::findOrFail($id);
+        $this->assertStatus($commission, [Commission::STATUS_DRAFT]);
+
+        DB::transaction(function () use ($commission, $user) {
+            $commission->status = Commission::STATUS_PENDING;
+            if (!$commission->expected_payment_date) {
+                // Default: 30 dias a partir da confirmação.
+                $commission->expected_payment_date = now()->addDays(30);
+            }
+            $commission->save();
+
+            // Registra a ENTRADA da venda no módulo financeiro.
+            FinanceEntry::create([
+                'direction'      => FinanceEntry::DIRECTION_IN,
+                'category'       => FinanceEntry::CATEGORY_SALE,
+                'amount'         => $commission->sale_value,
+                'entry_date'     => now()->toDateString(),
+                'reference_type' => Commission::class,
+                'reference_id'   => $commission->id,
+                'created_by'     => $user->id,
+                'description'    => "Venda confirmada — comissão #{$commission->id}",
+            ]);
+        });
+
+        return response()->json($commission->fresh());
+    }
+
+    /** pending → approved. Gestor revisou %/valor final. */
+    public function approve(Request $request, int $id)
+    {
+        $user = $request->user();
+        $this->ensureManager($user);
+
+        $commission = Commission::findOrFail($id);
+        $this->assertStatus($commission, [Commission::STATUS_PENDING]);
+
+        $commission->status      = Commission::STATUS_APPROVED;
+        $commission->approved_at = now();
+        $commission->approved_by = $user->id;
+        $commission->save();
+
+        return response()->json($commission->fresh());
+    }
+
+    /** approved/partial → paid. Aceita upload de comprovante opcional. */
+    public function pay(Request $request, int $id)
+    {
+        $user = $request->user();
+        $this->ensureManager($user);
+
+        $commission = Commission::findOrFail($id);
+        $this->assertStatus($commission, [
+            Commission::STATUS_APPROVED,
+            Commission::STATUS_PARTIAL,
+            // Permite admin adiantar direto de pending pra paid em caso
+            // excepcional, sem passar por approve.
+            Commission::STATUS_PENDING,
+        ]);
+
+        $data = $request->validate([
+            'paid_at' => 'nullable|date',
+            'receipt' => 'nullable|file|mimes:pdf,jpg,jpeg,png,webp|max:5120',
+        ]);
+
+        DB::transaction(function () use ($commission, $data, $user, $request) {
+            if ($request->hasFile('receipt')) {
+                // Apaga comprovante anterior se houver.
+                if ($commission->payment_receipt_path) {
+                    Storage::disk('public')->delete($commission->payment_receipt_path);
+                }
+                $path = $request->file('receipt')->store('commission_receipts', 'public');
+                $commission->payment_receipt_path = $path;
+            }
+
+            $commission->status  = Commission::STATUS_PAID;
+            $commission->paid_at = $data['paid_at'] ?? now()->toDateString();
+            $commission->save();
+
+            // Registra a SAÍDA (comissão paga pro corretor) no financeiro.
+            FinanceEntry::create([
+                'direction'      => FinanceEntry::DIRECTION_OUT,
+                'category'       => FinanceEntry::CATEGORY_COMMISSION,
+                'amount'         => $commission->commission_value,
+                'entry_date'     => Carbon::parse($commission->paid_at)->toDateString(),
+                'reference_type' => Commission::class,
+                'reference_id'   => $commission->id,
+                'created_by'     => $user->id,
+                'description'    => "Comissão paga — corretor #{$commission->user_id}",
+            ]);
+        });
+
+        return response()->json($commission->fresh());
+    }
+
+    /** approved → partial. Marca pagamento parcial (sem data de quitação). */
+    public function partial(Request $request, int $id)
+    {
+        $user = $request->user();
+        $this->ensureManager($user);
+
+        $commission = Commission::findOrFail($id);
+        $this->assertStatus($commission, [
+            Commission::STATUS_APPROVED,
+            Commission::STATUS_PARTIAL,
+            Commission::STATUS_PENDING,
+        ]);
+
+        $data = $request->validate([
+            'amount' => 'required|numeric|min:0.01',
+            'notes'  => 'nullable|string|max:500',
+        ]);
+
+        DB::transaction(function () use ($commission, $data, $user) {
+            $commission->status = Commission::STATUS_PARTIAL;
+            if ($data['notes'] ?? null) {
+                $commission->notes = trim(($commission->notes ? $commission->notes . "\n\n" : '')
+                    . "Pagamento parcial R$ " . number_format((float) $data['amount'], 2, ',', '.')
+                    . ": " . $data['notes']);
+            }
+            $commission->save();
+
+            FinanceEntry::create([
+                'direction'      => FinanceEntry::DIRECTION_OUT,
+                'category'       => FinanceEntry::CATEGORY_COMMISSION,
+                'amount'         => $data['amount'],
+                'entry_date'     => now()->toDateString(),
+                'reference_type' => Commission::class,
+                'reference_id'   => $commission->id,
+                'created_by'     => $user->id,
+                'description'    => "Comissão parcial — corretor #{$commission->user_id}",
+                'notes'          => $data['notes'] ?? null,
+            ]);
+        });
+
+        return response()->json($commission->fresh());
+    }
+
+    /** Qualquer estado pré-pago → cancelled. Estorna entrada se já tiver. */
+    public function cancel(Request $request, int $id)
+    {
+        $user = $request->user();
+        $this->ensureManager($user);
+
+        $commission = Commission::findOrFail($id);
+
+        if ($commission->status === Commission::STATUS_CANCELLED) {
+            return response()->json(['message' => 'Já está cancelada.'], 422);
+        }
+
+        $data = $request->validate([
+            'reason' => 'required|string|max:500',
+        ]);
+
+        DB::transaction(function () use ($commission, $data, $user) {
+            $wasLive = $commission->isLive();
+
+            $commission->status        = Commission::STATUS_CANCELLED;
+            $commission->cancelled_at  = now();
+            $commission->cancelled_by  = $user->id;
+            $commission->cancel_reason = $data['reason'];
+            $commission->save();
+
+            // Se já tinha entries, cria estornos (append-only, nunca deleta).
+            if ($wasLive) {
+                $entries = FinanceEntry::for($commission)->get();
+                foreach ($entries as $e) {
+                    FinanceEntry::create([
+                        'direction'      => $e->direction === 'in' ? 'out' : 'in',
+                        'category'       => FinanceEntry::CATEGORY_REFUND,
+                        'amount'         => $e->amount,
+                        'entry_date'     => now()->toDateString(),
+                        'reference_type' => Commission::class,
+                        'reference_id'   => $commission->id,
+                        'created_by'     => $user->id,
+                        'description'    => "Estorno — comissão cancelada (#{$commission->id})",
+                        'notes'          => $data['reason'],
+                    ]);
+                }
+            }
+        });
+
+        return response()->json($commission->fresh());
+    }
+
+    /* ==================================================================
+     * COMMENTS
+     * ================================================================== */
+
+    public function comments(Request $request, int $id)
+    {
+        $user = $request->user();
+        $commission = Commission::findOrFail($id);
+        $this->authorizeRead($commission, $user);
+
+        $comments = $commission->comments()->with('user:id,name')->get();
+        return response()->json($comments);
+    }
+
+    public function addComment(Request $request, int $id)
+    {
+        $user = $request->user();
+        $commission = Commission::findOrFail($id);
+        $this->authorizeRead($commission, $user);
+
+        $data = $request->validate([
+            'body' => 'required|string|max:2000',
+        ]);
+
+        $comment = CommissionComment::create([
+            'commission_id' => $commission->id,
+            'user_id'       => $user->id,
+            'body'          => $data['body'],
+        ]);
+
+        return response()->json($comment->load('user:id,name'), 201);
+    }
+
+    /* ==================================================================
+     * HELPERS
+     * ================================================================== */
+
+    private function csv($raw): array
+    {
+        $arr = is_array($raw) ? $raw : explode(',', (string) $raw);
+        return array_values(array_filter(array_map('trim', $arr)));
+    }
+
+    private function ensureManager($user): void
+    {
+        if (!in_array($user->role, ['admin', 'gestor'], true)) {
+            abort(403, 'Apenas admin/gestor podem executar essa ação.');
+        }
+    }
+
+    private function authorizeRead(Commission $commission, $user): void
+    {
+        if (in_array($user->role, ['admin', 'gestor'], true)) return;
+        if ((int) $commission->user_id === (int) $user->id)     return;
+        abort(403, 'Você não tem acesso a essa comissão.');
+    }
+
+    private function assertStatus(Commission $c, array $allowed): void
+    {
+        if (!in_array($c->status, $allowed, true)) {
+            abort(422, "Transição inválida a partir de '{$c->status}'.");
+        }
+    }
+}

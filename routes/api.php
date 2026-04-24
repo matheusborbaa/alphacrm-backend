@@ -857,6 +857,21 @@ Route::middleware(['auth:sanctum', 'role:admin,gestor,corretor'])->group(functio
     // O PUT abaixo é restrito a admin dentro do próprio controller.
     Route::get('/task-kind-colors',          [\App\Http\Controllers\TaskKindColorController::class, 'index']);
     Route::put('/task-kind-colors/{kind}',   [\App\Http\Controllers\TaskKindColorController::class, 'update']);
+
+    // Sprint 3.7b — Gestão de comissões.
+    // CommissionController faz authorization interna: corretor só vê as dele;
+    // admin/gestor têm acesso completo + transições.
+    Route::get('/commissions',                 [\App\Http\Controllers\CommissionController::class, 'index']);
+    Route::get('/commissions/summary',         [\App\Http\Controllers\CommissionController::class, 'summary']);
+    Route::get('/commissions/{id}',            [\App\Http\Controllers\CommissionController::class, 'show']);
+    Route::put('/commissions/{id}',            [\App\Http\Controllers\CommissionController::class, 'update']);
+    Route::post('/commissions/{id}/confirm',   [\App\Http\Controllers\CommissionController::class, 'confirm']);
+    Route::post('/commissions/{id}/approve',   [\App\Http\Controllers\CommissionController::class, 'approve']);
+    Route::post('/commissions/{id}/pay',       [\App\Http\Controllers\CommissionController::class, 'pay']);
+    Route::post('/commissions/{id}/partial',   [\App\Http\Controllers\CommissionController::class, 'partial']);
+    Route::post('/commissions/{id}/cancel',    [\App\Http\Controllers\CommissionController::class, 'cancel']);
+    Route::get('/commissions/{id}/comments',   [\App\Http\Controllers\CommissionController::class, 'comments']);
+    Route::post('/commissions/{id}/comments',  [\App\Http\Controllers\CommissionController::class, 'addComment']);
 });
 
 

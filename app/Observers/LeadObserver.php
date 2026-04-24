@@ -139,13 +139,17 @@ class LeadObserver
 
         $commissionValue = ($saleValue * $percentage) / 100;
 
+        // Sprint 3.7a — comissão nasce como `draft` (provisória). O
+        // gestor/financeiro precisa confirmar a venda em /comissoes.php
+        // pra ela virar `pending` e gerar o lançamento financeiro. Assim
+        // venda desfeita não polui relatórios com comissão fantasma.
         Commission::create([
             'lead_id'               => $lead->id,
             'user_id'               => $lead->assigned_user_id,
             'sale_value'            => $saleValue,
             'commission_percentage' => $percentage,
             'commission_value'      => $commissionValue,
-            'status'                => 'pending',
+            'status'                => Commission::STATUS_DRAFT,
         ]);
 
         AuditService::log(
