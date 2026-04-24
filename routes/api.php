@@ -432,30 +432,56 @@ Route::get('/search', function (Request $request) {
 
 Route::get('/dashboard/appointments', function (Request $request) {
 
-    $periodo = $request->get('periodo', 'mensal');
-
-    switch ($periodo) {
-        case 'diario':
-            $start = now()->startOfDay();
-            $end   = now()->endOfDay();
-            break;
-
-        case 'semanal':
-            $start = now()->startOfWeek();
-            $end   = now()->endOfWeek();
-            break;
-
-        default:
-            $start = now()->startOfMonth();
-            $end   = now()->endOfMonth();
-            break;
+    // Sprint 3.1b — "Próximas Tarefas" do dashboard.
+    //
+    // Antes: filtrava só por starts_at num intervalo fixo (diário/semanal/mensal)
+    // e NÃO filtrava por user — o que deixava o card:
+    //   1) vazio quase sempre (tarefas novas usam due_at, não starts_at);
+    //   2) vazando tarefas de outros corretores pro admin/gestor (e pro
+    //      corretor, qualquer horário errado no sistema expõe tarefa alheia);
+    //   3) misturando tarefas já concluídas.
+    //
+    // Agora:
+    //   - Só do user autenticado (admin/gestor veem as PRÓPRIAS tarefas; pra
+    //     visão de time, a /agenda.php tem filtro de usuário).
+    //   - Não concluídas (completed_at IS NULL).
+    //   - Janela: de 7 dias atrás (pra mostrar atrasadas) até 30 dias à frente.
+    //   - Usa COALESCE(due_at, starts_at) pra ordenar por "quando" real,
+    //     cobrindo tanto tarefas (due_at) quanto agendamentos (starts_at).
+    $user = $request->user();
+    if (!$user) {
+        return response()->json(['message' => 'Não autenticado'], 401);
     }
 
-    return Appointment::with('lead')
-        ->whereBetween('starts_at', [$start, $end]) // 🔥 FILTRO AQUI
-        ->orderBy('starts_at', 'asc')
+    $windowStart = now()->subDays(7);
+    $windowEnd   = now()->addDays(30);
+
+    $rows = Appointment::with('lead:id,name')
+        ->where('user_id', $user->id)
+        ->whereNull('completed_at')
+        ->where(function ($q) use ($windowStart, $windowEnd) {
+            $q->whereBetween('due_at',    [$windowStart, $windowEnd])
+              ->orWhereBetween('starts_at', [$windowStart, $windowEnd]);
+        })
+        ->orderByRaw('COALESCE(due_at, starts_at) ASC')
         ->limit(10)
-        ->get();
+        ->get(['id', 'lead_id', 'title', 'type', 'task_kind',
+               'due_at', 'starts_at', 'completed_at']);
+
+    // Normaliza o campo "when" pro frontend não precisar escolher entre
+    // due_at e starts_at (cada tarefa tem um ou outro, às vezes os dois).
+    return $rows->map(function ($a) {
+        $when = $a->due_at ?? $a->starts_at;
+        return [
+            'id'           => $a->id,
+            'title'        => $a->title,
+            'type'         => $a->type,
+            'task_kind'    => $a->task_kind,
+            'when'         => optional($when)->toIso8601String(),
+            'is_overdue'   => $when && $when->isPast(),
+            'lead'         => $a->lead ? ['id' => $a->lead->id, 'name' => $a->lead->name] : null,
+        ];
+    });
 });
 
 // /empreendimentos POST já é coberto por Route::apiResource acima (grupo
