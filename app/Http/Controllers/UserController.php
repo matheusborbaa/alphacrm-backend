@@ -386,6 +386,26 @@ class UserController extends Controller
     }
 
     /**
+     * POST /users/{user}/photo — admin/gestor troca a foto de qualquer corretor.
+     * Roteada só com middleware role:admin,gestor (rotas protegidas em api.php).
+     * Aceita o mesmo input 'avatar' do self-service pra reaproveitar o FormData.
+     */
+    public function uploadPhoto(Request $request, User $user)
+    {
+        $request->validate([
+            'avatar' => 'required|image|max:2048',
+        ]);
+
+        $path = $request->file('avatar')->store('avatars', 'public');
+        $user->update(['avatar' => '/storage/' . $path]);
+
+        return response()->json([
+            'success' => true,
+            'user'    => $user->fresh(),
+        ]);
+    }
+
+    /**
      * POST /users/me/status — o próprio corretor muda o status atual.
      *
      * Valores aceitos: 'disponivel' | 'ocupado' | 'offline'.

@@ -304,6 +304,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/users/{user}',                 [UserController::class, 'destroy']);
     Route::post  ('/users/{user}/reactivate',      [UserController::class, 'reactivate']);
     Route::post  ('/users/{user}/send-invite',     [UserController::class, 'sendInvite']);
+    Route::post  ('/users/{user}/photo',           [UserController::class, 'uploadPhoto'])
+        ->middleware('role:admin,gestor');
 });
 
 Route::middleware(['auth:sanctum', 'role:admin,gestor,corretor'])->group(function () {
