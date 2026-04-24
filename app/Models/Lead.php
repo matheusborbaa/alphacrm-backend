@@ -125,6 +125,17 @@ public function histories()
         return $this->hasMany(LeadInteraction::class);
     }
 
+    /**
+     * Appointments vinculados a este lead — tarefas (type='task'),
+     * visitas (type='visit'), ligações (type='call'), reuniões
+     * (type='meeting'). Usado pelo validator de regras de obrigatoriedade
+     * pra checar se o lead tem tarefa registrada/concluída do tipo exigido.
+     */
+    public function appointments(): HasMany
+    {
+        return $this->hasMany(Appointment::class);
+    }
+
 
 
     // colocado por ultimo
