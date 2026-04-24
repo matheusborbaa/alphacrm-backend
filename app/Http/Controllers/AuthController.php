@@ -4,14 +4,17 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Validation\Rules\Password as PasswordRule;
 use App\Models\User;
+use App\Models\Setting;
 use App\Models\RefreshToken;
 use App\Mail\ResetPasswordMail;
+use App\Support\DeviceLabel;
 
 class AuthController extends Controller
 {
@@ -19,8 +22,9 @@ class AuthController extends Controller
     public function login(Request $request)
     {
         $request->validate([
-            'email' => 'required|email',
-            'password' => 'required'
+            'email'              => 'required|email',
+            'password'           => 'required',
+            'revoke_session_id'  => 'nullable|integer',
         ]);
 
         $user = User::where('email', $request->email)->first();
@@ -37,38 +41,106 @@ class AuthController extends Controller
             ], 401);
         }
 
-        // Remove tokens antigos
-        $user->tokens()->delete();
+        // Sprint 3.0a — limite de sessões simultâneas.
+        // Se veio revoke_session_id, o user já escolheu qual encerrar pelo
+        // modal do login (após um 409 anterior); derruba essa token específica
+        // e segue pra criar a nova. Caso contrário, checa o limite.
+        if ($request->filled('revoke_session_id')) {
+            $user->tokens()->where('id', (int) $request->revoke_session_id)->delete();
+        }
+
+        $maxSessions = max(1, (int) Setting::get('max_concurrent_sessions', 2));
+        $activeCount = $user->tokens()->count();
+
+        if ($activeCount >= $maxSessions) {
+            // Devolve as sessões ativas pro frontend renderizar o modal
+            // "Escolha qual encerrar pra entrar". NÃO cria token novo aqui.
+            $sessions = $user->tokens()
+                ->orderByDesc('last_used_at')
+                ->get()
+                ->map(fn($t) => [
+                    'id'            => $t->id,
+                    'device_label'  => $t->device_label ?: 'Dispositivo desconhecido',
+                    'ip_address'    => $t->ip_address,
+                    'last_used_at'  => optional($t->last_used_at)->toIso8601String(),
+                    'created_at'    => optional($t->created_at)->toIso8601String(),
+                ]);
+
+            return response()->json([
+                'message'              => 'Limite de sessões simultâneas atingido.',
+                'max_sessions'         => $maxSessions,
+                'active_sessions'      => $sessions,
+                'session_limit_reached' => true,
+            ], 409);
+        }
+
+        // OK, pode criar o token. Apagamos só refresh tokens do próprio user
+        // (não os access tokens — esses convivem até o limite).
         RefreshToken::where('user_id', $user->id)->delete();
 
-        // Access Token (15 minutos conceitual)
-        $accessToken = $user->createToken('crm-token')->plainTextToken;
-        $id = $user->id;
-        $name = $user->name;
-        $email = $user->email;
-        $role = $user->role;
+        $accessToken  = $user->createToken('crm-token');
+        $plainToken   = $accessToken->plainTextToken;
+        $tokenModel   = $accessToken->accessToken;
+
+        // Enriquece o token com metadados de dispositivo + marca reauth fresco.
+        $tokenModel->forceFill([
+            'ip_address'                 => $request->ip(),
+            'user_agent'                 => substr((string) $request->userAgent(), 0, 500),
+            'device_label'               => DeviceLabel::fromUserAgent($request->userAgent()),
+            'last_confirmed_password_at' => Carbon::now(),
+        ])->save();
+
         // Refresh Token (7 dias)
         $refreshToken = Str::random(64);
 
         RefreshToken::create([
-            'user_id' => $user->id,
-            'token' => hash('sha256', $refreshToken),
-            'expires_at' => now()->addDays(7)
+            'user_id'    => $user->id,
+            'token'      => hash('sha256', $refreshToken),
+            'expires_at' => now()->addDays(7),
         ]);
 
         return response()->json([
-    'access_token' => $accessToken,
-    'refresh_token' => $refreshToken,
-    'expires_in' => 900,
-    'teste' => 'Matheus2',
+            'access_token'  => $plainToken,
+            'refresh_token' => $refreshToken,
+            'expires_in'    => 900,
 
-    'user' => [
-        'id' => $id,
-        'name' => $name,
-        'email' => $email,
-        'role' => $role ?? null
-        ]
-    ]);
+            'user' => [
+                'id'    => $user->id,
+                'name'  => $user->name,
+                'email' => $user->email,
+                'role'  => $user->role ?? null,
+            ],
+        ]);
+    }
+
+    /**
+     * Sprint 3.0a — Revalida o token atual pedindo só a senha.
+     * Usado pelo frontend quando o middleware EnsureFreshAuthentication
+     * devolve 423. NÃO invalida o token; só bate o timestamp
+     * last_confirmed_password_at pra now() pra liberar a próxima request.
+     */
+    public function confirmPassword(Request $request)
+    {
+        $request->validate([
+            'password' => 'required|string',
+        ]);
+
+        $user  = $request->user();
+        $token = $user?->currentAccessToken();
+
+        if (!$user || !$token) {
+            return response()->json(['message' => 'Não autenticado'], 401);
+        }
+
+        if (!Hash::check($request->password, $user->password)) {
+            return response()->json(['message' => 'Senha incorreta.'], 401);
+        }
+
+        // Bate o timestamp — o middleware vai aprovar as próximas requests
+        // pelo idle_minutes completo.
+        $token->forceFill(['last_confirmed_password_at' => Carbon::now()])->save();
+
+        return response()->json(['ok' => true]);
     }
 
 

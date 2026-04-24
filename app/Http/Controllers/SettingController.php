@@ -123,6 +123,28 @@ class SettingController extends Controller
             'default' => true,
         ],
 
+        // =================== SESSÕES SIMULTÂNEAS (Sprint 3.0a) ==========
+        // Quantidade máxima de tokens Sanctum vivos por user. No login,
+        // AuthController conta os tokens; se atingiu, devolve 409 com a
+        // lista pra o user escolher qual encerrar.
+        'max_concurrent_sessions' => [
+            'type'    => 'int',
+            'default' => 2,
+            'min'     => 1,
+            'max'     => 10,
+        ],
+
+        // Minutos de ociosidade antes da próxima ação sensível pedir senha
+        // de novo. 0 desliga. Checado pelo middleware fresh-auth — se passou
+        // do threshold, devolve 423 e o frontend abre modal preservando o
+        // estado atual da página (formulários, uploads etc).
+        'password_confirm_idle_minutes' => [
+            'type'    => 'int',
+            'default' => 30,
+            'min'     => 0,
+            'max'     => 1440,
+        ],
+
         // =================== ALERTAS DE CAPACIDADE DO SERVIDOR ==========
         // Thresholds fixos e sempre-ativos (75% disco, 90% RAM) — a UI
         // não expõe configuração pra manter a operação previsível. Ver

@@ -149,6 +149,15 @@ Route::post('/auth/refresh', [AuthController::class, 'refresh']);
 Route::get('/auth/permissions', [AuthController::class, 'permissions'])
     ->middleware('auth:sanctum');
 
+// Sprint 3.0a — sessões + reauth. Essas rotas NÃO recebem o middleware
+// 'fresh-auth' — senão vira deadlock (o user precisaria estar "fresh"
+// pra poder confirmar a senha que o torna fresh).
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/auth/sessions',             [\App\Http\Controllers\SessionsController::class, 'index']);
+    Route::delete('/auth/sessions/{token}',  [\App\Http\Controllers\SessionsController::class, 'destroy']);
+    Route::post('/auth/confirm-password',    [AuthController::class, 'confirmPassword']);
+});
+
 Route::get(
     '/admin/empreendimentos/{empreendimento}/fields',
     [EmpreendimentoFieldValueController::class, 'index']
