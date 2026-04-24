@@ -838,7 +838,9 @@ Route::middleware(['auth:sanctum', 'role:admin,gestor'])->group(function () {
 | Endpoint consolidado da Home (financeiro + gamificação + metas do mês).
 */
 Route::middleware(['auth:sanctum', 'role:admin,gestor,corretor'])->group(function () {
-    Route::get('/home/summary', [HomeController::class, 'summary']);
+    Route::get('/home/summary',                [HomeController::class, 'summary']);
+    // Sprint 3.5b — Minhas Próximas Comissões.
+    Route::get('/dashboard/next-commissions',  [HomeController::class, 'nextCommissions']);
 });
 
 

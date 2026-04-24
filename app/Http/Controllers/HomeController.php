@@ -34,10 +34,20 @@ class HomeController extends Controller
     public function summary(Request $request)
     {
         $user    = $request->user();
-        $start   = now()->startOfMonth();
-        $end     = now()->endOfMonth();
-        $mes     = now()->month;
-        $ano     = now()->year;
+
+        // Sprint 3.5b — bloco Financeiro tem filtro próprio (diario/semanal/
+        // mensal). O resto continua usando o mês corrente como antes — metas
+        // mensais e ranking do mês não fazem sentido diário/semanal.
+        $periodo = (string) $request->input('periodo', 'mensal');
+        [$finStart, $finEnd] = match ($periodo) {
+            'diario'  => [now()->startOfDay(),   now()->endOfDay()],
+            'semanal' => [now()->startOfWeek(),  now()->endOfWeek()],
+            default   => [now()->startOfMonth(), now()->endOfMonth()],
+        };
+        $start = now()->startOfMonth();
+        $end   = now()->endOfMonth();
+        $mes   = now()->month;
+        $ano   = now()->year;
 
         /* ----------------------------------------------------
          | FINANCEIRO — escopo por user (admin/gestor enxergam
@@ -45,14 +55,14 @@ class HomeController extends Controller
          | equipe, já existe /reports/ranking).
          |---------------------------------------------------- */
         $comissQuery = Commission::where('user_id', $user->id)
-            ->whereBetween('created_at', [$start, $end]);
+            ->whereBetween('created_at', [$finStart, $finEnd]);
 
         $comissPendente = (clone $comissQuery)->where('status', 'pending')->sum('commission_value');
         $comissRecebido = (clone $comissQuery)->where('status', 'paid')->sum('commission_value');
 
-        // Vendas fechadas (status 'Vendido') do mês, atribuídas ao user
+        // Vendas fechadas (status 'Vendido') no período, atribuídas ao user
         $soldLeads = Lead::where('assigned_user_id', $user->id)
-            ->whereBetween('status_changed_at', [$start, $end])
+            ->whereBetween('status_changed_at', [$finStart, $finEnd])
             ->whereHas('status', fn($q) => $q->where('name', 'Vendido'))
             ->get(['id', 'value']);
 
@@ -198,5 +208,68 @@ class HomeController extends Controller
                 'top5' => $top5,
             ],
         ]);
+    }
+
+    /**
+     * GET /dashboard/next-commissions
+     *
+     * Sprint 3.5b — alimenta a lista "Minhas Próximas Comissões" no bloco
+     * Financeiro. Retorna array ordenado por data prevista (expected_payment_date)
+     * ou, na falta dela, created_at + 30 dias.
+     *
+     * Payload por item:
+     *   - id
+     *   - expected_date  (YYYY-MM-DD)
+     *   - client_name    (nome do lead)
+     *   - empreendimento_name
+     *   - vgv            (sale_value da venda — bate com o mockup da pág 6)
+     *   - commission_value
+     *   - status         'paid' | 'partial' | 'pending'
+     */
+    public function nextCommissions(Request $request)
+    {
+        $user    = $request->user();
+        $periodo = (string) $request->input('periodo', 'mensal');
+
+        // Mesmo esquema de períodos do summary. Corretor vê só as dele.
+        [$start, $end] = match ($periodo) {
+            'diario'  => [now()->startOfDay(),   now()->endOfDay()],
+            'semanal' => [now()->startOfWeek(),  now()->endOfWeek()],
+            default   => [now()->startOfMonth(), now()->endOfMonth()],
+        };
+
+        $rows = Commission::where('user_id', $user->id)
+            ->with([
+                'lead:id,name,empreendimento_id',
+                'lead.empreendimento:id,name',
+            ])
+            ->where(function ($q) use ($start, $end) {
+                // Cobre comissões com expected_date no período OU comissões
+                // criadas no período (fallback quando a imobiliária ainda não
+                // definiu expected_payment_date nos registros antigos).
+                $q->whereBetween('expected_payment_date', [$start, $end])
+                  ->orWhere(function ($q2) use ($start, $end) {
+                      $q2->whereNull('expected_payment_date')
+                         ->whereBetween('created_at', [$start, $end]);
+                  });
+            })
+            ->orderByRaw('COALESCE(expected_payment_date, DATE_ADD(created_at, INTERVAL 30 DAY)) ASC')
+            ->limit(50)
+            ->get();
+
+        return response()->json($rows->map(function ($c) {
+            $expected = $c->expected_payment_date
+                ?: ($c->created_at ? $c->created_at->copy()->addDays(30) : null);
+
+            return [
+                'id'                   => $c->id,
+                'expected_date'        => optional($expected)->toDateString(),
+                'client_name'          => $c->lead?->name ?? '—',
+                'empreendimento_name'  => $c->lead?->empreendimento?->name,
+                'vgv'                  => (float) $c->sale_value,
+                'commission_value'     => (float) $c->commission_value,
+                'status'               => $c->status ?: 'pending',
+            ];
+        }));
     }
 }
