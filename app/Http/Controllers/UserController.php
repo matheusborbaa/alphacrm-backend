@@ -386,6 +386,42 @@ class UserController extends Controller
     }
 
     /**
+     * Sprint 3.8d — POST /users/me/preferences
+     *
+     * Endpoint self-service pras preferências PESSOAIS do usuário logado
+     * (diferentes das configurações globais do sistema em /settings/*).
+     * Valida cada chave contra uma whitelist — qualquer coisa fora é 422.
+     *
+     * Preferências suportadas:
+     *  - chat_read_receipts (bool): expor confirmação de leitura no chat.
+     *    Regra recíproca no ChatMessageController — se `false`, user não
+     *    envia nem recebe ✓✓.
+     *
+     * Body aceito: qualquer subset das chaves acima. Retorna o user fresh
+     * pra o frontend atualizar o cache local do /me.
+     */
+    public function updatePreferences(Request $request)
+    {
+        $data = $request->validate([
+            'chat_read_receipts' => ['sometimes', 'boolean'],
+        ]);
+
+        if (empty($data)) {
+            return response()->json([
+                'message' => 'Nenhuma preferência foi enviada.',
+            ], 422);
+        }
+
+        $user = $request->user();
+        $user->update($data);
+
+        return response()->json([
+            'success' => true,
+            'user'    => $user->fresh(),
+        ]);
+    }
+
+    /**
      * POST /users/{user}/photo — admin/gestor troca a foto de qualquer corretor.
      * Roteada só com middleware role:admin,gestor (rotas protegidas em api.php).
      * Aceita o mesmo input 'avatar' do self-service pra reaproveitar o FormData.

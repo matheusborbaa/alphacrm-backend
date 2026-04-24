@@ -79,7 +79,15 @@ class ChatMessageController extends Controller
             $messages = $query->orderBy('id')->limit($limit)->get();
         }
 
-        $payload = $messages->map(fn (ChatMessage $m) => $this->buildMessagePayload($m));
+        // Sprint 3.8d — regra RECÍPROCA de confirmação de leitura. Só
+        // exponho read_at/peer_read se AMBOS (eu e peer) temos a flag
+        // `chat_read_receipts` = true. Se qualquer um dos dois desligou,
+        // ninguém vê ✓✓ — o padrão do WhatsApp.
+        $exposeReadReceipts = $this->canExposeReadReceipts($conversation);
+
+        $payload = $messages->map(
+            fn (ChatMessage $m) => $this->buildMessagePayload($m, $exposeReadReceipts)
+        );
 
         return response()->json([
             'messages'  => $payload,
@@ -88,7 +96,12 @@ class ChatMessageController extends Controller
             // pra decidir ✓ (enviada) vs ✓✓ (lida) em cada msg minha. Cada
             // polling atualiza esse cursor, então o indicador se acende na
             // hora que o peer abre a conversa.
-            'peer_read' => $this->loadPeerReadState($conversation),
+            //
+            // Sprint 3.8d — zera se a regra recíproca de read receipts
+            // tiver sido desligada por qualquer um dos dois.
+            'peer_read' => $exposeReadReceipts
+                ? $this->loadPeerReadState($conversation)
+                : ['last_read_message_id' => 0, 'last_read_at' => null],
         ]);
     }
 
@@ -290,10 +303,14 @@ class ChatMessageController extends Controller
             $read->save();
         }
 
-        // Sprint 3.8c — grava timestamp individual em cada msg do OUTRO
-        // participante que ainda não foi lida. Roda só se target > 0 pra
-        // economizar query em conversas sem histórico.
-        if ($targetId > 0) {
+        // Sprint 3.8c/3.8d — grava timestamp individual em cada msg do OUTRO
+        // participante que ainda não foi lida. Respeita a preferência do
+        // usuário: se ele desligou `chat_read_receipts`, o cursor continua
+        // avançando (pra unread count) mas `read_at` não é gravado —
+        // ninguém vê "visto" nas msgs que ele leu.
+        $user = $request->user();
+        $exposeReads = (bool) ($user->chat_read_receipts ?? true);
+        if ($exposeReads && $targetId > 0) {
             ChatMessage::where('conversation_id', $conversationId)
                 ->where('sender_id', '!=', $me)
                 ->where('id', '<=', $targetId)
@@ -310,7 +327,7 @@ class ChatMessageController extends Controller
     /**
      * Shape unificado: body + timestamps + anexos + pin.
      */
-    private function buildMessagePayload(ChatMessage $m): array
+    private function buildMessagePayload(ChatMessage $m, bool $exposeRead = true): array
     {
         return [
             'id'                  => $m->id,
@@ -321,7 +338,10 @@ class ChatMessageController extends Controller
             // Sprint 3.8c — timestamp exato de quando o destinatário leu
             // essa msg pela primeira vez. Null = ainda não lida. Frontend
             // usa pra tooltip "Lido às HH:MM" preciso.
-            'read_at'             => $m->read_at,
+            // Sprint 3.8d — zera se a regra recíproca foi desligada; assim
+            // o frontend cai no branch "Enviada" independente do que tá
+            // salvo no banco.
+            'read_at'             => $exposeRead ? $m->read_at : null,
             // Sprint 4.1 — pin de mensagens importantes.
             'is_pinned'           => (bool) $m->is_pinned,
             'pinned_at'           => $m->pinned_at,
@@ -330,6 +350,30 @@ class ChatMessageController extends Controller
                 ? $m->attachments->map(fn ($a) => $a->buildPayload())->all()
                 : [],
         ];
+    }
+
+    /**
+     * Sprint 3.8d — decide se confirmação de leitura é exposta nesta
+     * conversa. Regra recíproca: só mostra ✓✓ se os DOIS participantes
+     * têm a flag `chat_read_receipts` ativa. Qualquer um desligando,
+     * ninguém vê — igual WhatsApp.
+     *
+     * Defensivo: assume true quando um dos users não foi encontrado
+     * (edge case de user deletado); nesse caso o read_at já tá gravado
+     * historicamente então não faz sentido esconder retroativamente.
+     */
+    private function canExposeReadReceipts(ChatConversation $conversation): bool
+    {
+        $me     = Auth::user();
+        $peerId = $conversation->user_a_id === ($me->id ?? null)
+            ? $conversation->user_b_id
+            : $conversation->user_a_id;
+        $peer = $peerId ? User::find($peerId) : null;
+
+        $myFlag   = $me   ? (bool) ($me->chat_read_receipts   ?? true) : true;
+        $peerFlag = $peer ? (bool) ($peer->chat_read_receipts ?? true) : true;
+
+        return $myFlag && $peerFlag;
     }
 
     private function ensureParticipant(ChatConversation $conversation): void

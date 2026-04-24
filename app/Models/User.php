@@ -37,6 +37,10 @@ class User extends Authenticatable
         // Cooldown pós-lead: timestamp até quando o corretor fica "travado"
         // sem receber novos leads, mesmo que esteja 'disponivel'.
         'cooldown_until',
+        // Sprint 3.8d — preferência pessoal de confirmação de leitura no chat.
+        // true (default) = usuário expõe quando leu e vê quando foram lidas as dele.
+        // false = desliga em AMBAS as direções (reciprocidade).
+        'chat_read_receipts',
     ];
 
    
@@ -62,6 +66,7 @@ class User extends Authenticatable
             'password' => 'hashed',
             'last_lead_assigned_at' => 'datetime',
             'cooldown_until' => 'datetime',
+            'chat_read_receipts' => 'boolean',
         ];
     }
 	
