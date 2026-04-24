@@ -169,8 +169,65 @@ public function publicShow(string $code)
         $query->whereDate('ends_at', '<=', $request->delivery_until);
     }
 
-    if ($request->filled('active')) {
-        $query->where('active', $request->active);
+    // Filtro "active" aceita '1', '0' ou 'all'. Default: só ativos,
+    // exceto pra admin/gestor que viram tudo quando explicitamente
+    // pedem active=all. Corretor sempre vê só ativos.
+    $activeFilter = $request->input('active');
+    $userRole     = $request->user()?->role;
+
+    if ($activeFilter === 'all' && in_array($userRole, ['admin', 'gestor'], true)) {
+        // Sem filtro — inclui ativos e inativos.
+    } elseif ($activeFilter === '0' && in_array($userRole, ['admin', 'gestor'], true)) {
+        $query->where('active', 0);
+    } elseif ($activeFilter === '1' || $activeFilter === null || $activeFilter === '') {
+        $query->where('active', 1);
+    } else {
+        // Qualquer outro valor vira default (só ativos).
+        $query->where('active', 1);
+    }
+
+    // Status da obra — aceita múltiplos separados por vírgula (ex.: "lancamento,em_obras").
+    if ($request->filled('status')) {
+        $statuses = collect(explode(',', (string) $request->input('status')))
+            ->map(fn ($s) => trim($s))
+            ->filter()
+            ->values()
+            ->all();
+        if (!empty($statuses)) {
+            $query->whereIn('status', $statuses);
+        }
+    }
+
+    // Finalidade (residencial/comercial/misto) — também aceita múltiplos.
+    if ($request->filled('finalidade')) {
+        $finalidades = collect(explode(',', (string) $request->input('finalidade')))
+            ->map(fn ($f) => trim($f))
+            ->filter()
+            ->values()
+            ->all();
+        if (!empty($finalidades)) {
+            $query->whereIn('finalidade', $finalidades);
+        }
+    }
+
+    // Tipologia (apartamento/casa/...) — também aceita múltiplos.
+    if ($request->filled('tipo')) {
+        $tipos = collect(explode(',', (string) $request->input('tipo')))
+            ->map(fn ($t) => trim($t))
+            ->filter()
+            ->values()
+            ->all();
+        if (!empty($tipos)) {
+            $query->whereIn('tipo', $tipos);
+        }
+    }
+
+    // Faixa de valor médio de venda (price_min / price_max, em reais).
+    if ($request->filled('price_min')) {
+        $query->where('average_sale_value', '>=', (float) $request->input('price_min'));
+    }
+    if ($request->filled('price_max')) {
+        $query->where('average_sale_value', '<=', (float) $request->input('price_max'));
     }
 
     return response()->json(
