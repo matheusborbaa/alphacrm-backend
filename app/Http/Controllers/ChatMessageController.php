@@ -66,6 +66,7 @@ class ChatMessageController extends Controller
 
         $query = ChatMessage::query()
             ->with('attachments') // Sprint 2: eager-load — evita N+1 no render
+            ->with('replyTo:id,sender_id,body') // Sprint 4.4: msg-pai citada
             ->where('conversation_id', $conversationId);
 
         if (!empty($data['after_id'])) {
@@ -129,12 +130,26 @@ class ChatMessageController extends Controller
             'references'           => ['nullable', 'array', 'max:10'],
             'references.*.type'    => ['required_with:references', 'string', 'in:lead,empreendimento,lead_document'],
             'references.*.id'      => ['required_with:references', 'integer', 'min:1'],
+            // Sprint 4.4 — reply/citação. A msg-pai precisa existir E
+            // pertencer à MESMA conversa (checado logo abaixo).
+            'reply_to_id'          => ['nullable', 'integer', 'min:1', 'exists:chat_messages,id'],
         ]);
 
         $me = (int) Auth::id();
         $body = isset($data['body']) ? trim($data['body']) : '';
         $pendingIds = $data['pending_upload_ids'] ?? [];
         $references = $data['references'] ?? [];
+        $replyToId  = $data['reply_to_id'] ?? null;
+
+        // Sprint 4.4 — valida que a msg-pai está na MESMA conversa.
+        // Previne ataques onde alguém replyaria a msg de outra conversa
+        // pra "vazar" conteúdo via snippet. FK sozinho não cobre.
+        if ($replyToId !== null) {
+            $parentConvId = ChatMessage::where('id', $replyToId)->value('conversation_id');
+            if ((int) $parentConvId !== (int) $conversation->id) {
+                return response()->json(['message' => 'Reply inválido.'], 422);
+            }
+        }
 
         $hasAnyAttachment = !empty($pendingIds) || !empty($references);
         if ($body === '' && !$hasAnyAttachment) {
@@ -146,12 +161,13 @@ class ChatMessageController extends Controller
         $peerId = $conversation->user_a_id === $me ? $conversation->user_b_id : $conversation->user_a_id;
         $peerUser = User::find($peerId);
 
-        $message = DB::transaction(function () use ($conversation, $me, $body, $pendingIds, $references, $peerUser) {
+        $message = DB::transaction(function () use ($conversation, $me, $body, $pendingIds, $references, $peerUser, $replyToId) {
             // 1. Cria a mensagem (body pode ser '' se só tem anexo — front renderiza só o card).
             $msg = ChatMessage::create([
                 'conversation_id' => $conversation->id,
                 'sender_id'       => $me,
                 'body'            => $body,
+                'reply_to_id'     => $replyToId,
             ]);
 
             // 2. Adota drafts: valida um por um — evita adotar draft de outro user
@@ -199,7 +215,7 @@ class ChatMessageController extends Controller
                 ['last_read_message_id' => $msg->id, 'last_read_at' => now()]
             );
 
-            return $msg->load('attachments');
+            return $msg->load(['attachments', 'replyTo:id,sender_id,body']);
         });
 
         return response()->json($this->buildMessagePayload($message), 201);
@@ -219,6 +235,7 @@ class ChatMessageController extends Controller
 
         $messages = ChatMessage::query()
             ->with('attachments')
+            ->with('replyTo:id,sender_id,body') // Sprint 4.4
             ->where('conversation_id', $conversationId)
             ->where('is_pinned', true)
             ->orderByDesc('pinned_at')
@@ -471,6 +488,26 @@ class ChatMessageController extends Controller
      */
     private function buildMessagePayload(ChatMessage $m, bool $exposeRead = true): array
     {
+        // Sprint 4.4 — reply/citação. Se a msg-pai foi deletada (reply_to_id
+        // virou null via SET NULL), retornamos null; frontend exibe
+        // "Mensagem indisponível" no lugar do bloco citado.
+        $reply = null;
+        if ($m->reply_to_id && $m->replyTo) {
+            $parentBody = (string) ($m->replyTo->body ?? '');
+            $reply = [
+                'id'        => $m->replyTo->id,
+                'sender_id' => $m->replyTo->sender_id,
+                // Snippet curto pra caber no bloquinho (~120 chars). Body
+                // inteiro fica escondido; a UX é clicar pra pular pra msg.
+                'snippet'   => mb_strlen($parentBody) > 120
+                    ? mb_substr($parentBody, 0, 120) . '…'
+                    : $parentBody,
+            ];
+        } elseif ($m->reply_to_id) {
+            // Referência órfã — a msg-pai existia mas foi deletada.
+            $reply = ['id' => null, 'sender_id' => null, 'snippet' => null];
+        }
+
         return [
             'id'                  => $m->id,
             'conversation_id'     => $m->conversation_id,
@@ -484,6 +521,8 @@ class ChatMessageController extends Controller
             // o frontend cai no branch "Enviada" independente do que tá
             // salvo no banco.
             'read_at'             => $exposeRead ? $m->read_at : null,
+            // Sprint 4.4 — bloco citado quando é resposta.
+            'reply_to'            => $reply,
             // Sprint 4.1 — pin de mensagens importantes.
             'is_pinned'           => (bool) $m->is_pinned,
             'pinned_at'           => $m->pinned_at,

@@ -26,6 +26,7 @@ class ChatMessage extends Model
         'sender_id',
         'body',
         'read_at',
+        'reply_to_id',
         'is_pinned',
         'pinned_at',
         'pinned_by_user_id',
@@ -66,5 +67,14 @@ class ChatMessage extends Model
     {
         return $this->hasMany(ChatMessageAttachment::class, 'message_id')
             ->orderBy('id');
+    }
+
+    /**
+     * Sprint 4.4 — mensagem-pai citada (quando esta é uma resposta).
+     * Nullable: quando a citada é deletada o FK vai pra null (SET NULL).
+     */
+    public function replyTo(): BelongsTo
+    {
+        return $this->belongsTo(ChatMessage::class, 'reply_to_id');
     }
 }
