@@ -189,6 +189,31 @@ Route::delete(
     [EmpreendimentoImageController::class, 'destroy']
 )->middleware(['auth:sanctum', 'role:admin,gestor']);
 
+// Marca uma imagem como capa do empreendimento (limpa is_cover das outras
+// + atualiza empreendimentos.cover_image pra manter compat).
+Route::post(
+    '/empreendimento-images/{image}/cover',
+    [EmpreendimentoImageController::class, 'setCover']
+)->middleware(['auth:sanctum', 'role:admin,gestor']);
+
+
+/*
+|--------------------------------------------------------------------------
+| DOCUMENTOS DO EMPREENDIMENTO (Book + Tabela de Valores)
+|--------------------------------------------------------------------------
+| Slots fixos — o slot vai no path como {slot} e é validado no controller
+| contra whitelist ['book', 'price_table'].
+*/
+Route::post(
+    '/empreendimentos/{empreendimento}/documents/{slot}',
+    [\App\Http\Controllers\EmpreendimentoDocumentController::class, 'upload']
+)->middleware(['auth:sanctum', 'role:admin,gestor']);
+
+Route::delete(
+    '/empreendimentos/{empreendimento}/documents/{slot}',
+    [\App\Http\Controllers\EmpreendimentoDocumentController::class, 'destroy']
+)->middleware(['auth:sanctum', 'role:admin,gestor']);
+
 
 /*
 |--------------------------------------------------------------------------

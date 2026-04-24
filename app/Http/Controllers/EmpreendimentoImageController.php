@@ -41,8 +41,10 @@ class EmpreendimentoImageController extends Controller
 
         try {
             $request->validate([
-                'image' => 'required|file|image|mimes:jpg,jpeg,png,webp,heic|max:20480',
-                'order' => 'nullable|integer',
+                'image'    => 'required|file|image|mimes:jpg,jpeg,png,webp,heic|max:20480',
+                'order'    => 'nullable|integer',
+                'category' => ['nullable', 'string', \Illuminate\Validation\Rule::in(EmpreendimentoImage::CATEGORIES)],
+                'is_cover' => 'nullable|boolean',
             ]);
         } catch (ValidationException $e) {
             // Se o único erro é "image required" e tinha payload, provavelmente
@@ -92,11 +94,30 @@ class EmpreendimentoImageController extends Controller
 
             $path = $file->store("empreendimentos/{$slug}", 'public');
 
-            return EmpreendimentoImage::create([
+            $category = $request->input('category', EmpreendimentoImage::CATEGORY_IMAGENS);
+            $wantCover = (bool) $request->boolean('is_cover');
+
+            // Se for marcada como capa já na criação, limpa a flag das outras.
+            if ($wantCover) {
+                EmpreendimentoImage::where('empreendimento_id', $empreendimento->id)
+                    ->update(['is_cover' => false]);
+            }
+
+            $img = EmpreendimentoImage::create([
                 'empreendimento_id' => $empreendimento->id,
                 'image_path'        => Storage::url($path),
                 'order'             => (int) ($request->input('order') ?? 0),
+                'category'          => $category,
+                'is_cover'          => $wantCover,
             ]);
+
+            // Espelha a capa na coluna cover_image do empreendimento pra manter
+            // compat com listagens antigas que leem direto.
+            if ($wantCover) {
+                $empreendimento->update(['cover_image' => $img->image_path]);
+            }
+
+            return $img;
         } catch (\Throwable $e) {
             Log::error('Falha ao salvar imagem de empreendimento', [
                 'empreendimento_id' => $empreendimento->id,
@@ -106,6 +127,29 @@ class EmpreendimentoImageController extends Controller
                 'message' => 'Erro interno ao salvar a imagem. Avise o administrador.',
             ], 500);
         }
+    }
+
+    /**
+     * Marca uma imagem como capa do empreendimento. Limpa a flag das outras
+     * imagens do mesmo empreendimento e atualiza empreendimentos.cover_image
+     * (mantendo compat com listagens/cards antigos).
+     */
+    public function setCover(Request $request, EmpreendimentoImage $image)
+    {
+        abort_unless(in_array($request->user()?->role, ['admin', 'gestor'], true), 403);
+
+        EmpreendimentoImage::where('empreendimento_id', $image->empreendimento_id)
+            ->update(['is_cover' => false]);
+
+        $image->update(['is_cover' => true]);
+
+        Empreendimento::where('id', $image->empreendimento_id)
+            ->update(['cover_image' => $image->image_path]);
+
+        return response()->json([
+            'success' => true,
+            'image'   => $image->fresh(),
+        ]);
     }
 
     /**

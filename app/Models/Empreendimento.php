@@ -27,7 +27,11 @@ class Empreendimento extends Model
     'ends_at',
     'shortdescription',
     'description',
-    'cover_image'
+    'cover_image',
+    'book_path',
+    'book_uploaded_at',
+    'price_table_path',
+    'price_table_uploaded_at',
 ];
 
     protected $casts = [
@@ -38,6 +42,8 @@ class Empreendimento extends Model
         'initial_price' => 'decimal:2',
         'average_sale_value' => 'decimal:2',
         'commission_percentage' => 'decimal:2',
+        'book_uploaded_at'        => 'datetime:Y-m-d H:i:s',
+        'price_table_uploaded_at' => 'datetime:Y-m-d H:i:s',
     ];
 
     public function leads()
