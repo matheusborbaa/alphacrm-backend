@@ -70,6 +70,7 @@ class KanbanController extends Controller
         'phone',
         'email',
         'sla_status',
+        'sla_deadline_at',
         'status_id',
         'lead_substatus_id',
         'assigned_user_id',
