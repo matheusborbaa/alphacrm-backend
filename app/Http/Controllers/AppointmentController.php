@@ -20,7 +20,17 @@ public function byDate(Request $request)
     $start = \Carbon\Carbon::parse($request->date)->startOfDay();
     $end   = \Carbon\Carbon::parse($request->date)->endOfDay();
 
-    $appointments = Appointment::whereBetween('starts_at', [$start, $end])
+    // Sprint 3.2b — o calendário da agenda deixava de mostrar tarefas
+    // criadas com `due_at` (e sem `starts_at`), porque o filtro era só
+    // por starts_at. Agora pegamos no dia tanto quem tem starts_at quanto
+    // quem tem due_at — igual /by-month já fazia.
+    $appointments = Appointment::where(function ($q) use ($start, $end) {
+            $q->where(function ($q2) use ($start, $end) {
+                $q2->whereBetween('starts_at', [$start, $end]);
+            })->orWhere(function ($q2) use ($start, $end) {
+                $q2->whereBetween('due_at', [$start, $end]);
+            });
+        })
        ->when(!in_array($user->role, ['admin','gestor']), function ($q) use ($user) {
 
     $q->where(function ($query) use ($user) {
@@ -31,23 +41,31 @@ public function byDate(Request $request)
     });
 
 })
-        ->orderBy('starts_at')
+        ->orderByRaw('COALESCE(due_at, starts_at) ASC')
         ->get([
             'id',
             'title',
             'type',
+            'task_kind',
             'starts_at',
+            'due_at',
             'status',
+            'completed_at',
             'lead_id',  // usado pelo frontend pra navegar pro lead ao clicar
             'user_id',
         ]);
 
-    // Marca cada agendamento como atrasado quando está pendente e já passou.
+    // Marca cada item como atrasado quando está pendente e a data efetiva
+    // (due_at ou starts_at) já passou. Também expõe `effective_at` pra o
+    // frontend renderizar a hora correta (antes usava só starts_at que
+    // vinha nulo pra tarefas).
     $now = \Carbon\Carbon::now();
     $appointments->transform(function ($app) use ($now) {
+        $effective = $app->due_at ?: $app->starts_at;
+        $app->effective_at = $effective ? $effective->toIso8601String() : null;
         $app->overdue = $app->status === 'pending'
-            && $app->starts_at
-            && $app->starts_at->lt($now);
+            && $effective
+            && $effective->lt($now);
         return $app;
     });
 
@@ -69,7 +87,15 @@ public function summary(Request $request)
     $start = \Carbon\Carbon::parse($request->date)->startOfDay();
     $end   = \Carbon\Carbon::parse($request->date)->endOfDay();
 
-    $query = Appointment::whereBetween('starts_at', [$start, $end])
+    // Sprint 3.2b — mesmo fix do byDate: considerar due_at junto com starts_at
+    // pra tarefas sem starts_at aparecerem nos contadores do dia.
+    $query = Appointment::where(function ($q) use ($start, $end) {
+            $q->where(function ($q2) use ($start, $end) {
+                $q2->whereBetween('starts_at', [$start, $end]);
+            })->orWhere(function ($q2) use ($start, $end) {
+                $q2->whereBetween('due_at', [$start, $end]);
+            });
+        })
         ->when(!in_array($user->role, ['admin','gestor']), function ($q) use ($user) {
             $q->where(function ($sub) use ($user) {
                 $sub->where('user_id', $user->id)
@@ -77,7 +103,7 @@ public function summary(Request $request)
             });
         });
 
-    $list = (clone $query)->get(['id','type','status','starts_at']);
+    $list = (clone $query)->get(['id','type','status','starts_at','due_at']);
     $now  = \Carbon\Carbon::now();
 
     $byType = [];
@@ -86,11 +112,10 @@ public function summary(Request $request)
         $byType[$t] = ($byType[$t] ?? 0) + 1;
     }
 
-    $overdue = $list->filter(fn($a) =>
-        $a->status === 'pending'
-        && $a->starts_at
-        && $a->starts_at->lt($now)
-    )->count();
+    $overdue = $list->filter(function ($a) use ($now) {
+        $eff = $a->due_at ?: $a->starts_at;
+        return $a->status === 'pending' && $eff && $eff->lt($now);
+    })->count();
 
     $completed = $list->where('status', 'completed')->count();
     $pending   = $list->where('status', 'pending')->count();

@@ -30,14 +30,28 @@ class Appointment extends Model
     // Subtipos dentro de type='task' — escolhidos pelo corretor ao criar
     // a tarefa. Permite que as regras de obrigatoriedade exijam
     // especificamente "ligação concluída" em vez de qualquer tarefa.
-    public const KIND_LIGACAO  = 'ligacao';
-    public const KIND_VISITA   = 'visita';
-    public const KIND_ANOTACAO = 'anotacao';
-    public const KIND_GENERICA = 'generica';
+    //
+    // Sprint 3.2c — expandido pros 7 tipos pedidos pela Marcia:
+    // Ligação, WhatsApp, E-mail, Follow-up, Agendamento, Visita Presencial,
+    // Reunião On-line. Mantemos 'anotacao' e 'generica' como fallbacks.
+    public const KIND_LIGACAO     = 'ligacao';
+    public const KIND_WHATSAPP    = 'whatsapp';
+    public const KIND_EMAIL       = 'email';
+    public const KIND_FOLLOWUP    = 'followup';
+    public const KIND_AGENDAMENTO = 'agendamento';
+    public const KIND_VISITA      = 'visita';       // Visita Presencial
+    public const KIND_REUNIAO     = 'reuniao';      // Reunião On-line
+    public const KIND_ANOTACAO    = 'anotacao';
+    public const KIND_GENERICA    = 'generica';
 
     public const KINDS = [
         self::KIND_LIGACAO,
+        self::KIND_WHATSAPP,
+        self::KIND_EMAIL,
+        self::KIND_FOLLOWUP,
+        self::KIND_AGENDAMENTO,
         self::KIND_VISITA,
+        self::KIND_REUNIAO,
         self::KIND_ANOTACAO,
         self::KIND_GENERICA,
     ];

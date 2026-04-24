@@ -294,10 +294,15 @@ class LeadStatusRequirementValidator
     private function humanizeTaskRule(StatusRequiredField $rule): string
     {
         $kinds = [
-            'ligacao'  => 'ligação',
-            'visita'   => 'visita',
-            'anotacao' => 'anotação',
-            'generica' => 'tarefa',
+            'ligacao'     => 'ligação',
+            'whatsapp'    => 'WhatsApp',
+            'email'       => 'e-mail',
+            'followup'    => 'follow-up',
+            'agendamento' => 'agendamento',
+            'visita'      => 'visita presencial',
+            'reuniao'     => 'reunião on-line',
+            'anotacao'    => 'anotação',
+            'generica'    => 'tarefa',
         ];
         $noun   = $rule->require_task_kind
             ? ($kinds[$rule->require_task_kind] ?? 'tarefa')

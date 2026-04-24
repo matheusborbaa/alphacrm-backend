@@ -131,7 +131,10 @@ class TaskController extends Controller
             'reminder_at' => 'nullable|date',
             // Subtipo da tarefa — usado pelas regras de obrigatoriedade
             // pra exigir tipo específico (ligação, visita, anotação, genérica).
-            'task_kind'   => 'nullable|in:ligacao,visita,anotacao,generica',
+            // Sprint 3.2c — whitelist delegada à constante Appointment::KINDS
+            // (Ligação/WhatsApp/E-mail/Follow-up/Agendamento/Visita/Reunião/
+            // Anotação/Genérica). Manter aqui hard-coded faria desync com o Model.
+            'task_kind'   => ['nullable', \Illuminate\Validation\Rule::in(\App\Models\Appointment::KINDS)],
             // admin/gestor podem atribuir a outro user
             'user_id'     => 'nullable|exists:users,id',
             // admin/gestor podem marcar a tarefa como da EMPRESA (visível pra todos)
@@ -208,7 +211,10 @@ class TaskController extends Controller
             'due_at'      => 'nullable|date',
             'priority'    => 'nullable|in:low,medium,high',
             'reminder_at' => 'nullable|date',
-            'task_kind'   => 'nullable|in:ligacao,visita,anotacao,generica',
+            // Sprint 3.2c — whitelist delegada à constante Appointment::KINDS
+            // (Ligação/WhatsApp/E-mail/Follow-up/Agendamento/Visita/Reunião/
+            // Anotação/Genérica). Manter aqui hard-coded faria desync com o Model.
+            'task_kind'   => ['nullable', \Illuminate\Validation\Rule::in(\App\Models\Appointment::KINDS)],
             'user_id'     => 'nullable|exists:users,id',
             'scope'       => 'nullable|in:private,company',
         ]);
