@@ -174,9 +174,14 @@ class HomeController extends Controller
             ->whereIn('sla_status', ['pending', 'expired'])
             ->count();
 
+        // Sprint 3.5+ — "Tarefas Pendentes" agora conta TODAS as tarefas
+        // abertas do user (pendentes + atrasadas), batendo com a aba
+        // Tarefa da Agenda. Antes usava só o scope overdue() (due_at < now),
+        // ignorando a tarefa pendente que ainda não venceu — por isso no
+        // card da home aparecia 0 mesmo tendo 1 pendente e 1 atrasada.
         $tarefasPendentes = Appointment::tasks()
-            ->overdue()
             ->where('user_id', $user->id)
+            ->whereNull('completed_at')
             ->count();
 
         /* ----------------------------------------------------

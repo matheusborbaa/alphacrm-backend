@@ -440,32 +440,55 @@ Route::get('/dashboard/appointments', function (Request $request) {
         return response()->json(['message' => 'Não autenticado'], 401);
     }
 
-    $windowStart = now()->subDays(7);
-    $windowEnd   = now()->addDays(30);
+    // Sprint 3.5+ — janela aceita range customizado (from/to) vindo do
+    // filtro do Resumo de Produtividade. Sem filtro explícito, usa o
+    // default "7 dias atrás → 30 dias à frente" pra mostrar atrasadas +
+    // próximas no widget. Com filtro, usa o range/periodo do front.
+    if ($request->hasAny(['periodo', 'from', 'to'])) {
+        [$windowStart, $windowEnd] = \App\Support\DashboardPeriod::resolve($request);
+    } else {
+        $windowStart = now()->subDays(7);
+        $windowEnd   = now()->addDays(30);
+    }
 
-    $rows = Appointment::with('lead:id,name')
+    // Quando o filtro de produtividade está ativo (chip ou range), o front
+    // manda ?include_completed=1 pra também trazer tarefas já concluídas,
+    // que aparecem riscadas no widget.
+    $includeCompleted = (bool) $request->boolean('include_completed', false);
+
+    $query = Appointment::with('lead:id,name')
         ->where('user_id', $user->id)
-        ->whereNull('completed_at')
         ->where(function ($q) use ($windowStart, $windowEnd) {
             $q->whereBetween('due_at',    [$windowStart, $windowEnd])
-              ->orWhereBetween('starts_at', [$windowStart, $windowEnd]);
-        })
-        ->orderByRaw('COALESCE(due_at, starts_at) ASC')
-        ->limit(10)
+              ->orWhereBetween('starts_at', [$windowStart, $windowEnd])
+              ->orWhereBetween('completed_at', [$windowStart, $windowEnd]);
+        });
+
+    if (!$includeCompleted) {
+        $query->whereNull('completed_at');
+    }
+
+    $rows = $query
+        ->orderByRaw('COALESCE(due_at, starts_at, completed_at) ASC')
+        ->limit(20)
         ->get(['id', 'lead_id', 'title', 'type', 'task_kind',
                'due_at', 'starts_at', 'completed_at']);
 
     // Normaliza o campo "when" pro frontend não precisar escolher entre
     // due_at e starts_at (cada tarefa tem um ou outro, às vezes os dois).
     return $rows->map(function ($a) {
-        $when = $a->due_at ?? $a->starts_at;
+        $when = $a->due_at ?? $a->starts_at ?? $a->completed_at;
+        $isCompleted = $a->completed_at !== null;
         return [
             'id'           => $a->id,
             'title'        => $a->title,
             'type'         => $a->type,
             'task_kind'    => $a->task_kind,
             'when'         => optional($when)->toIso8601String(),
-            'is_overdue'   => $when && $when->isPast(),
+            // Atrasada só faz sentido se ainda estiver aberta.
+            'is_overdue'   => !$isCompleted && $when && $when->isPast(),
+            'is_completed' => $isCompleted,
+            'completed_at' => optional($a->completed_at)->toIso8601String(),
             'lead'         => $a->lead ? ['id' => $a->lead->id, 'name' => $a->lead->name] : null,
         ];
     });
@@ -828,6 +851,12 @@ Route::middleware(['auth:sanctum', 'role:admin,gestor,corretor'])->group(functio
     Route::get('/home/summary',                [HomeController::class, 'summary']);
     // Sprint 3.5b — Minhas Próximas Comissões.
     Route::get('/dashboard/next-commissions',  [HomeController::class, 'nextCommissions']);
+
+    // Sprint 3.6a — Cores customizáveis por tipo de tarefa.
+    // GET é pra todos autenticados (precisa do mapa pra renderizar badges).
+    // O PUT abaixo é restrito a admin dentro do próprio controller.
+    Route::get('/task-kind-colors',          [\App\Http\Controllers\TaskKindColorController::class, 'index']);
+    Route::put('/task-kind-colors/{kind}',   [\App\Http\Controllers\TaskKindColorController::class, 'update']);
 });
 
 
