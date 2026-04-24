@@ -556,9 +556,19 @@ public function store(Request $request)
         'force'              => 'nullable|boolean',              // bypass do duplicate check
     ]);
 
+    // force=true só é aceito se o usuário for admin ou gestor. Corretor não
+    // pode ignorar a regra de duplicidade — precisa pedir liberação pro
+    // gerente/admin (defesa em camada além do bloqueio visual no frontend).
+    $forceBypass = !empty($data['force']);
+    if ($forceBypass && !in_array($user->role, ['admin', 'gestor'], true)) {
+        return response()->json([
+            'message' => 'Você não tem permissão para cadastrar um lead duplicado. Procure um gerente ou administrador.',
+        ], 403);
+    }
+
     // 🔎 Verificação de duplicidade (telefone / WhatsApp / email).
     // Se encontrar e o cliente não tiver confirmado via `force`, devolve 409.
-    if (empty($data['force'])) {
+    if (!$forceBypass) {
         $duplicates = $this->findDuplicateLeads(
             $data['phone']    ?? null,
             $data['whatsapp'] ?? null,
