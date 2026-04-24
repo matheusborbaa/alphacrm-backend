@@ -368,55 +368,10 @@ private function saveCustomValues(Lead $lead, array $values): array
         }
     }
 
-    // 🔍 Filtros
+    // 🔍 Filtros — centralizado em applyLeadFilters() pra que index e counts
+    // apliquem exatamente as mesmas regras.
+    $this->applyLeadFilters($request, $query);
 
-// 🔎 FILTRO POR CÓDIGO
-if ($request->filled('codigo')) {
-    $query->where('id', (int) $request->codigo);
-}
-if ($request->filled('empreendimento')) {
-    $query->where('empreendimento_id', $request->empreendimento);
-}
-if ($request->filled('funil')) {
-    $query->where('status_id', $request->funil);
-}
-if ($request->filled('substatus')) {
-    $query->where('lead_substatus_id', $request->substatus);
-}
-if ($request->filled('responsavel')) {
-    $query->where('assigned_user_id', $request->responsavel);
-}
-if ($request->filled('temperature')) {
-    // Aceita string única ou lista separada por vírgula: 'quente,morno'
-    $temps = is_array($request->temperature)
-        ? $request->temperature
-        : explode(',', (string) $request->temperature);
-    $temps = array_filter(array_map('trim', $temps));
-    if (!empty($temps)) {
-        $query->whereIn('temperature', $temps);
-    }
-}
-if ($request->filled('source_id')) {
-    $query->where('source_id', $request->source_id);
-}
-if ($request->filled('channel')) {
-    $query->where('channel', $request->channel);
-}
-if ($request->filled('sem_interacao_dias')) {
-    // Leads sem interação há N dias
-    $dias = (int) $request->sem_interacao_dias;
-    $query->where(function ($q) use ($dias) {
-        $q->whereNull('last_interaction_at')
-          ->orWhere('last_interaction_at', '<=', now()->subDays($dias));
-    });
-}
-if ($request->filled('created_from')) {
-    $query->whereDate('created_at', '>=', $request->created_from);
-}
-if ($request->filled('created_to')) {
-    $query->whereDate('created_at', '<=', $request->created_to);
-}
-    
    if ($request->filled('search')) {
 
     $search = $request->search;
@@ -475,9 +430,26 @@ if ($request->filled('created_to')) {
     {
         $user = $request->user();
 
-        $base = Lead::query();
-        if ($user->role === 'corretor') {
-            $base->where('assigned_user_id', $user->id);
+        $base = Lead::query()->visibleTo($user);
+
+        // Respeita os mesmos filtros da listagem — exceto `temperature`, que
+        // é filtrada separadamente por card. Sem isso, os contadores ficam
+        // descolados da grade (o usuário filtra "sem tarefa" e o "Total"
+        // continua mostrando o total geral).
+        $this->applyLeadFilters($request, $base, ['temperature']);
+
+        // Busca textual também afeta os contadores (mesmo comportamento da index).
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $base->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('phone', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%")
+                  ->orWhereHas('empreendimentos', fn($q2) => $q2->where('name', 'like', "%{$search}%"))
+                  ->orWhereHas('status',          fn($q2) => $q2->where('name', 'like', "%{$search}%"))
+                  ->orWhereHas('corretor',        fn($q2) => $q2->where('name', 'like', "%{$search}%"))
+                  ->orWhereDate('created_at', $search);
+            });
         }
 
         $cloneBase = fn() => (clone $base);
@@ -494,6 +466,119 @@ if ($request->filled('created_to')) {
                                          ->orWhere('last_interaction_at', '<=', now()->subDays(10));
                                    })->count(),
         ]);
+    }
+
+    /**
+     * Aplica filtros de listagem de leads numa query builder. Usado tanto por
+     * index() quanto por counts() pra garantir consistência. Os filtros abaixo
+     * são whitelistados e, quando aceitam múltiplos valores, o frontend manda
+     * como CSV ("a,b,c").
+     *
+     * @param  array  $skip  Lista de filtros a ignorar (útil pro counts, que
+     *                       quebra a contagem por temperatura separadamente).
+     */
+    private function applyLeadFilters(Request $request, $query, array $skip = []): void
+    {
+        $should = fn(string $k) => $request->filled($k) && !in_array($k, $skip, true);
+
+        // Helper: pega string ou CSV e devolve array limpo.
+        $csv = function ($raw) {
+            if ($raw === null || $raw === '') return [];
+            $arr = is_array($raw) ? $raw : explode(',', (string) $raw);
+            return array_values(array_filter(array_map('trim', $arr)));
+        };
+
+        if ($should('codigo')) {
+            $query->where('id', (int) $request->codigo);
+        }
+
+        if ($should('empreendimento')) {
+            $vals = $csv($request->empreendimento);
+            if (!empty($vals)) $query->whereIn('empreendimento_id', $vals);
+        }
+
+        if ($should('funil')) {
+            $vals = $csv($request->funil);
+            if (!empty($vals)) $query->whereIn('status_id', $vals);
+        }
+
+        if ($should('substatus')) {
+            $vals = $csv($request->substatus);
+            if (!empty($vals)) $query->whereIn('lead_substatus_id', $vals);
+        }
+
+        if ($should('responsavel')) {
+            $vals = $csv($request->responsavel);
+            if (!empty($vals)) $query->whereIn('assigned_user_id', $vals);
+        }
+
+        if ($should('temperature')) {
+            $vals = $csv($request->temperature);
+            if (!empty($vals)) $query->whereIn('temperature', $vals);
+        }
+
+        if ($should('source_id')) {
+            $vals = $csv($request->source_id);
+            if (!empty($vals)) $query->whereIn('source_id', $vals);
+        }
+
+        if ($should('channel')) {
+            $vals = $csv($request->channel);
+            if (!empty($vals)) $query->whereIn('channel', $vals);
+        }
+
+        if ($should('campaign')) {
+            $vals = $csv($request->campaign);
+            if (!empty($vals)) $query->whereIn('campaign', $vals);
+        }
+
+        if ($should('sem_interacao_dias')) {
+            $dias = (int) $request->sem_interacao_dias;
+            if ($dias > 0) {
+                $query->where(function ($q) use ($dias) {
+                    $q->whereNull('last_interaction_at')
+                      ->orWhere('last_interaction_at', '<=', now()->subDays($dias));
+                });
+            }
+        }
+
+        if ($should('created_from')) {
+            $query->whereDate('created_at', '>=', $request->created_from);
+        }
+        if ($should('created_to')) {
+            $query->whereDate('created_at', '<=', $request->created_to);
+        }
+        if ($should('updated_from')) {
+            $query->whereDate('updated_at', '>=', $request->updated_from);
+        }
+        if ($should('updated_to')) {
+            $query->whereDate('updated_at', '<=', $request->updated_to);
+        }
+
+        // Filtro de tarefas: 'ativas' (abertas), 'atrasadas' (abertas + scheduled_at
+        // no passado), 'sem' (nenhum appointment do tipo task).
+        if ($should('tarefa')) {
+            $val = trim((string) $request->tarefa);
+
+            if ($val === 'ativas') {
+                $query->whereHas('appointments', function ($q) {
+                    $q->where('type', 'task')
+                      ->whereNull('completed_at');
+                });
+            } elseif ($val === 'atrasadas') {
+                $query->whereHas('appointments', function ($q) {
+                    $q->where('type', 'task')
+                      ->whereNull('completed_at')
+                      ->whereNotNull('scheduled_at')
+                      ->where('scheduled_at', '<', now());
+                });
+            } elseif ($val === 'sem') {
+                $query->whereDoesntHave('appointments', function ($q) {
+                    $q->where('type', 'task')
+                      ->whereNull('completed_at');
+                });
+            }
+        }
     }
 
     /**
