@@ -37,9 +37,17 @@ class ChatConversationController extends Controller
     {
         $me = (int) Auth::id();
 
+        // Sprint 3.9a — Modo auditoria: admin com ?audit=1 recebe TODAS
+        // as conversas do sistema (leitura somente na UI). Pros demais
+        // users o parâmetro é ignorado silenciosamente — defense in depth.
+        $auditMode = $this->isAuditRequest($request);
+
         $conversations = ChatConversation::query()
-            ->where(function ($q) use ($me) {
-                $q->where('user_a_id', $me)->orWhere('user_b_id', $me);
+            ->when(!$auditMode, function ($q) use ($me) {
+                // Modo normal: só as minhas.
+                $q->where(function ($qq) use ($me) {
+                    $qq->where('user_a_id', $me)->orWhere('user_b_id', $me);
+                });
             })
             ->with([
                 'userA:id,name,email,avatar',
@@ -64,23 +72,26 @@ class ChatConversationController extends Controller
             ->get()
             ->keyBy('conversation_id');
 
-        $result = $conversations->map(function (ChatConversation $c) use ($me, $reads) {
+        $result = $conversations->map(function (ChatConversation $c) use ($me, $reads, $auditMode) {
             $other = $c->otherParticipant($me);
 
             // lastMessage() retorna a coleção ordenada desc; pega o primeiro.
             $last = $c->lastMessage->first();
 
-            // Unread = msgs do OUTRO com id > last_read_message_id do user.
-            // N+1 aqui: 1 count por conversa. Aceitável pra MVP (<100 convs).
-            // Se virar gargalo, migrar pra subquery única com CASE sum.
-            $read = $reads->get($c->id);
-            $lastReadId = $read?->last_read_message_id ?? 0;
-            $unreadCount = ChatMessage::where('conversation_id', $c->id)
-                ->where('sender_id', '!=', $me)
-                ->where('id', '>', $lastReadId)
-                ->count();
+            // Em auditoria não faz sentido contar não-lidas (admin não
+            // é participante). Em modo normal conta msgs do OUTRO com
+            // id > last_read_message_id do user.
+            $unreadCount = 0;
+            if (!$auditMode) {
+                $read = $reads->get($c->id);
+                $lastReadId = $read?->last_read_message_id ?? 0;
+                $unreadCount = ChatMessage::where('conversation_id', $c->id)
+                    ->where('sender_id', '!=', $me)
+                    ->where('id', '>', $lastReadId)
+                    ->count();
+            }
 
-            return [
+            $payload = [
                 'id'              => $c->id,
                 'last_message_at' => $c->last_message_at,
                 'other_user'      => $other ? [
@@ -101,9 +112,35 @@ class ChatConversationController extends Controller
                 ] : null,
                 'unread_count'    => $unreadCount,
             ];
+
+            // Em auditoria, devolvemos AMBOS os participantes (a UI usa
+            // pra montar "Fulano ↔ Beltrano"). Em modo normal `other_user`
+            // já cobre o único outro lado.
+            if ($auditMode) {
+                $payload['participants'] = [
+                    $c->userA ? ['id' => $c->userA->id, 'name' => $c->userA->name, 'email' => $c->userA->email, 'avatar' => $c->userA->avatar] : null,
+                    $c->userB ? ['id' => $c->userB->id, 'name' => $c->userB->name, 'email' => $c->userB->email, 'avatar' => $c->userB->avatar] : null,
+                ];
+                $payload['audit_mode'] = true;
+            }
+
+            return $payload;
         });
 
         return response()->json($result);
+    }
+
+    /**
+     * Sprint 3.9a — decide se o request é em modo auditoria. Só admin
+     * pode entrar; qualquer outro role que mandar ?audit=1 é ignorado
+     * silenciosamente (defense in depth — a UI desses papéis não tem
+     * botão de auditoria).
+     */
+    private function isAuditRequest(Request $request): bool
+    {
+        if (!$request->boolean('audit')) return false;
+        $user = $request->user();
+        return $user && strtolower(trim((string) ($user->role ?? ''))) === 'admin';
     }
 
     /**

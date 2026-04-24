@@ -7,6 +7,7 @@ use App\Models\ChatConversationRead;
 use App\Models\ChatMessage;
 use App\Models\ChatMessageAttachment;
 use App\Models\User;
+use App\Services\AuditService;
 use App\Services\ChatAttachmentResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -51,7 +52,9 @@ class ChatMessageController extends Controller
     public function index(Request $request, int $conversationId): JsonResponse
     {
         $conversation = ChatConversation::findOrFail($conversationId);
-        $this->ensureParticipant($conversation);
+        // Sprint 3.9a — leitura afrouxa pra admin (auditoria LGPD). Envio,
+        // markRead e pin continuam presos a participante via ensureParticipant.
+        $this->ensureCanRead($conversation);
 
         $data = $request->validate([
             'before_id' => ['nullable', 'integer', 'min:1'],
@@ -198,7 +201,8 @@ class ChatMessageController extends Controller
     public function pinned(Request $request, int $conversationId): JsonResponse
     {
         $conversation = ChatConversation::findOrFail($conversationId);
-        $this->ensureParticipant($conversation);
+        // Leitura — admin pode ver pinadas em auditoria.
+        $this->ensureCanRead($conversation);
 
         $messages = ChatMessage::query()
             ->with('attachments')
@@ -311,6 +315,49 @@ class ChatMessageController extends Controller
         if ($conversation->user_a_id !== $me && $conversation->user_b_id !== $me) {
             abort(403, 'Você não faz parte dessa conversa.');
         }
+    }
+
+    /**
+     * Sprint 3.9a — versão relaxada pra endpoints de LEITURA. Passa pra:
+     *   - Participante da conversa (regra normal)
+     *   - Admin (pra auditoria LGPD; cada acesso é registrado em audit_logs)
+     *
+     * Não usar em endpoints de escrita (store/markRead/pin) — esses continuam
+     * precisando de ensureParticipant pra admin não fingir ser participante.
+     */
+    private function ensureCanRead(ChatConversation $conversation): void
+    {
+        $user = Auth::user();
+        if (!$user) abort(401);
+
+        $me = (int) $user->id;
+        $isParticipant = $conversation->user_a_id === $me || $conversation->user_b_id === $me;
+        if ($isParticipant) return;
+
+        $role = strtolower(trim((string) ($user->role ?? '')));
+        if ($role === 'admin') {
+            // Registro de acesso pra LGPD — uma linha por request de leitura
+            // de conversa alheia. Não dedup por sessão pra manter trilha
+            // granular. Pode virar ruído em auditorias longas, mas é barato.
+            try {
+                AuditService::log(
+                    'chat_audit_read',
+                    'ChatConversation',
+                    $conversation->id,
+                    $me,
+                    null,
+                    [
+                        'participants' => [$conversation->user_a_id, $conversation->user_b_id],
+                    ],
+                    'chat_audit'
+                );
+            } catch (\Throwable $e) {
+                // Silencioso — auditoria não pode derrubar o request.
+            }
+            return;
+        }
+
+        abort(403, 'Você não faz parte dessa conversa.');
     }
 
     /**
