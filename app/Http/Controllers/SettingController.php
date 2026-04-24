@@ -113,6 +113,25 @@ class SettingController extends Controller
             'default' => null,
         ],
 
+        // =================== GATILHO DE COMISSÃO (Sprint 3.7e) ==========
+        // Quais status e/ou substatus disparam a criação automática da
+        // comissão (draft) via LeadObserver. Arrays de IDs — a comissão é
+        // criada quando o lead ENTRA em qualquer um dos status listados
+        // OU quando entra em qualquer um dos substatus listados.
+        //
+        // Default vazio: mantém o comportamento legado (nome do status ==
+        // "Vendido"). Assim instalações já rodando não precisam migrar
+        // nada — e admin pode desligar a regra "Vendido" escolhendo outros
+        // gatilhos aqui sem mexer na tabela de status.
+        'commission_trigger_status_ids' => [
+            'type'    => 'int_array',
+            'default' => [],
+        ],
+        'commission_trigger_substatus_ids' => [
+            'type'    => 'int_array',
+            'default' => [],
+        ],
+
         // =================== MÓDULO DE CHAT =============================
         // Liga/desliga o chat interno globalmente. Quando OFF: sidebar esconde
         // o item, deep-link /chat.php redireciona pro dashboard e os
@@ -249,10 +268,41 @@ class SettingController extends Controller
             'int_or_null' => ($raw === null || $raw === '' || $raw === 'null')
                 ? null
                 : (is_numeric($raw) ? (int) $raw : null),
+            // int_array: aceita array de ints OU string CSV ("1,2,3").
+            // null/'' viram []. Ids inválidos/duplicados são descartados
+            // silenciosamente — o resultado final é sempre um array de
+            // ints distintos e positivos, reindexado.
+            'int_array' => $this->coerceIntArray($raw),
             'string' => is_string($raw) ? $raw : null,
             'enum'   => is_string($raw) ? $raw : null,
             default  => $raw, // 'mixed' — aceita tudo
         };
+    }
+
+    /**
+     * Helper do coerce('int_array'). Normaliza qualquer entrada em um
+     * array de ints únicos e positivos. Nunca devolve null — o pior caso
+     * é um array vazio (igual ao default da whitelist).
+     */
+    private function coerceIntArray(mixed $raw): array
+    {
+        if ($raw === null || $raw === '') return [];
+
+        // CSV vindo de input text: "1, 2, 3"
+        if (is_string($raw)) {
+            $raw = array_map('trim', explode(',', $raw));
+        }
+
+        if (!is_array($raw)) return [];
+
+        $out = [];
+        foreach ($raw as $v) {
+            if (!is_numeric($v)) continue;
+            $i = (int) $v;
+            if ($i <= 0) continue;
+            $out[$i] = true; // dedup via chave
+        }
+        return array_values(array_map('intval', array_keys($out)));
     }
 
     private function ensureAdmin(): void

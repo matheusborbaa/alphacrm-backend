@@ -7,6 +7,7 @@ use App\Models\LeadStatus;
 use App\Models\LeadSubstatus;
 use App\Models\LeadHistory;
 use App\Models\Commission;
+use App\Models\Setting;
 use App\Services\AuditService;
 
 class LeadObserver
@@ -111,21 +112,42 @@ class LeadObserver
     }
 
     /**
-     * Regra antiga: cria comissão quando o status muda pra "Vendido".
-     * Mantida dentro do mesmo observer pra centralizar efeitos colaterais
-     * de mudança de status.
+     * Cria comissão (em rascunho) quando o lead entra em um status OU
+     * substatus configurado como gatilho em /configuracoes.php → Geral.
+     *
+     * Sprint 3.7e — antes era hardcoded pro nome "Vendido". Agora o admin
+     * escolhe quais IDs disparam. A regra:
+     *
+     *   - Se `commission_trigger_status_ids` tem algum ID: checa se o
+     *     NOVO status_id do lead está nessa lista.
+     *   - Se `commission_trigger_substatus_ids` tem algum ID: checa se o
+     *     NOVO lead_substatus_id está nessa lista.
+     *   - Qualquer um dos dois matchando → dispara.
+     *   - Se AMBAS as listas estão vazias: cai no fallback legado
+     *     (compara nome do status com "Vendido") — garante que quem tá
+     *     rodando o CRM sem ter configurado nada continua funcionando.
+     *
+     * O trigger roda em updated(), então checamos wasChanged() pra não
+     * disparar em updates que não mexem em status nem substatus (ex:
+     * alterou o telefone do lead).
      */
     protected function maybeCreateCommission(Lead $lead): void
     {
-        if (!$lead->wasChanged('status_id')) {
+        $changedStatus    = $lead->wasChanged('status_id');
+        $changedSubstatus = $lead->wasChanged('lead_substatus_id');
+
+        if (!$changedStatus && !$changedSubstatus) {
             return;
         }
 
-        if ($lead->status?->name !== 'Vendido') {
-            return;
-        }
-
+        // Idempotência — se já existe comissão pro lead, não cria outra.
+        // (O controller tem um endpoint de cancelamento + recriação se
+        // precisar refazer.)
         if (Commission::where('lead_id', $lead->id)->exists()) {
+            return;
+        }
+
+        if (!$this->matchesCommissionTrigger($lead, $changedStatus, $changedSubstatus)) {
             return;
         }
 
@@ -164,5 +186,46 @@ class LeadObserver
             ],
             'observer'
         );
+    }
+
+    /**
+     * True se o lead acabou de entrar num status/substatus configurado
+     * como gatilho. Fallback pro nome "Vendido" se admin ainda não
+     * configurou nada.
+     *
+     * @param  bool  $changedStatus     lead->wasChanged('status_id')
+     * @param  bool  $changedSubstatus  lead->wasChanged('lead_substatus_id')
+     */
+    protected function matchesCommissionTrigger(Lead $lead, bool $changedStatus, bool $changedSubstatus): bool
+    {
+        $statusIds    = array_map('intval', (array) Setting::get('commission_trigger_status_ids', []));
+        $substatusIds = array_map('intval', (array) Setting::get('commission_trigger_substatus_ids', []));
+
+        // Fallback legado — nenhum gatilho configurado = regra "Vendido"
+        // original. Só dispara na MUDANÇA de status (não de substatus).
+        if (empty($statusIds) && empty($substatusIds)) {
+            return $changedStatus && $lead->status?->name === 'Vendido';
+        }
+
+        // Match por status: só dispara quando acabou de mudar PRA esse
+        // status — evita refirar se outro campo foi editado depois.
+        if ($changedStatus
+            && $lead->status_id !== null
+            && in_array((int) $lead->status_id, $statusIds, true)
+        ) {
+            return true;
+        }
+
+        // Match por substatus: dispara quando acabou de mudar PRA esse
+        // substatus. Cobre o caso "venda confirmada" ser uma subetapa
+        // dentro de um status genérico ("Negociação" → "Contrato assinado").
+        if ($changedSubstatus
+            && $lead->lead_substatus_id !== null
+            && in_array((int) $lead->lead_substatus_id, $substatusIds, true)
+        ) {
+            return true;
+        }
+
+        return false;
     }
 }
