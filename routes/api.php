@@ -368,24 +368,11 @@ Route::middleware(['auth:sanctum', 'role:admin,gestor'])->group(function () {
 // buscar resumo inicial
 Route::get('/dashboard/atividades', function (Request $request) {
 
-    $periodo = $request->get('periodo', 'mensal');
-
-    switch ($periodo) {
-        case 'diario':
-            $start = now()->startOfDay();
-            $end   = now()->endOfDay();
-            break;
-
-        case 'semanal':
-            $start = now()->startOfWeek();
-            $end   = now()->endOfWeek();
-            break;
-
-        default:
-            $start = now()->startOfMonth();
-            $end   = now()->endOfMonth();
-            break;
-    }
+    // Sprint 3.5a — DashboardPeriod resolve diario/semanal/mensal + range
+    // customizado (periodo=custom&from=X&to=Y) vindo do filtro do Resumo
+    // de Produtividade. Sem esse helper, o range custom era ignorado e
+    // caía no default mensal.
+    [$start, $end] = \App\Support\DashboardPeriod::resolve($request);
 
     // 🔥 AJUSTA NOMES DAS COLUNAS AQUI SE NECESSÁRIO
     $base = \App\Models\Appointment::whereBetween('starts_at', [$start, $end])

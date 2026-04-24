@@ -112,30 +112,16 @@ class DashboardController extends Controller
      */
     public function funnel(Request $request)
 {
-    $periodo = $request->get('periodo', 'mensal');
-
-    switch ($periodo) {
-        case 'diario':
-            $start = now()->startOfDay();
-            $end   = now()->endOfDay();
-            break;
-
-        case 'semanal':
-            $start = now()->startOfWeek();
-            $end   = now()->endOfWeek();
-            break;
-
-        case 'mensal':
-        default:
-            $start = now()->startOfMonth();
-            $end   = now()->endOfMonth();
-            break;
-    }
+    // Sprint 3.5a — resolve period via helper central (diario/semanal/mensal
+    // OU range custom from/to). Antes o switch inline ignorava from/to.
+    [$start, $end] = \App\Support\DashboardPeriod::resolve($request);
 
     $funnel = LeadStatus::withCount([
-        'leads as total' //=> function ($q) use ($start, $end) {
-           //  $q->whereBetween('created_at', [$start, $end]);
-        //}
+        // Conta leads criados no período. Se o filtro for range custom,
+        // aqui que ele de fato reduz os números do funil.
+        'leads as total' => function ($q) use ($start, $end) {
+            $q->whereBetween('created_at', [$start, $end]);
+        },
     ])
     ->orderBy('order')
     ->get(['id', 'name', 'color_hex']);
@@ -145,22 +131,8 @@ class DashboardController extends Controller
 
 public function resumo(Request $request)
 {
-    $periodo = $request->get('periodo', 'mensal');
-
-    switch ($periodo) {
-        case 'diario':
-            $start = now()->startOfDay();
-            $end   = now()->endOfDay();
-            break;
-        case 'semanal':
-            $start = now()->startOfWeek();
-            $end   = now()->endOfWeek();
-            break;
-        default:
-            $start = now()->startOfMonth();
-            $end   = now()->endOfMonth();
-            break;
-    }
+    // Sprint 3.5a — idem funnel(): range custom via DashboardPeriod.
+    [$start, $end] = \App\Support\DashboardPeriod::resolve($request);
 
     // ⚠️ AJUSTA AQUI COM SEUS IDS REAIS
     $STATUS_VENDIDO = 6;
