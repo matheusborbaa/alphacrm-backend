@@ -82,11 +82,30 @@ class ChatMessageController extends Controller
             $query->where('id', '>', (int) $data['after_id']);
         }
 
+        // Sprint 4.6 fix — três cenários:
+        //
+        //   1) before_id presente → carregar histórico mais antigo (scroll up).
+        //      Pega LIMIT msgs IMEDIATAMENTE antes de before_id.
+        //      orderByDesc + limit + reverse = ordem cronológica final ASC.
+        //
+        //   2) after_id presente (polling delta) → pega TODAS as msgs novas
+        //      depois de after_id, ordenadas ASC. limit é só guardrail.
+        //      OK fazer ASC aqui porque normalmente vêm poucas msgs novas.
+        //
+        //   3) sem nenhum dos dois → INITIAL LOAD. Tem que pegar as ÚLTIMAS
+        //      LIMIT msgs (final do histórico), não as PRIMEIRAS! O bug
+        //      antigo fazia `orderBy ASC + limit` aqui — em conversas com
+        //      mais de 50 msgs, isso retornava o COMEÇO da conversa em vez
+        //      do fim, e o user via msgs antigas até o polling encher o
+        //      resto. Mesmo padrão do branch (1) resolve.
         if (!empty($data['before_id'])) {
             $query->where('id', '<', (int) $data['before_id']);
             $messages = $query->orderByDesc('id')->limit($limit)->get()->reverse()->values();
-        } else {
+        } elseif (!empty($data['after_id'])) {
             $messages = $query->orderBy('id')->limit($limit)->get();
+        } else {
+            // Initial load: últimas N msgs em ordem cronológica.
+            $messages = $query->orderByDesc('id')->limit($limit)->get()->reverse()->values();
         }
 
         // Sprint 3.8d — regra RECÍPROCA de confirmação de leitura. Só
