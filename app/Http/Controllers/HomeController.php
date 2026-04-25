@@ -52,11 +52,16 @@ class HomeController extends Controller
 
         /* ----------------------------------------------------
          | FINANCEIRO — escopo padrão por user logado, mas admin/gestor
-         | pode trocar via ?corretor_id=X. Empreendimento opcional aplica
-         | nos 4 KPIs (comissão pendente/recebida, vendas, VGV ativo).
+         | pode trocar via ?corretor_id=X (specific) ou =all (agrega
+         | toda a equipe). Quando finUserId é null = sem filtro de user.
+         | Empreendimento opcional aplica nos 4 KPIs sempre.
          |---------------------------------------------------- */
-        $comissQuery = Commission::where('user_id', $finUserId)
+        $comissQuery = Commission::query()
             ->whereBetween('created_at', [$finStart, $finEnd]);
+
+        if ($finUserId !== null) {
+            $comissQuery->where('user_id', $finUserId);
+        }
 
         if ($empreendimentoId) {
             // Comissão é polimórfica via lead → empreendimento. Usa whereHas
@@ -67,10 +72,14 @@ class HomeController extends Controller
         $comissPendente = (clone $comissQuery)->where('status', 'pending')->sum('commission_value');
         $comissRecebido = (clone $comissQuery)->where('status', 'paid')->sum('commission_value');
 
-        // Vendas fechadas (status 'Vendido') no período, atribuídas ao user.
-        $soldLeadsQ = Lead::where('assigned_user_id', $finUserId)
+        // Vendas fechadas (status 'Vendido') no período, atribuídas ao user
+        // (ou todos os users se finUserId for null).
+        $soldLeadsQ = Lead::query()
             ->whereBetween('status_changed_at', [$finStart, $finEnd])
             ->whereHas('status', fn($q) => $q->where('name', 'Vendido'));
+        if ($finUserId !== null) {
+            $soldLeadsQ->where('assigned_user_id', $finUserId);
+        }
         if ($empreendimentoId) {
             $soldLeadsQ->where('empreendimento_id', $empreendimentoId);
         }
@@ -78,9 +87,14 @@ class HomeController extends Controller
         $vendasCount = $soldLeads->count();
         $vendasValor = (float) $soldLeads->sum('value');
 
-        // VGV ativo: leads NÃO Vendidos/Perdidos atribuídos ao user.
-        $vgvQ = Lead::where('assigned_user_id', $finUserId)
+        // VGV ativo: leads NÃO Vendidos/Perdidos. Quando agregando todos,
+        // inclui leads sem corretor atribuído também (assigned_user_id null) —
+        // faz sentido pro "VGV total da carteira da imobiliária".
+        $vgvQ = Lead::query()
             ->whereDoesntHave('status', fn($q) => $q->whereIn('name', ['Vendido', 'Perdido']));
+        if ($finUserId !== null) {
+            $vgvQ->where('assigned_user_id', $finUserId);
+        }
         if ($empreendimentoId) {
             $vgvQ->where('empreendimento_id', $empreendimentoId);
         }
@@ -282,10 +296,14 @@ class HomeController extends Controller
         $finUserId        = $this->resolveFinanceUserId($request, $user);
         $empreendimentoId = $this->resolveEmpreendimentoFilter($request);
 
-        $query = Commission::where('user_id', $finUserId)
+        $query = Commission::query()
             ->with([
                 'lead:id,name,empreendimento_id',
                 'lead.empreendimento:id,name',
+                // Sprint H1.1b — nome do corretor; útil quando admin/gestor
+                // tá olhando 'Todos os corretores' pra saber quem é o dono
+                // de cada linha. Eager-load barato (só id+name).
+                'user:id,name',
             ])
             ->where(function ($q) use ($start, $end) {
                 // Cobre comissões com expected_date no período OU comissões
@@ -297,6 +315,13 @@ class HomeController extends Controller
                          ->whereBetween('created_at', [$start, $end]);
                   });
             });
+
+        // Sprint H1.1b — quando admin/gestor escolhe "Todos os corretores"
+        // ($finUserId é null), pula o where de user_id pra retornar a
+        // lista agregada da equipe inteira.
+        if ($finUserId !== null) {
+            $query->where('user_id', $finUserId);
+        }
 
         if ($empreendimentoId) {
             $query->whereHas('lead', fn($q) => $q->where('empreendimento_id', $empreendimentoId));
@@ -319,6 +344,10 @@ class HomeController extends Controller
                 'vgv'                  => (float) $c->sale_value,
                 'commission_value'     => (float) $c->commission_value,
                 'status'               => $c->status ?: 'pending',
+                // Sprint H1.1b — nome do corretor dono da comissão. Frontend
+                // só renderiza essa coluna quando filtro = 'all'; nos outros
+                // casos é redundante (todas as linhas teriam o mesmo nome).
+                'corretor_name'        => $c->user?->name,
             ];
         }));
     }
@@ -369,15 +398,19 @@ class HomeController extends Controller
     /**
      * Decide qual user_id alimenta os números do bloco Financeiro.
      *
-     * Regra: corretor comum SEMPRE vê só os próprios dados — `corretor_id`
-     * vindo na query string é ignorado pra ele. Admin/gestor pode usar o
-     * filtro pra ver de outro user. Se vier inválido (não é int, ou é o
-     * próprio user), também retorna o próprio id (no-op silencioso).
+     * Retorno:
+     *   - int  → filtra `user_id` por esse valor específico (caso normal)
+     *   - null → "todos os corretores" (admin/gestor escolheu agregar a
+     *            equipe inteira); chamadores devem PULAR o where('user_id')
      *
-     * Não validamos se o corretor_id existe no banco — query depois vai
-     * só retornar 0 nos somatórios, que é resposta visualmente óbvia.
+     * Regra:
+     *   - Corretor comum SEMPRE vê só os próprios dados — `corretor_id`
+     *     vindo na query string é ignorado pra ele.
+     *   - Admin/gestor pode trocar pra outro user OU pedir 'all' pra
+     *     agregar toda a equipe num único conjunto de números.
+     *   - Vazio / inválido → cai no próprio user (no-op silencioso).
      */
-    private function resolveFinanceUserId(Request $request, $user): int
+    private function resolveFinanceUserId(Request $request, $user): ?int
     {
         $myId = (int) $user->id;
         $role = strtolower(trim((string) ($user->role ?? '')));
@@ -385,7 +418,12 @@ class HomeController extends Controller
             return $myId;
         }
 
-        $corretor = (int) $request->input('corretor_id', 0);
+        $raw = (string) $request->input('corretor_id', '');
+        if ($raw === 'all') {
+            return null; // sem filtro de user — agrega tudo
+        }
+
+        $corretor = (int) $raw;
         return $corretor > 0 ? $corretor : $myId;
     }
 
