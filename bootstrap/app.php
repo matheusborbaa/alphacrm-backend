@@ -11,9 +11,15 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
         commands: __DIR__.'/../routes/console.php',
-        channels: __DIR__.'/../routes/channels.php',
         api: __DIR__.'/../routes/api.php',
         health: '/up',
+    )
+    // Sprint 4.5 — registra a rota /broadcasting/auth com middleware
+    // auth:sanctum (Bearer token). Sem isso a rota não existe e o Echo
+    // não consegue subscribe em canais privados.
+    ->withBroadcasting(
+        __DIR__.'/../routes/channels.php',
+        ['middleware' => ['auth:sanctum']],
     )
     ->withMiddleware(function (Middleware $middleware): void {
 
