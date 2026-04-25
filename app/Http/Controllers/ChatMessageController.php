@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\ChatConversationReadUpdated;
+use App\Events\ChatMessageSent;
 use App\Models\ChatConversation;
 use App\Models\ChatConversationRead;
 use App\Models\ChatMessage;
@@ -13,6 +15,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Controller de mensagens do chat interno.
@@ -218,6 +221,28 @@ class ChatMessageController extends Controller
             return $msg->load(['attachments', 'replyTo:id,sender_id,body']);
         });
 
+        // Sprint 4.5 — broadcast realtime pra Reverb. Dispatch DEPOIS do
+        // commit da transaction pra garantir que o peer fazendo fetch no
+        // GET /messages achará a msg persistida. Canal conversa.{id} avisa
+        // os dois participantes; canal user.{peer_id} avisa o peer em
+        // background pra badge/sidebar mesmo sem a conversa aberta.
+        //
+        // Silencioso: se broadcasting driver não tá configurado ou Reverb
+        // está offline, o evento é dropado — o polling continua cobrindo.
+        try {
+            $peerId = $conversation->user_a_id === $me
+                ? $conversation->user_b_id
+                : $conversation->user_a_id;
+            if ($peerId) {
+                event(new ChatMessageSent($message, (int) $peerId));
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Falha ao broadcast ChatMessageSent', [
+                'message_id' => $message->id,
+                'error'      => $e->getMessage(),
+            ]);
+        }
+
         return response()->json($this->buildMessagePayload($message), 201);
     }
 
@@ -333,6 +358,27 @@ class ChatMessageController extends Controller
                 ->where('id', '<=', $targetId)
                 ->whereNull('read_at')
                 ->update(['read_at' => now()]);
+        }
+
+        // Sprint 4.5 — broadcast pro OUTRO participante atualizar ✓✓
+        // em tempo real. Só dispara quando exposeReads é true (respeita
+        // a regra recíproca); senão seria um "vazamento" de sinal de
+        // leitura mesmo com read receipts desligado. O frontend filtra
+        // localmente por reader_id !== me.id.
+        try {
+            if ($exposeReads) {
+                event(new ChatConversationReadUpdated(
+                    $conversation,
+                    $me,
+                    (int) $read->last_read_message_id,
+                    $read->last_read_at?->toISOString(),
+                ));
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Falha ao broadcast ChatConversationReadUpdated', [
+                'conversation_id' => $conversationId,
+                'error'           => $e->getMessage(),
+            ]);
         }
 
         return response()->json([

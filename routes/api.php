@@ -963,6 +963,26 @@ Route::middleware(['auth:sanctum', 'chat.enabled'])->prefix('chat')->group(funct
     // doc foi excluído / tem solicitação pendente).
     Route::get   ('/attachments/{id}/lead-document', [ChatAttachmentController::class, 'openLeadDocument'])
         ->whereNumber('id');
+
+    // Sprint 4.5 — config pública do Reverb (pubkey, host, port, scheme)
+    // pro frontend inicializar o Echo. Não expõe o app_secret. Se o
+    // driver não é reverb, retorna enabled=false e o frontend cai pro
+    // polling tradicional sem tentar conectar.
+    Route::get('/realtime/config', function () {
+        $driver = config('broadcasting.default');
+        if ($driver !== 'reverb') {
+            return response()->json(['enabled' => false]);
+        }
+        return response()->json([
+            'enabled' => true,
+            'driver'  => 'reverb',
+            'key'     => config('broadcasting.connections.reverb.key'),
+            'host'    => config('broadcasting.connections.reverb.options.host'),
+            'port'    => (int) config('broadcasting.connections.reverb.options.port'),
+            'scheme'  => config('broadcasting.connections.reverb.options.scheme', 'http'),
+            'tls'     => config('broadcasting.connections.reverb.options.useTLS', false),
+        ]);
+    })->middleware('auth:sanctum');
 });
 
 

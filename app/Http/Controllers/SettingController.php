@@ -132,6 +132,16 @@ class SettingController extends Controller
             'default' => [],
         ],
 
+        // =================== APARÊNCIA GLOBAL (Sprint 3.10) =============
+        // Toggle visual aplicado em TODAS as páginas. Quando false, um
+        // helper JS adiciona `body.ui-square` e o CSS global força
+        // border-radius:0 em todos os descendentes com !important.
+        // Default true — mantém o visual atual.
+        'ui_rounded_corners' => [
+            'type'    => 'bool',
+            'default' => true,
+        ],
+
         // =================== MÓDULO DE CHAT =============================
         // Liga/desliga o chat interno globalmente. Quando OFF: sidebar esconde
         // o item, deep-link /chat.php redireciona pro dashboard e os
