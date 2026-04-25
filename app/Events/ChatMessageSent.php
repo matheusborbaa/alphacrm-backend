@@ -59,10 +59,28 @@ class ChatMessageSent implements ShouldBroadcastNow
 
     public function broadcastWith(): array
     {
+        // Sprint 4.5d — enriquecimento mínimo do payload pra alimentar o
+        // toast in-app (canto inferior direito) sem precisar de HTTP extra.
+        // Limitamos o preview a 80 chars pra não inflar o frame do WS;
+        // se for anexo sem texto, usa "📎 Anexo" como fallback amigável.
+        $body = (string) ($this->message->body ?? '');
+        $preview = $body !== ''
+            ? mb_strimwidth($body, 0, 80, '…')
+            : '📎 Anexo';
+
+        // sender_name: pega só o primeiro nome (cabe no toast estreito) com
+        // fallback pra "Alguém" se o user foi deletado / null.
+        $senderName = optional($this->message->sender)->name ?? 'Alguém';
+        $senderName = trim(explode(' ', $senderName)[0] ?? $senderName);
+
         return [
             'message_id'      => $this->message->id,
             'conversation_id' => $this->message->conversation_id,
             'sender_id'       => $this->message->sender_id,
+            // Enriquecido pra toast — mantém compat com listeners antigos
+            // (campos novos são opcionais; quem não usa, ignora).
+            'sender_name'     => $senderName,
+            'preview'         => $preview,
             // created_at ajuda o frontend a ordenar sem fetch extra quando
             // quiser mostrar preview na sidebar antes do refresh completo.
             'created_at'      => $this->message->created_at?->toISOString(),
