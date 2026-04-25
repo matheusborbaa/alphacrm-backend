@@ -238,7 +238,11 @@ Route::delete(
 |--------------------------------------------------------------------------
 */
 Route::middleware('auth:sanctum')->get('/lead-status', function () {
-    return LeadStatus::select('id', 'name', 'order', 'color_hex')
+    // Sprint H1.4 — inclui is_terminal pra Configurações poder ler o estado
+    // atual do checkbox "Etapa terminal" ao abrir o modal de edição. Sem
+    // isso o checkbox sempre abria desmarcado e gravava false ao salvar,
+    // sobrescrevendo a flag silenciosamente.
+    return LeadStatus::select('id', 'name', 'order', 'color_hex', 'is_terminal')
         ->with(['substatus:id,lead_status_id,name,order,color_hex'])
         ->orderBy('order')
         ->get();
