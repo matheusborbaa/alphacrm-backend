@@ -758,7 +758,12 @@ Route::middleware('auth:sanctum')->get('/me', function (Request $request) {
 Route::middleware(['auth:sanctum', 'role:admin,gestor'])->group(function () {
 
     Route::get('/dashboard', [DashboardController::class, 'index']);
-    Route::get('/dashboard/funnel', [DashboardController::class, 'funnel']);
+    // Sprint H1.4 fix — aponta pro DashboardHomeController@funnel (novo
+    // controller com filtro is_terminal + cálculo de tempo médio +
+    // taxa de conversão). O DashboardController@funnel antigo tinha
+    // shape incompatível com o frontend novo (chaves hardcoded em vez
+    // de array de stages com totals/conv/avg_days).
+    Route::get('/dashboard/funnel', [DashboardHomeController::class, 'funnel']);
 });
     // Fora do group acima de propósito? Não — só faltava middleware. Agora
     // exige auth:sanctum pra não expor resumo de métricas pra anônimos.

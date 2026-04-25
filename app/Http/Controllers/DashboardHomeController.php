@@ -35,11 +35,21 @@ class DashboardHomeController extends Controller
      * tudo pra renderizar o funil novo (números dentro, descrição+%+tempo
      * fora).
      */
-    public function funnel()
+    public function funnel(Request $request)
     {
+        // Sprint H1.4g — filtro próprio do funil. Aceita periodo (chips) ou
+        // from/to (range customizado). Sem filtro = mostra TODO o pipeline.
+        // Filtra leads pelo created_at no período: "leads criados nesse
+        // intervalo, agrupados por etapa atual onde estão agora".
+        [$start, $end] = $this->resolveFunnelPeriod($request);
+
         $statuses = \App\Models\LeadStatus::query()
             ->where('is_terminal', false)         // tira terminais do funil
-            ->withCount('leads')
+            ->withCount(['leads' => function ($q) use ($start, $end) {
+                if ($start && $end) {
+                    $q->whereBetween('created_at', [$start, $end]);
+                }
+            }])
             ->orderBy('order')
             ->get(['id', 'name', 'order', 'color_hex']);
 
@@ -146,6 +156,44 @@ class DashboardHomeController extends Controller
         }
 
         return $avgs;
+    }
+
+    /**
+     * Sprint H1.4g — Resolve [start, end] do filtro próprio do Funil.
+     * Mesma estrutura do resolveFinancePeriod do HomeController, mas
+     * isolado aqui pra não criar dependência cruzada entre controllers.
+     *
+     * Modos aceitos:
+     *   1) ?from=YYYY-MM-DD&to=YYYY-MM-DD → range customizado
+     *   2) ?periodo=diario|semanal|mensal → atalhos
+     *   3) sem nada                       → null/null = sem filtro (todo o pipeline)
+     *
+     * Retorna [null, null] quando não tem filtro pra o caller pular o
+     * whereBetween e contar todos os leads.
+     */
+    private function resolveFunnelPeriod(\Illuminate\Http\Request $request): array
+    {
+        $from = trim((string) $request->input('from', ''));
+        $to   = trim((string) $request->input('to', ''));
+
+        if ($from !== '' && $to !== '') {
+            try {
+                $start = \Carbon\Carbon::parse($from)->startOfDay();
+                $end   = \Carbon\Carbon::parse($to)->endOfDay();
+                if ($start->gt($end)) [$start, $end] = [$end->startOfDay(), $start->endOfDay()];
+                return [$start, $end];
+            } catch (\Throwable $e) {
+                // Datas inválidas → sem filtro
+            }
+        }
+
+        $periodo = (string) $request->input('periodo', '');
+        return match ($periodo) {
+            'diario'  => [now()->startOfDay(),   now()->endOfDay()],
+            'semanal' => [now()->startOfWeek(),  now()->endOfWeek()],
+            'mensal'  => [now()->startOfMonth(), now()->endOfMonth()],
+            default   => [null, null],   // sem filtro = pipeline inteiro
+        };
     }
 
     public function index(Request $request)
