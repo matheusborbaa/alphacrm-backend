@@ -984,11 +984,16 @@ Route::middleware('auth:sanctum')->get('/realtime/config', function () {
 
     // Sprint 4.5 — host PÚBLICO (browser conecta via nginx) é diferente
     // do host SERVER-SIDE (Laravel publica direto no daemon local).
-    // Se REVERB_PUBLIC_* não foi setado, cai pro REVERB_HOST/PORT/SCHEME
-    // (compat com setups single-host antigos).
-    $publicHost   = env('REVERB_PUBLIC_HOST',   config('broadcasting.connections.reverb.options.host'));
-    $publicPort   = env('REVERB_PUBLIC_PORT',   config('broadcasting.connections.reverb.options.port'));
-    $publicScheme = env('REVERB_PUBLIC_SCHEME', config('broadcasting.connections.reverb.options.scheme', 'http'));
+    // Lemos via config() em vez de env() porque com config:cache em
+    // produção o env() retorna null fora dos arquivos de config.
+    // Se 'public' não foi configurado, cai pro 'options' (compat com
+    // setups single-host antigos).
+    $publicHost   = config('broadcasting.connections.reverb.public.host')
+                    ?: config('broadcasting.connections.reverb.options.host');
+    $publicPort   = config('broadcasting.connections.reverb.public.port')
+                    ?: config('broadcasting.connections.reverb.options.port');
+    $publicScheme = config('broadcasting.connections.reverb.public.scheme')
+                    ?: config('broadcasting.connections.reverb.options.scheme', 'http');
 
     return response()->json([
         'enabled' => true,

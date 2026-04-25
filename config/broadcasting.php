@@ -35,11 +35,25 @@ return [
             'key' => env('REVERB_APP_KEY'),
             'secret' => env('REVERB_APP_SECRET'),
             'app_id' => env('REVERB_APP_ID'),
+            // Server-side: host/port que o Laravel usa pra publicar eventos
+            // direto no daemon (geralmente 127.0.0.1:8080 — atalho que evita
+            // round-trip pelo nginx). Se não tiver REVERB_PUBLIC_*, esse
+            // host vira o público também (compat com setups single-host).
             'options' => [
                 'host' => env('REVERB_HOST'),
                 'port' => env('REVERB_PORT', 443),
                 'scheme' => env('REVERB_SCHEME', 'https'),
                 'useTLS' => env('REVERB_SCHEME', 'https') === 'https',
+            ],
+            // Sprint 4.5 — host PÚBLICO que o frontend conecta via wss.
+            // Diferente do server-side acima quando o daemon escuta em
+            // localhost mas o browser tem que passar pelo nginx.
+            // Em config (e não em routes) porque env() retorna null
+            // quando config:cache foi rodado em produção.
+            'public' => [
+                'host'   => env('REVERB_PUBLIC_HOST'),
+                'port'   => env('REVERB_PUBLIC_PORT', 443),
+                'scheme' => env('REVERB_PUBLIC_SCHEME', 'https'),
             ],
             'client_options' => [
                 // Guzzle client options: https://docs.guzzlephp.org/en/stable/request-options.html
