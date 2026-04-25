@@ -183,6 +183,19 @@ class SettingController extends Controller
         // `_server_alert_last_notify_*`, que ficam fora desse whitelist
         // porque são estado interno (prefixadas com "_") e não passam
         // pelo endpoint de escrita.
+
+        // =================== HOME — LEADS QUE PRECISAM DE ATENÇÃO =======
+        // Threshold (em dias) pra um lead ser considerado "sem contato" e
+        // entrar no card "Leads que precisam de atenção" da Home. Lê em
+        // /dashboard/leads-atencao. Default 5 (mantém comportamento legado).
+        // Range 1..30 — fora disso clampa, tanto na escrita quanto na
+        // leitura (defesa em profundidade contra valores absurdos).
+        'leads_atencao_dias_sem_contato' => [
+            'type'    => 'int',
+            'default' => 5,
+            'min'     => 1,
+            'max'     => 30,
+        ],
     ];
 
     /** Lista TODAS as configurações (chave => valor). Só chaves conhecidas. */

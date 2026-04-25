@@ -38,41 +38,53 @@ class HomeController extends Controller
         // Sprint 3.5b — bloco Financeiro tem filtro próprio (diario/semanal/
         // mensal). O resto continua usando o mês corrente como antes — metas
         // mensais e ranking do mês não fazem sentido diário/semanal.
-        $periodo = (string) $request->input('periodo', 'mensal');
-        [$finStart, $finEnd] = match ($periodo) {
-            'diario'  => [now()->startOfDay(),   now()->endOfDay()],
-            'semanal' => [now()->startOfWeek(),  now()->endOfWeek()],
-            default   => [now()->startOfMonth(), now()->endOfMonth()],
-        };
+        // Sprint H1.1 — agora aceita também range customizado (from/to),
+        // corretor_id (admin/gestor) e empreendimento_id pra filtrar o
+        // bloco financeiro com mais granularidade.
+        [$finStart, $finEnd] = $this->resolveFinancePeriod($request);
+        $finUserId           = $this->resolveFinanceUserId($request, $user);
+        $empreendimentoId    = $this->resolveEmpreendimentoFilter($request);
+
         $start = now()->startOfMonth();
         $end   = now()->endOfMonth();
         $mes   = now()->month;
         $ano   = now()->year;
 
         /* ----------------------------------------------------
-         | FINANCEIRO — escopo por user (admin/gestor enxergam
-         | os próprios números também; pra visão gerencial da
-         | equipe, já existe /reports/ranking).
+         | FINANCEIRO — escopo padrão por user logado, mas admin/gestor
+         | pode trocar via ?corretor_id=X. Empreendimento opcional aplica
+         | nos 4 KPIs (comissão pendente/recebida, vendas, VGV ativo).
          |---------------------------------------------------- */
-        $comissQuery = Commission::where('user_id', $user->id)
+        $comissQuery = Commission::where('user_id', $finUserId)
             ->whereBetween('created_at', [$finStart, $finEnd]);
+
+        if ($empreendimentoId) {
+            // Comissão é polimórfica via lead → empreendimento. Usa whereHas
+            // pra não precisar de JOIN duplicado em cada SUM (clones abaixo).
+            $comissQuery->whereHas('lead', fn($q) => $q->where('empreendimento_id', $empreendimentoId));
+        }
 
         $comissPendente = (clone $comissQuery)->where('status', 'pending')->sum('commission_value');
         $comissRecebido = (clone $comissQuery)->where('status', 'paid')->sum('commission_value');
 
-        // Vendas fechadas (status 'Vendido') no período, atribuídas ao user
-        $soldLeads = Lead::where('assigned_user_id', $user->id)
+        // Vendas fechadas (status 'Vendido') no período, atribuídas ao user.
+        $soldLeadsQ = Lead::where('assigned_user_id', $finUserId)
             ->whereBetween('status_changed_at', [$finStart, $finEnd])
-            ->whereHas('status', fn($q) => $q->where('name', 'Vendido'))
-            ->get(['id', 'value']);
-
+            ->whereHas('status', fn($q) => $q->where('name', 'Vendido'));
+        if ($empreendimentoId) {
+            $soldLeadsQ->where('empreendimento_id', $empreendimentoId);
+        }
+        $soldLeads   = $soldLeadsQ->get(['id', 'value']);
         $vendasCount = $soldLeads->count();
         $vendasValor = (float) $soldLeads->sum('value');
 
-        // VGV ativo: leads NÃO Vendidos/Perdidos atribuídos ao user
-        $vgvAtivo = (float) Lead::where('assigned_user_id', $user->id)
-            ->whereDoesntHave('status', fn($q) => $q->whereIn('name', ['Vendido', 'Perdido']))
-            ->sum('value');
+        // VGV ativo: leads NÃO Vendidos/Perdidos atribuídos ao user.
+        $vgvQ = Lead::where('assigned_user_id', $finUserId)
+            ->whereDoesntHave('status', fn($q) => $q->whereIn('name', ['Vendido', 'Perdido']));
+        if ($empreendimentoId) {
+            $vgvQ->where('empreendimento_id', $empreendimentoId);
+        }
+        $vgvAtivo = (float) $vgvQ->sum('value');
 
         /* ----------------------------------------------------
          | META DO MÊS — pega de user_metas
@@ -184,6 +196,31 @@ class HomeController extends Controller
             ->whereNull('completed_at')
             ->count();
 
+        // Sprint H1.2 — Follow-ups atrasados: tarefas com kind=followup,
+        // due_at no passado, ainda não concluídas. Subset das "tarefas
+        // pendentes" filtrado por kind. Usado no novo mini-card "Follow-ups
+        // atrasados" da Home pra dar visibilidade extra ao tipo mais
+        // sensível (sem follow-up, lead esfria).
+        $followupsAtrasados = Appointment::tasks()
+            ->where('user_id', $user->id)
+            ->where('task_kind', Appointment::KIND_FOLLOWUP)
+            ->overdue()
+            ->count();
+
+        // Sprint H1.2 — Leads sem tarefa agendada: leads atribuídos ao user
+        // que não têm NENHUMA appointment aberta no futuro (ou hoje). Usa
+        // NOT EXISTS via whereDoesntHave pra evitar JOIN+DISTINCT pesado.
+        // Não filtra por status (vendido/descartado) — fica simples e honesto;
+        // quando o Sprint H1.4 adicionar is_terminal em lead_statuses, dá
+        // pra refinar aqui pra ignorar leads em etapa terminal.
+        $leadsSemTarefa = Lead::where('assigned_user_id', $user->id)
+            ->whereDoesntHave('appointments', function ($q) {
+                $q->whereNull('completed_at')
+                  ->whereNotNull('due_at')
+                  ->where('due_at', '>=', now()->startOfDay());
+            })
+            ->count();
+
         /* ----------------------------------------------------
          | RESPONSE
          |---------------------------------------------------- */
@@ -204,8 +241,11 @@ class HomeController extends Controller
             ],
             'metas' => $metas,
             'pendentes' => [
-                'atendimentos' => $atendimentosPendentes,
-                'tarefas'      => $tarefasPendentes,
+                'atendimentos'        => $atendimentosPendentes,
+                'tarefas'             => $tarefasPendentes,
+                // Sprint H1.2 — 2 contadores novos pros mini-cards extras.
+                'followups_atrasados' => $followupsAtrasados,
+                'leads_sem_tarefa'    => $leadsSemTarefa,
             ],
             'gamificacao' => [
                 'minha_posicao' => $myPos,
@@ -233,17 +273,16 @@ class HomeController extends Controller
      */
     public function nextCommissions(Request $request)
     {
-        $user    = $request->user();
-        $periodo = (string) $request->input('periodo', 'mensal');
+        $user = $request->user();
 
-        // Mesmo esquema de períodos do summary. Corretor vê só as dele.
-        [$start, $end] = match ($periodo) {
-            'diario'  => [now()->startOfDay(),   now()->endOfDay()],
-            'semanal' => [now()->startOfWeek(),  now()->endOfWeek()],
-            default   => [now()->startOfMonth(), now()->endOfMonth()],
-        };
+        // Sprint H1.1 — mesmo conjunto de filtros que o summary usa, via
+        // helpers compartilhados pra garantir comportamento idêntico (range
+        // customizado, troca de corretor por admin, filtro empreendimento).
+        [$start, $end]    = $this->resolveFinancePeriod($request);
+        $finUserId        = $this->resolveFinanceUserId($request, $user);
+        $empreendimentoId = $this->resolveEmpreendimentoFilter($request);
 
-        $rows = Commission::where('user_id', $user->id)
+        $query = Commission::where('user_id', $finUserId)
             ->with([
                 'lead:id,name,empreendimento_id',
                 'lead.empreendimento:id,name',
@@ -257,7 +296,13 @@ class HomeController extends Controller
                       $q2->whereNull('expected_payment_date')
                          ->whereBetween('created_at', [$start, $end]);
                   });
-            })
+            });
+
+        if ($empreendimentoId) {
+            $query->whereHas('lead', fn($q) => $q->where('empreendimento_id', $empreendimentoId));
+        }
+
+        $rows = $query
             ->orderByRaw('COALESCE(expected_payment_date, DATE_ADD(created_at, INTERVAL 30 DAY)) ASC')
             ->limit(50)
             ->get();
@@ -276,5 +321,82 @@ class HomeController extends Controller
                 'status'               => $c->status ?: 'pending',
             ];
         }));
+    }
+
+    /* ==========================================================
+     * Sprint H1.1 — Helpers de filtro do bloco Financeiro.
+     * Compartilhados entre summary() e nextCommissions() pra
+     * comportamento idêntico nos dois endpoints.
+     * ======================================================== */
+
+    /**
+     * Resolve [start, end] do bloco Financeiro. Aceita 3 modos:
+     *   1) ?from=YYYY-MM-DD&to=YYYY-MM-DD  → range customizado
+     *   2) ?periodo=diario|semanal|mensal  → atalhos comuns
+     *   3) sem nada                         → mensal (default histórico)
+     *
+     * `to` no parse vira endOfDay pra incluir o dia inteiro. Se vier um
+     * só (só from OU só to), trata como mensal — meia-bagunça não vale.
+     * Retorna sempre Carbon instances pra usar em whereBetween.
+     */
+    private function resolveFinancePeriod(Request $request): array
+    {
+        $from = trim((string) $request->input('from', ''));
+        $to   = trim((string) $request->input('to', ''));
+
+        if ($from !== '' && $to !== '') {
+            try {
+                $start = Carbon::parse($from)->startOfDay();
+                $end   = Carbon::parse($to)->endOfDay();
+                // Se inverteram from/to, conserta automaticamente em vez de
+                // explodir — UX mais tolerante.
+                if ($start->gt($end)) [$start, $end] = [$end->startOfDay(), $start->endOfDay()];
+                return [$start, $end];
+            } catch (\Throwable $e) {
+                // Datas malformadas → cai no padrão mensal. Não vale a pena
+                // 422 pra um filtro auxiliar.
+            }
+        }
+
+        $periodo = (string) $request->input('periodo', 'mensal');
+        return match ($periodo) {
+            'diario'  => [now()->startOfDay(),   now()->endOfDay()],
+            'semanal' => [now()->startOfWeek(),  now()->endOfWeek()],
+            default   => [now()->startOfMonth(), now()->endOfMonth()],
+        };
+    }
+
+    /**
+     * Decide qual user_id alimenta os números do bloco Financeiro.
+     *
+     * Regra: corretor comum SEMPRE vê só os próprios dados — `corretor_id`
+     * vindo na query string é ignorado pra ele. Admin/gestor pode usar o
+     * filtro pra ver de outro user. Se vier inválido (não é int, ou é o
+     * próprio user), também retorna o próprio id (no-op silencioso).
+     *
+     * Não validamos se o corretor_id existe no banco — query depois vai
+     * só retornar 0 nos somatórios, que é resposta visualmente óbvia.
+     */
+    private function resolveFinanceUserId(Request $request, $user): int
+    {
+        $myId = (int) $user->id;
+        $role = strtolower(trim((string) ($user->role ?? '')));
+        if (!in_array($role, ['admin', 'gestor'], true)) {
+            return $myId;
+        }
+
+        $corretor = (int) $request->input('corretor_id', 0);
+        return $corretor > 0 ? $corretor : $myId;
+    }
+
+    /**
+     * Resolve filtro opcional por empreendimento_id. Retorna 0 se ausente
+     * ou inválido — chamadores devem checar com `if ($id)` antes de aplicar.
+     * Aceito pra qualquer role.
+     */
+    private function resolveEmpreendimentoFilter(Request $request): int
+    {
+        $id = (int) $request->input('empreendimento_id', 0);
+        return $id > 0 ? $id : 0;
     }
 }

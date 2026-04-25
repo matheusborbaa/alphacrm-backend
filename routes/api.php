@@ -69,7 +69,12 @@ use App\Http\Controllers\VpsStatusController;
 // Protegida com auth:sanctum — expõe nomes de leads, não pode ficar aberta.
 Route::get('/dashboard/leads-atencao', function () {
 
-    $limiteDias = 5;
+    // Sprint H1.3 — limite de dias é configurável via Settings.
+    // Default 5 dias (mantém compat com behavior anterior).
+    // Range válido: 1-30 dias (validado tanto na escrita quanto aqui no
+    // read pra defender contra valores absurdos que escapem da UI).
+    $limiteDias = (int) \App\Models\Setting::get('leads_atencao_dias_sem_contato', 5);
+    $limiteDias = max(1, min(30, $limiteDias));
 
     $leads = Lead::where(function ($q) use ($limiteDias) {
 
