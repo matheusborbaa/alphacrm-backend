@@ -19,7 +19,7 @@ class LeadStatusController extends Controller
 {
     public function index()
     {
-        return LeadStatus::select('id', 'name', 'order', 'color_hex')
+        return LeadStatus::select('id', 'name', 'order', 'color_hex', 'is_terminal')
             ->withCount('leads')
             ->orderBy('order')
             ->get();
@@ -96,6 +96,8 @@ class LeadStatusController extends Controller
             'order'     => 'nullable|integer|min:0',
             // Hex colorido: exige 7 chars começando com # (ex: #3B82F6)
             'color_hex' => ['nullable', 'regex:/^#[0-9A-Fa-f]{6}$/'],
+            // Sprint H1.4 — esconder do funil (etapa terminal: vendido/perdido)
+            'is_terminal' => 'sometimes|boolean',
         ]);
     }
 }

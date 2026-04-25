@@ -14,6 +14,14 @@ class LeadStatus extends Model
         'name',
         'order',
         'color_hex',
+        // Sprint H1.4 — etapa "terminal" não aparece no desenho do funil
+        // (Vendido, Perdido, Descartado…). Continua sendo etapa válida
+        // pra mover leads, só não conta na visualização gráfica do funil.
+        'is_terminal',
+    ];
+
+    protected $casts = [
+        'is_terminal' => 'boolean',
     ];
 
     public function leads(): HasMany
