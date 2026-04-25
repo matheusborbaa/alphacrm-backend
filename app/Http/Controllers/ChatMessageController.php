@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Events\ChatConversationReadUpdated;
+use App\Events\ChatMessageDeleted;
+use App\Events\ChatMessageEdited;
 use App\Events\ChatMessageSent;
 use App\Models\ChatConversation;
 use App\Models\ChatConversationRead;
@@ -68,6 +70,10 @@ class ChatMessageController extends Controller
         $limit = (int) ($data['limit'] ?? 50);
 
         $query = ChatMessage::query()
+            // Sprint 4.6 — withTrashed inclui msgs apagadas; o frontend mostra
+            // "Mensagem apagada" no lugar do body. Sem isso a thread "pula"
+            // posições e fica confusa pra quem viu a msg antes de ser apagada.
+            ->withTrashed()
             ->with('attachments') // Sprint 2: eager-load — evita N+1 no render
             ->with('replyTo:id,sender_id,body') // Sprint 4.4: msg-pai citada
             ->where('conversation_id', $conversationId);
@@ -495,6 +501,179 @@ class ChatMessageController extends Controller
     }
 
     /**
+     * Sprint 4.6 — Edita o body de uma msg.
+     *
+     * Regras (validadas em sequência, primeira que falhar = 422/403):
+     *   1. Tem que ser o autor da msg (não-autor = 403).
+     *   2. Dentro de 15min do envio (passou = 422 com janela_expirada).
+     *   3. Ainda não foi lida pelo destinatário (lida = 422 ja_lida).
+     *
+     * Após sucesso: dispara ChatMessageEdited pra atualizar a UI dos
+     * dois lados em tempo real. Anexos NÃO são tocados — só editamos texto.
+     */
+    public function update(Request $request, int $messageId): JsonResponse
+    {
+        // findOrFail SEM withTrashed: msg apagada não pode ser editada.
+        // Se o user tentar (frontend bugado), retorna 404 limpo.
+        $message = ChatMessage::findOrFail($messageId);
+        $conversation = ChatConversation::findOrFail($message->conversation_id);
+        $this->ensureParticipant($conversation);
+
+        $me = (int) Auth::id();
+
+        // Regra 1 — só o autor edita o próprio texto. Admin não pode
+        // editar msg alheia (seria fingir ser outra pessoa, problema sério).
+        if ($message->sender_id !== $me) {
+            return response()->json([
+                'message' => 'Você só pode editar suas próprias mensagens.',
+            ], 403);
+        }
+
+        // Regra 2 — janela de 15min. Pra UX consistente entre devices,
+        // reportamos 422 com código pro frontend reconhecer (e esconder o
+        // botão de editar quando passar do tempo, sem precisar pollar).
+        $minutesSince = $message->created_at->diffInMinutes(now());
+        if ($minutesSince > 15) {
+            return response()->json([
+                'message' => 'Janela de edição expirou (15 minutos).',
+                'code'    => 'edit_window_expired',
+            ], 422);
+        }
+
+        // Regra 3 — msg lida não pode ser editada. Read_at vem do peer
+        // marcando read; se ainda é null, a janela continua aberta dentro
+        // dos 15min. Se virou not-null, congela o conteúdo.
+        if ($message->read_at !== null) {
+            return response()->json([
+                'message' => 'Mensagem já foi lida e não pode ser editada.',
+                'code'    => 'already_read',
+            ], 422);
+        }
+
+        $data = $request->validate([
+            'body' => ['required', 'string', 'min:1', 'max:5000'],
+        ]);
+
+        $newBody = trim($data['body']);
+        if ($newBody === '') {
+            return response()->json([
+                'message' => 'Mensagem vazia.',
+            ], 422);
+        }
+
+        // No-op silencioso: se o texto não mudou, não dispara evento nem
+        // marca edited_at. Evita "(editada)" aparecer sem mudança real.
+        if ($newBody === $message->body) {
+            return response()->json($this->buildMessagePayload(
+                $message->load(['attachments', 'replyTo:id,sender_id,body'])
+            ));
+        }
+
+        $message->body      = $newBody;
+        $message->edited_at = now();
+        $message->save();
+
+        // Broadcast — silencioso se Reverb tá offline (igual store).
+        try {
+            event(new ChatMessageEdited($message));
+        } catch (\Throwable $e) {
+            Log::warning('Falha ao broadcast ChatMessageEdited', [
+                'message_id' => $message->id,
+                'error'      => $e->getMessage(),
+            ]);
+        }
+
+        return response()->json($this->buildMessagePayload(
+            $message->load(['attachments', 'replyTo:id,sender_id,body'])
+        ));
+    }
+
+    /**
+     * Sprint 4.6 — Apaga (soft delete) uma msg.
+     *
+     * Regras:
+     *   - Autor: pode apagar a própria SE ainda não foi lida (read_at null).
+     *   - Admin: pode apagar QUALQUER msg, lida ou não. Cada delete por
+     *     admin gera audit log pra trilha LGPD (motivo de exclusão fica
+     *     registrado fora desse fluxo, na própria UI de admin).
+     *
+     * Após sucesso: dispara ChatMessageDeleted pra UI dos dois lados
+     * trocar a bolha por placeholder "Mensagem apagada" em tempo real.
+     */
+    public function destroy(Request $request, int $messageId): JsonResponse
+    {
+        $message = ChatMessage::findOrFail($messageId);
+        $conversation = ChatConversation::findOrFail($message->conversation_id);
+
+        $user = Auth::user();
+        if (!$user) abort(401);
+        $me   = (int) $user->id;
+        $role = strtolower(trim((string) ($user->role ?? '')));
+        $isAdmin = $role === 'admin';
+        $isAuthor = $message->sender_id === $me;
+
+        // Bypass de permissão: admin pode apagar qualquer msg, mesmo de
+        // conversa em que não participa (LGPD/moderação). Não-admin tem
+        // que ser participante E autor da msg.
+        if (!$isAdmin) {
+            $this->ensureParticipant($conversation);
+
+            if (!$isAuthor) {
+                return response()->json([
+                    'message' => 'Você só pode apagar suas próprias mensagens.',
+                ], 403);
+            }
+
+            // Autor + msg lida = bloqueado. Admin não tem essa restrição.
+            if ($message->read_at !== null) {
+                return response()->json([
+                    'message' => 'Mensagem já foi lida e não pode ser apagada.',
+                    'code'    => 'already_read',
+                ], 422);
+            }
+        }
+
+        // Auditoria de admin apagando msg alheia. Importante pra LGPD —
+        // toda intervenção de moderação precisa de trilha. Não logamos
+        // quando o autor apaga a própria msg (não é evento de moderação).
+        if ($isAdmin && !$isAuthor) {
+            try {
+                AuditService::log(
+                    'chat_admin_delete',
+                    'ChatMessage',
+                    $message->id,
+                    $me,
+                    null,
+                    [
+                        'conversation_id' => $message->conversation_id,
+                        'sender_id'       => $message->sender_id,
+                        'was_read'        => $message->read_at !== null,
+                    ],
+                    'chat_audit'
+                );
+            } catch (\Throwable $e) {
+                // Auditoria não pode derrubar o request.
+            }
+        }
+
+        $message->delete(); // SoftDeletes — seta deleted_at, não remove row
+
+        try {
+            event(new ChatMessageDeleted($message));
+        } catch (\Throwable $e) {
+            Log::warning('Falha ao broadcast ChatMessageDeleted', [
+                'message_id' => $message->id,
+                'error'      => $e->getMessage(),
+            ]);
+        }
+
+        return response()->json([
+            'message_id' => $message->id,
+            'deleted_at' => $message->deleted_at?->toISOString(),
+        ]);
+    }
+
+    /**
      * Constrói um trecho curto (~160 chars) centrado na primeira ocorrência
      * do termo. Se o body é mais curto, retorna inteiro. Usado pra UI
      * mostrar "contexto" do match sem truncar feio.
@@ -554,11 +733,18 @@ class ChatMessageController extends Controller
             $reply = ['id' => null, 'sender_id' => null, 'snippet' => null];
         }
 
+        // Sprint 4.6 — Msgs apagadas vêm via withTrashed() na index. Quando
+        // estão soft-deleted, body/anexos/reply ficam zerados no payload —
+        // o frontend renderiza "Mensagem apagada" no lugar e não vaza
+        // conteúdo retroativamente. Mantemos id/sender_id/created_at pra
+        // preservar a posição na thread e poder identificar quem apagou.
+        $isDeleted = $m->trashed();
+
         return [
             'id'                  => $m->id,
             'conversation_id'     => $m->conversation_id,
             'sender_id'           => $m->sender_id,
-            'body'                => $m->body,
+            'body'                => $isDeleted ? '' : $m->body,
             'created_at'          => $m->created_at,
             // Sprint 3.8c — timestamp exato de quando o destinatário leu
             // essa msg pela primeira vez. Null = ainda não lida. Frontend
@@ -567,15 +753,25 @@ class ChatMessageController extends Controller
             // o frontend cai no branch "Enviada" independente do que tá
             // salvo no banco.
             'read_at'             => $exposeRead ? $m->read_at : null,
-            // Sprint 4.4 — bloco citado quando é resposta.
-            'reply_to'            => $reply,
-            // Sprint 4.1 — pin de mensagens importantes.
-            'is_pinned'           => (bool) $m->is_pinned,
-            'pinned_at'           => $m->pinned_at,
-            'pinned_by_user_id'   => $m->pinned_by_user_id,
-            'attachments'         => $m->attachments
-                ? $m->attachments->map(fn ($a) => $a->buildPayload())->all()
-                : [],
+            // Sprint 4.6 — quando foi editada pela última vez. Frontend
+            // mostra selo "(editada)" se não-null. Apagada não exibe selo.
+            'edited_at'           => $isDeleted ? null : $m->edited_at,
+            // Sprint 4.6 — quando foi apagada (soft delete). Frontend usa
+            // pra trocar a bolha por "Mensagem apagada" italic cinza.
+            'deleted_at'          => $m->deleted_at,
+            // Sprint 4.4 — bloco citado quando é resposta. Não exposto se
+            // a msg foi apagada (não vaza contexto da thread original).
+            'reply_to'            => $isDeleted ? null : $reply,
+            // Sprint 4.1 — pin de mensagens importantes. Apagada não fica
+            // pinada (a UI esconde o ícone, mas zeramos por garantia).
+            'is_pinned'           => $isDeleted ? false : (bool) $m->is_pinned,
+            'pinned_at'           => $isDeleted ? null : $m->pinned_at,
+            'pinned_by_user_id'   => $isDeleted ? null : $m->pinned_by_user_id,
+            'attachments'         => $isDeleted
+                ? []
+                : ($m->attachments
+                    ? $m->attachments->map(fn ($a) => $a->buildPayload())->all()
+                    : []),
         ];
     }
 

@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
  * Uma mensagem dentro de uma conversa.
@@ -19,7 +20,11 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class ChatMessage extends Model
 {
-    use HasFactory;
+    // Sprint 4.6 — SoftDeletes pra preservar a thread quando uma msg
+    // é apagada (frontend renderiza placeholder "Mensagem apagada" no
+    // lugar do body). Listagens normais já filtram via global scope;
+    // pra mostrar a placeholder o controller usa withTrashed().
+    use HasFactory, SoftDeletes;
 
     protected $fillable = [
         'conversation_id',
@@ -30,6 +35,8 @@ class ChatMessage extends Model
         'is_pinned',
         'pinned_at',
         'pinned_by_user_id',
+        // Sprint 4.6 — quando a msg é editada. Null = nunca editada.
+        'edited_at',
     ];
 
     protected $casts = [
@@ -38,6 +45,8 @@ class ChatMessage extends Model
         // Sprint 3.8c — timestamp exato de leitura por msg (ver migration
         // add_read_at_to_chat_messages). Null = ainda não foi lida.
         'read_at'   => 'datetime',
+        // Sprint 4.6 — última edição. Null = original.
+        'edited_at' => 'datetime',
     ];
 
     public function conversation(): BelongsTo

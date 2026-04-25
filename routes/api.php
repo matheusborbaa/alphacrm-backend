@@ -947,6 +947,16 @@ Route::middleware(['auth:sanctum', 'chat.enabled'])->prefix('chat')->group(funct
     Route::delete('/messages/{id}/pin',           [ChatMessageController::class, 'togglePin'])
         ->whereNumber('id');
 
+    // Sprint 4.6 — Editar e apagar mensagem.
+    // PATCH valida regras de janela (15min) + não-lida; DELETE valida
+    // não-lida pra autor mas é livre pra admin (LGPD/moderação).
+    // Eventos ChatMessageEdited/ChatMessageDeleted disparam pro canal
+    // private-conversation.{id} pra UI atualizar nos dois lados.
+    Route::patch ('/messages/{id}',               [ChatMessageController::class, 'update'])
+        ->whereNumber('id');
+    Route::delete('/messages/{id}',               [ChatMessageController::class, 'destroy'])
+        ->whereNumber('id');
+
     // Sprint 4.2 — Busca no histórico. Escopa por default só às conversas
     // do user; conversation_id (opcional) restringe a uma conversa específica.
     Route::get   ('/search',                      [ChatMessageController::class, 'search']);
