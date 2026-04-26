@@ -251,7 +251,13 @@ class EmailSettingsController extends Controller
     private function ensureAdmin(): void
     {
         $u = auth()->user();
-        $role = strtolower(trim((string) ($u->role ?? '')));
+        // Sprint Hierarquia (fix) — usa effectiveRole() pra reconhecer admin
+        // tanto via coluna users.role quanto via Spatie. Mesmo padrão do
+        // SettingController. Antes: 403 silencioso pra admin que tinha role
+        // só no Spatie (UI parecia que "não acontece nada").
+        $role = method_exists($u, 'effectiveRole')
+            ? $u->effectiveRole()
+            : strtolower(trim((string) ($u->role ?? '')));
         if ($role !== 'admin') {
             abort(403, 'Ação restrita ao administrador.');
         }

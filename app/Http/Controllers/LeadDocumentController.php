@@ -644,7 +644,11 @@ class LeadDocumentController extends Controller
     {
         $u = auth()->user();
         if (!$u) return false;
-        return strtolower(trim((string) ($u->role ?? ''))) === 'admin';
+        // Sprint Hierarquia (fix) — coluna + Spatie via effectiveRole().
+        $role = method_exists($u, 'effectiveRole')
+            ? $u->effectiveRole()
+            : strtolower(trim((string) ($u->role ?? '')));
+        return $role === 'admin';
     }
 
     /** Admin OU gestor (a "visão gerencial" que pode auditar documentos). */
@@ -652,7 +656,9 @@ class LeadDocumentController extends Controller
     {
         $u = auth()->user();
         if (!$u) return false;
-        $role = strtolower(trim((string) ($u->role ?? '')));
+        $role = method_exists($u, 'effectiveRole')
+            ? $u->effectiveRole()
+            : strtolower(trim((string) ($u->role ?? '')));
         return $role === 'admin' || $role === 'gestor';
     }
 

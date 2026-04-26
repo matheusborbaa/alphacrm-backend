@@ -94,7 +94,10 @@ class EmailLogsController extends Controller
     private function ensureAdmin(): void
     {
         $u = auth()->user();
-        $role = strtolower(trim((string) ($u->role ?? '')));
+        // Sprint Hierarquia (fix) — usa effectiveRole() (coluna + Spatie).
+        $role = method_exists($u, 'effectiveRole')
+            ? $u->effectiveRole()
+            : strtolower(trim((string) ($u->role ?? '')));
         if ($role !== 'admin') {
             abort(403, 'Ação restrita ao administrador.');
         }
