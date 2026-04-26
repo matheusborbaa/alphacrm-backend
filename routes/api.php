@@ -347,6 +347,36 @@ Route::middleware(['auth:sanctum', 'can:status_required_fields.manage'])
 
 /*
 |--------------------------------------------------------------------------
+| ADMIN — CARGOS E PERMISSÕES (Sprint Cargos — fase 2)
+|--------------------------------------------------------------------------
+| CRUD de cargos custom + leitura do catálogo de permissions.
+| Admin-only (RoleController valida via ensureAdmin internamente
+| usando effectiveRole — coluna + Spatie).
+|
+| Endpoints:
+|   GET    /admin/permissions/catalog → estrutura agrupada pra UI
+|   GET    /admin/roles               → lista cargos com perms + counts
+|   GET    /admin/roles/{role}        → detalhe
+|   POST   /admin/roles               → cria cargo custom (vazio)
+|   PUT    /admin/roles/{role}        → atualiza nome/desc/perms
+|                                       (cargos system: só desc/perms)
+|   DELETE /admin/roles/{role}        → só se !is_system + 0 usuários
+|
+| Anti lock-out embutido: PUT bloqueia se admin removeria sua própria
+| permission `settings.roles` (perderia acesso à tela).
+*/
+Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
+    Route::get('/permissions/catalog', [\App\Http\Controllers\RoleController::class, 'catalog']);
+    Route::get('/roles',               [\App\Http\Controllers\RoleController::class, 'index']);
+    Route::get('/roles/{role}',        [\App\Http\Controllers\RoleController::class, 'show']);
+    Route::post('/roles',              [\App\Http\Controllers\RoleController::class, 'store']);
+    Route::put('/roles/{role}',        [\App\Http\Controllers\RoleController::class, 'update']);
+    Route::delete('/roles/{role}',     [\App\Http\Controllers\RoleController::class, 'destroy']);
+});
+
+
+/*
+|--------------------------------------------------------------------------
 | LEAD SOURCES / CHANNELS / CAMPAIGNS — cadastros base
 |--------------------------------------------------------------------------
 | GET é liberado pra qualquer user autenticado (corretor também lê pra
