@@ -142,21 +142,36 @@ class User extends Authenticatable
     public function effectiveRole(): string
     {
         $col = strtolower(trim((string) ($this->role ?? '')));
-        $spatie = '';
+        $spatieName = '';
+        $spatieType = '';
         try {
-            $spatie = strtolower(trim((string) ($this->getRoleNames()->first() ?? '')));
+            $first = $this->roles()->first();   // Role|null
+            if ($first) {
+                $spatieName = strtolower(trim((string) $first->name));
+                // Sprint Cargos — cargos custom têm `type` (admin/gestor/corretor)
+                // que define a "personalidade base". Se a role do user tem type,
+                // usamos ele direto. A coluna só existe depois da migration
+                // 2026_04_25_140000 — protege com isset/property_exists.
+                if (isset($first->type) && $first->type) {
+                    $spatieType = strtolower(trim((string) $first->type));
+                }
+            }
         } catch (\Throwable $e) {
             // Tabela Spatie indisponível ou relação não carregável — segue
             // só com a coluna.
         }
 
-        // Promoção permissiva: se UMA das duas disser admin/gestor, vale.
+        // Prioridade: type da role custom (Spatie) → coluna → name da role
+        // que bate com um type base. Promoção permissiva: se QUALQUER fonte
+        // disser admin/gestor/corretor, vale.
         foreach (['admin', 'gestor', 'corretor'] as $candidate) {
-            if ($col === $candidate || $spatie === $candidate) {
+            if ($spatieType === $candidate
+                || $col === $candidate
+                || $spatieName === $candidate) {
                 return $candidate;
             }
         }
-        return $col ?: $spatie;
+        return $col ?: $spatieName;
     }
 
     /**

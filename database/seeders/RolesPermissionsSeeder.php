@@ -2,124 +2,76 @@
 
 namespace Database\Seeders;
 
+use App\Models\User;
+use App\Permissions\Catalog;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Spatie\Permission\PermissionRegistrar;
-use App\Models\User;
 
 /**
- * Cria todas as permissions e roles do sistema, sincroniza roles com
- * as permissions corretas e migra os users existentes (que têm a coluna
- * `role` string) pra ter a role equivalente no spatie/permission.
+ * Sprint Cargos — seeder reescrito sobre o Catalog.
+ * ---------------------------------------------------------------
+ * O QUE FAZ:
+ *   1. Sincroniza a tabela `permissions` com TODAS as permissions do
+ *      Catalog (cria as novas, mantém existentes — não remove pra
+ *      não quebrar cargos custom que possam estar usando algo
+ *      removido em alguma alteração futura do catalog).
  *
- * Idempotente: pode rodar quantas vezes quiser. Usa firstOrCreate
- * e syncPermissions.
+ *   2. Cria/atualiza os 3 cargos SYSTEM (admin, gestor, corretor),
+ *      marca is_system=1 e type=name, e sincroniza as permissions
+ *      conforme defaultsByType() do Catalog.
  *
- * Matriz de permissões:
+ *   3. Migra users existentes que têm coluna `role` mas não têm a
+ *      role no Spatie (cobertura pra contas legadas).
  *
- *   admin   — tudo (inclui users.assign_admin, única diferença pro gestor)
- *   gestor  — tudo exceto users.assign_admin
- *   corretor — só leads próprios + kanban ver + agenda própria
+ * IDEMPOTENTE: pode rodar quantas vezes quiser. Não toca em cargos
+ * custom (is_system=0) — esses são gerenciados via UI.
+ *
+ * IMPORTANTE: Os cargos system continuam SOBRESCREVENDO suas
+ * permissions a cada run. Isso é intencional — quando você adiciona
+ * uma permission nova ao Catalog, rodar o seeder garante que admin/
+ * gestor recebam o default automaticamente.
  */
 class RolesPermissionsSeeder extends Seeder
 {
     public function run(): void
     {
-        // Limpa o cache do spatie antes de mexer
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
         $guard = 'web';
 
-        /*
-        |----------------------------------------------------------------------
-        | 1) Catálogo de permissions
-        |----------------------------------------------------------------------
-        */
-        $permissions = [
-            // LEADS
-            'leads.view_any',
-            'leads.view_own',
-            'leads.create',
-            'leads.update_any',
-            'leads.update_own',
-            'leads.delete',
-            'leads.move_any',
-            'leads.move_own',
-
-            // EMPREENDIMENTOS
-            'empreendimentos.view',
-            'empreendimentos.manage',
-            'empreendimentos.field_definitions.manage',
-
-            // CAMPOS CUSTOMIZADOS + REGRAS DE OBRIGATORIEDADE
-            'custom_fields.manage',
-            'status_required_fields.manage',
-
-            // USUÁRIOS (CORRETORES)
-            'users.view',
-            'users.manage',
-            'users.assign_admin',
-
-            // DASHBOARD / RELATÓRIOS
-            'dashboard.view',
-            'reports.view',
-
-            // KANBAN
-            'kanban.view',
-            'kanban.reorder',
-
-            // AGENDA / APPOINTMENTS
-            'appointments.view_any',
-            'appointments.view_own',
-            'appointments.manage_any',
-            'appointments.manage_own',
-
-            // NOTIFICAÇÕES
-            'notifications.view',
-        ];
-
-        foreach ($permissions as $name) {
+        // 1) Sincroniza catálogo com a tabela permissions (cria as faltantes)
+        foreach (Catalog::allNames() as $name) {
             Permission::firstOrCreate([
                 'name'       => $name,
                 'guard_name' => $guard,
             ]);
         }
 
-        /*
-        |----------------------------------------------------------------------
-        | 2) Roles + permissions atribuídas
-        |----------------------------------------------------------------------
-        */
-        $corretorPermissions = [
-            'leads.view_own',
-            'leads.create',
-            'leads.update_own',
-            'leads.move_own',
-            'empreendimentos.view',
-            'kanban.view',
-            'appointments.view_own',
-            'appointments.manage_own',
-            'notifications.view',
-        ];
+        // 2) Cargos system — atualiza permissions e flags
+        $defaults = Catalog::defaultsByType();
+        foreach (['admin', 'gestor', 'corretor'] as $name) {
+            $role = Role::firstOrCreate([
+                'name'       => $name,
+                'guard_name' => $guard,
+            ]);
 
-        // Gestor = tudo do admin EXCETO users.assign_admin
-        $gestorPermissions = array_values(array_diff($permissions, ['users.assign_admin']));
+            // Força flags system na role (caso esteja rodando antes da migration
+            // ter aplicado o backfill, ou se algum admin curioso desmarcou via DB).
+            // Os campos só existem se a migration 2026_04_25_140000 já rodou.
+            if (Role::query()->getConnection()->getSchemaBuilder()->hasColumn('roles', 'is_system')) {
+                DB::table('roles')->where('id', $role->id)->update([
+                    'type'      => $name,
+                    'is_system' => true,
+                ]);
+            }
 
-        // Admin = tudo
-        $adminPermissions = $permissions;
+            $role->syncPermissions($defaults[$name] ?? []);
+        }
 
-        $this->syncRole('admin',    $guard, $adminPermissions);
-        $this->syncRole('gestor',   $guard, $gestorPermissions);
-        $this->syncRole('corretor', $guard, $corretorPermissions);
-
-        /*
-        |----------------------------------------------------------------------
-        | 3) Sincroniza users existentes (coluna `role` string → role spatie)
-        |----------------------------------------------------------------------
-        | Se o user tem role='admin' na coluna antiga mas não tem a role
-        | no spatie, atribui. Não remove roles já atribuídas.
-        */
+        // 3) Migra users legados (coluna role string → spatie)
         User::whereNotNull('role')->chunkById(100, function ($users) {
             foreach ($users as $user) {
                 $roleName = $user->role;
@@ -135,15 +87,5 @@ class RolesPermissionsSeeder extends Seeder
         });
 
         app(PermissionRegistrar::class)->forgetCachedPermissions();
-    }
-
-    private function syncRole(string $name, string $guard, array $perms): void
-    {
-        $role = Role::firstOrCreate([
-            'name'       => $name,
-            'guard_name' => $guard,
-        ]);
-
-        $role->syncPermissions($perms);
     }
 }
