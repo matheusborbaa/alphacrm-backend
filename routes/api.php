@@ -326,10 +326,12 @@ Route::get('/empreendimentos-lista', function(){
 |--------------------------------------------------------------------------
 | ADMIN — CONFIGURAÇÃO DO PIPELINE (STATUS / SUBSTATUS)
 |--------------------------------------------------------------------------
-| Protegido por permissão: status_required_fields.manage.
-| (Admin e gestor têm por padrão; corretor não.)
+| Sprint Cargos — aceita TANTO a permission legacy `status_required_fields.manage`
+| quanto a nova `settings.pipeline` (pipe = OR no Spatie). Assim cargos
+| customizados que tenham só a nova continuam funcionando, e os 3 cargos
+| system (que recebem ambas via seeder) seguem normais.
 */
-Route::middleware(['auth:sanctum', 'can:status_required_fields.manage'])
+Route::middleware(['auth:sanctum', 'can:status_required_fields.manage|settings.pipeline'])
     ->prefix('admin')
     ->group(function () {
 

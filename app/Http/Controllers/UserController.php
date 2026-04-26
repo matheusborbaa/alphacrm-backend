@@ -274,12 +274,15 @@ class UserController extends Controller
             'empreendimento_ids.*'        => ['integer', 'exists:empreendimentos,id'],
         ]);
 
-        // Se mudando a role, valida autorização adicional
+        // Se mudando a role, valida autorização adicional.
+        // Sprint Cargos — aceita users.manage (legacy) OU users.update (novo).
         if (!empty($data['role']) && $data['role'] !== ($user->getRoleNames()->first() ?? $user->role)) {
-            if (!$request->user()->can('users.manage')) {
+            $caller = $request->user();
+            $canChangeRole = $caller->can('users.manage') || $caller->can('users.update');
+            if (!$canChangeRole) {
                 throw ValidationException::withMessages(['role' => 'Sem permissão.']);
             }
-            if ($data['role'] === 'admin' && !$request->user()->can('users.assign_admin')) {
+            if ($data['role'] === 'admin' && !$caller->can('users.assign_admin')) {
                 throw ValidationException::withMessages(['role' => 'Só admin pode promover outro admin.']);
             }
 
