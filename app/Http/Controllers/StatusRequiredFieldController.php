@@ -204,11 +204,19 @@ class StatusRequiredFieldController extends Controller
      * Máscara sugerida por coluna padrão do lead.
      * Telefone já vem mascarado no cadastro, mas aqui cobrimos o caso
      * de campo obrigatório aparecer no modal de mudança de status.
+     *
+     * 'value' (preço/valor da venda) PRECISA de mask 'moeda' aqui —
+     * sem ela, o frontend renderiza input texto cru, o user digita
+     * "R$ 250.000,00" formatado e o backend rejeita ('numeric'
+     * validation falha). Com mask, o requiredFields.js aplica máscara
+     * visual + chama AlphaMasks.unformat() antes do PUT, devolvendo
+     * o número puro ("250000") que passa na validação.
      */
     private function defaultMaskForColumn(string $column): ?string
     {
         return match ($column) {
             'phone'    => 'celular',
+            'value'    => 'moeda',
             default    => null,
         };
     }

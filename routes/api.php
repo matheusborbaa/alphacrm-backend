@@ -25,6 +25,7 @@ use App\Http\Controllers\CustomFieldController;
 use App\Http\Controllers\StatusRequiredFieldController;
 use App\Http\Controllers\LeadCustomFieldValueController;
 use App\Http\Controllers\LeadCustomFieldFileController;
+use App\Http\Controllers\AdminFilesController;
 use App\Models\Appointment;
 use App\Models\LeadStatus;
 use App\Models\Lead;
@@ -712,6 +713,14 @@ Route::middleware(['auth:sanctum'])->group(function () {
     // Lista GLOBAL de acessos/downloads de documentos (admin-only).
     // Alimenta a tela "Configurações → Logs de Download".
     Route::get   ('/documents/accesses',                                      [LeadDocumentController::class, 'allAccesses']);
+
+    // Listagem unificada de TODOS os arquivos do servidor (admin-only).
+    // Agrega lead_documents, custom field files, chat attachments e
+    // documentos/imagens de empreendimentos. Foto de perfil de user
+    // NÃO aparece — só "documentos mesmo".
+    // Alimenta a tela "Configurações → Arquivos do Servidor".
+    Route::get   ('/admin/files',                                             [AdminFilesController::class, 'index'])
+        ->middleware('permission:settings.system');
 
     Route::get   ('/leads/{lead}/documents',                                  [LeadDocumentController::class, 'index']);
     Route::post  ('/leads/{lead}/documents',                                  [LeadDocumentController::class, 'store']);
