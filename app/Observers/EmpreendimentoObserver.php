@@ -49,17 +49,25 @@ class EmpreendimentoObserver
         }
     }
 
-    public function deleted(Empreendimento $empreendimento): void
+    /**
+     * `deleting` (e não `deleted`) é crítico: a FK nullOnDelete em
+     * media_folders.empreendimento_id zera a relação assim que o
+     * empreendimento sai do banco — perderíamos a referência. Aqui
+     * pegamos a pasta enquanto o link ainda existe e a apagamos
+     * (cascade derruba subpastas + media_files; o service também apaga
+     * os arquivos físicos do disco).
+     */
+    public function deleting(Empreendimento $empreendimento): void
     {
-        // Atualmente noop intencional — pasta vira órfã (FK nullOnDelete).
-        // Veja MediaLibrarySync::handleEmpreendimentoDeleted() pra contexto.
         try {
             $this->sync->handleEmpreendimentoDeleted($empreendimento->id);
         } catch (\Throwable $e) {
-            \Log::warning('Falha ao tratar delete do empreendimento na biblioteca', [
+            \Log::warning('Falha ao remover pasta da biblioteca do empreendimento', [
                 'empreendimento_id' => $empreendimento->id,
                 'error'             => $e->getMessage(),
             ]);
+            // Não rethrow — exclusão da biblioteca não pode bloquear
+            // exclusão do empreendimento (admin precisa ter controle).
         }
     }
 }

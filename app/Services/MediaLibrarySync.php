@@ -3,7 +3,9 @@
 namespace App\Services;
 
 use App\Models\Empreendimento;
+use App\Models\MediaFile;
 use App\Models\MediaFolder;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * Sincronização entre Empreendimento e Biblioteca de Mídia.
@@ -89,17 +91,55 @@ class MediaLibrarySync
     }
 
     /**
-     * Quando um empreendimento é deletado, decidimos NÃO apagar a pasta
-     * automaticamente. A FK em media_folders.empreendimento_id é
-     * nullOnDelete, então a pasta vira "órfã" — vira pasta global com
-     * `empreendimento_id=null` e mantém os arquivos. Admin pode revisar
-     * e apagar manualmente se quiser.
+     * Quando um empreendimento é deletado, removemos junto a pasta-espelho
+     * dele na biblioteca + tudo que tem dentro (subpastas, arquivos no
+     * banco, arquivos físicos no disco).
      *
-     * Esse método existe pra deixar explícita a intenção (e cobrir casos
-     * futuros se a regra mudar). Por ora é noop — só registra.
+     * Por que não confiar só na FK cascadeOnDelete:
+     *   1. A FK atual é `nullOnDelete` (escolha consciente — evita perda
+     *      acidental se alguém apagar empreendimento errado). Se mudasse
+     *      pra cascade no DB, ainda assim ficariam os arquivos físicos
+     *      órfãos no disco — o DB não sabe varrer storage/app/media/*.
+     *   2. Aqui no PHP a gente coleta TODOS os storage_paths recursivos
+     *      ANTES de apagar a pasta (cuja cascade do parent_id detona
+     *      subpastas + media_files), e DEPOIS apaga os arquivos físicos.
+     *
+     * Chamado pelo EmpreendimentoObserver::deleting() — antes do delete
+     * do empreendimento, enquanto a relação `empreendimento_id` ainda
+     * existe na pasta.
      */
     public function handleEmpreendimentoDeleted(int $empreendimentoId): void
     {
-        // Noop intencional. Veja docblock acima.
+        $folder = MediaFolder::where('empreendimento_id', $empreendimentoId)->first();
+        if (!$folder) return; // empreendimento sem pasta — nada a fazer
+
+        // 1) Coleta todos os storage_paths antes de apagar (depois do
+        //    delete da pasta-mãe, os media_files já não existem mais).
+        $paths = $this->collectFilePathsRecursive($folder);
+
+        // 2) Apaga a pasta — a cascadeOnDelete da FK parent_id derruba
+        //    subpastas e media_files automaticamente no banco.
+        //    forceDelete() não é necessário (não tem soft delete aqui),
+        //    mas usamos delete() padrão.
+        $folder->delete();
+
+        // 3) Limpa arquivos físicos do disco (silencioso — se um arquivo
+        //    já não existe, Storage::delete ignora). Faz em batch.
+        if (!empty($paths)) {
+            Storage::disk('local')->delete($paths);
+        }
+    }
+
+    /**
+     * Coleta storage_paths de TODOS os arquivos descendentes de uma
+     * pasta (filhos diretos + subpastas recursivamente).
+     */
+    private function collectFilePathsRecursive(MediaFolder $folder): array
+    {
+        $paths = $folder->files()->pluck('storage_path')->all();
+        foreach ($folder->children as $child) {
+            $paths = array_merge($paths, $this->collectFilePathsRecursive($child));
+        }
+        return $paths;
     }
 }

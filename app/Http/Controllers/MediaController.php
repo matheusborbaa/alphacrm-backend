@@ -216,9 +216,22 @@ class MediaController extends Controller
      */
     public function destroyFolder(Request $request, MediaFolder $folder)
     {
+        // 1) Pasta system (raiz EMPREENDIMENTOS + pastas de cada empreendimento)
+        //    NUNCA pode ser excluída manualmente — nem pelo admin. As pastas
+        //    de empreendimento só são removidas quando o próprio empreendimento
+        //    é apagado em /empreendimentos (via EmpreendimentoObserver).
         if ($folder->is_system) {
+            $msg = $folder->empreendimento_id
+                ? 'Esta pasta pertence a um empreendimento e só pode ser removida ao excluir o empreendimento.'
+                : 'Esta pasta é gerenciada pelo sistema e não pode ser excluída.';
+            return response()->json(['message' => $msg], 422);
+        }
+
+        // 2) Defesa redundante: pasta não-system mas vinculada a empreendimento
+        //    (caso esquisito de inconsistência) — também bloqueia.
+        if ($folder->empreendimento_id) {
             return response()->json([
-                'message' => 'Esta pasta é gerenciada pelo sistema e não pode ser excluída manualmente.',
+                'message' => 'Pastas vinculadas a empreendimentos só são removidas ao excluir o empreendimento.',
             ], 422);
         }
 
