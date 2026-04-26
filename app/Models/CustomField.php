@@ -32,8 +32,22 @@ class CustomField extends Model
 
     /**
      * Tipos válidos. Usar pra validação no controller.
+     *
+     * 'file' — upload de arquivo. Diferente dos outros, o `value` da
+     * LeadCustomFieldValue guarda um JSON com {path, name, size, mime}
+     * em vez de string simples. O arquivo fica em storage privado
+     * (lead_custom_files/{lead_id}/{field_id}/...) e é servido via
+     * LeadCustomFieldFileController. Não usa `options` nem `mask`;
+     * limites opcionais (`file_max_mb`, `file_accept`) podem ser
+     * armazenados em `options` como dict {max_mb, accept: ".pdf,.jpg"}.
      */
-    public const TYPES = ['text', 'textarea', 'number', 'date', 'select', 'checkbox'];
+    public const TYPES = ['text', 'textarea', 'number', 'date', 'select', 'checkbox', 'file'];
+
+    /**
+     * Default máximo de upload (MB) quando o admin não definiu nenhum.
+     * Bate com o post_max_size típico do PHP em hospedagem compartilhada.
+     */
+    public const FILE_DEFAULT_MAX_MB = 10;
 
     /**
      * Presets de máscara reconhecidos pelo frontend (core/masks.js).

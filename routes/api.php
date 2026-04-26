@@ -24,6 +24,7 @@ use App\Http\Controllers\KanbanController;
 use App\Http\Controllers\CustomFieldController;
 use App\Http\Controllers\StatusRequiredFieldController;
 use App\Http\Controllers\LeadCustomFieldValueController;
+use App\Http\Controllers\LeadCustomFieldFileController;
 use App\Models\Appointment;
 use App\Models\LeadStatus;
 use App\Models\Lead;
@@ -1163,6 +1164,12 @@ Route::middleware('auth:sanctum')->group(function () {
     // Valores dos custom fields por lead
     Route::get ('/leads/{lead}/custom-field-values', [LeadCustomFieldValueController::class, 'index']);
     Route::post('/leads/{lead}/custom-field-values', [LeadCustomFieldValueController::class, 'bulkStore']);
+
+    // Custom fields tipo 'file' — upload/download/remove (multipart).
+    // Autorização interna: LeadPolicy@update (mesma do bulkStore acima).
+    Route::post  ('/leads/{lead}/custom-field-files/{slug}', [LeadCustomFieldFileController::class, 'store']);
+    Route::get   ('/leads/{lead}/custom-field-files/{slug}', [LeadCustomFieldFileController::class, 'download']);
+    Route::delete('/leads/{lead}/custom-field-files/{slug}', [LeadCustomFieldFileController::class, 'destroy']);
 });
 
 
