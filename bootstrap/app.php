@@ -48,6 +48,12 @@ return Application::configure(basePath: dirname(__DIR__))
         // Devolve 423 se o token passou do password_confirm_idle_minutes.
         'fresh-auth' => \App\Http\Middleware\EnsureFreshAuthentication::class,
 
+        // Sprint Cargos — middleware do Spatie pra checagem de permission
+        // com suporte a `|` como OR. O `can:` nativo do Laravel NÃO trata
+        // `|` como OR (lê tudo como nome único), causando 403 silencioso.
+        // Uso: `permission:perm1|perm2` (passa se tem qualquer uma).
+        'permission' => \Spatie\Permission\Middleware\PermissionMiddleware::class,
+
     ]);
 
     })

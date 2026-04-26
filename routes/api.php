@@ -326,12 +326,13 @@ Route::get('/empreendimentos-lista', function(){
 |--------------------------------------------------------------------------
 | ADMIN — CONFIGURAÇÃO DO PIPELINE (STATUS / SUBSTATUS)
 |--------------------------------------------------------------------------
-| Sprint Cargos — aceita TANTO a permission legacy `status_required_fields.manage`
-| quanto a nova `settings.pipeline` (pipe = OR no Spatie). Assim cargos
-| customizados que tenham só a nova continuam funcionando, e os 3 cargos
-| system (que recebem ambas via seeder) seguem normais.
+| Sprint Cargos — usa middleware `permission:` do Spatie (registrado em
+| bootstrap/app.php) que SUPORTA `|` como OR. O `can:` nativo do Laravel
+| NÃO trata pipe — lê tudo como um nome único de permission e dá 403.
+| Aceita legacy `status_required_fields.manage` OU nova `settings.pipeline`
+| pra cargos system + custom funcionarem juntos.
 */
-Route::middleware(['auth:sanctum', 'can:status_required_fields.manage|settings.pipeline'])
+Route::middleware(['auth:sanctum', 'permission:status_required_fields.manage|settings.pipeline'])
     ->prefix('admin')
     ->group(function () {
 
