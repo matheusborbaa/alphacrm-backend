@@ -63,13 +63,14 @@ class RoleController extends Controller
 
         $roles = Role::with('permissions:id,name')->orderBy('id')->get();
 
-        // Contagem de usuários por role. JOIN explícito com `users` filtrando
-        // `deleted_at IS NULL` pra ignorar soft-deleted (sem isso a contagem
-        // mostra o histórico todo — bug reportado: 4 admins quando só tem 2).
+        // Contagem de usuários por role. INNER JOIN com `users` exclui
+        // automaticamente atribuições órfãs (model_id sem user existente
+        // — comum em hard-delete sem ON DELETE CASCADE na pivot do Spatie).
+        // Bug original: 4 "admins" quando só havia 2 reais por causa de 2
+        // contas excluídas que deixaram registros perdidos.
         $userCounts = DB::table('model_has_roles as mhr')
             ->join('users as u', 'u.id', '=', 'mhr.model_id')
             ->where('mhr.model_type', \App\Models\User::class)
-            ->whereNull('u.deleted_at')
             ->select('mhr.role_id', DB::raw('COUNT(*) as total'))
             ->groupBy('mhr.role_id')
             ->pluck('total', 'mhr.role_id');
@@ -104,12 +105,11 @@ class RoleController extends Controller
             'is_system'    => (bool) $role->is_system,
             'description'  => $role->description,
             'permissions'  => $role->permissions->pluck('name')->values(),
-            // Conta só users NÃO soft-deleted — bate com a UI de Usuários.
+            // INNER JOIN exclui automaticamente atribuições órfãs (sem user).
             'users_count'  => DB::table('model_has_roles as mhr')
                 ->join('users as u', 'u.id', '=', 'mhr.model_id')
                 ->where('mhr.model_type', \App\Models\User::class)
                 ->where('mhr.role_id', $role->id)
-                ->whereNull('u.deleted_at')
                 ->count(),
         ]);
     }
@@ -259,13 +259,13 @@ class RoleController extends Controller
             ], 422);
         }
 
-        // Igual ao counts: ignora users soft-deleted, senão um cargo nunca
-        // poderia ser excluído depois que algum usuário foi removido.
+        // Igual ao counts: INNER JOIN naturalmente exclui órfãs, senão
+        // um cargo poderia ficar bloqueado pra exclusão por um user
+        // que foi removido mas deixou registro perdido na pivot.
         $usersWithRole = DB::table('model_has_roles as mhr')
             ->join('users as u', 'u.id', '=', 'mhr.model_id')
             ->where('mhr.model_type', \App\Models\User::class)
             ->where('mhr.role_id', $role->id)
-            ->whereNull('u.deleted_at')
             ->count();
 
         if ($usersWithRole > 0) {
