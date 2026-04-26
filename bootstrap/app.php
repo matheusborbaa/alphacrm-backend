@@ -44,6 +44,10 @@ return Application::configure(basePath: dirname(__DIR__))
         // `chat_enabled` estiver false. Colado no grupo prefix('chat').
         'chat.enabled' => \App\Http\Middleware\EnsureChatEnabled::class,
 
+        // Sprint Biblioteca — 403 nos endpoints de /media/* quando o setting
+        // `corretor_area_enabled` estiver false. Mesma estratégia do chat.
+        'corretor.area.enabled' => \App\Http\Middleware\EnsureCorretorAreaEnabled::class,
+
         // Sprint 3.0a — aplicar em rotas que escrevem dados ou revelam PII.
         // Devolve 423 se o token passou do password_confirm_idle_minutes.
         'fresh-auth' => \App\Http\Middleware\EnsureFreshAuthentication::class,

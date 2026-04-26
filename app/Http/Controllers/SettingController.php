@@ -152,6 +152,16 @@ class SettingController extends Controller
             'default' => true,
         ],
 
+        // =================== MÓDULO ÁREA DO CORRETOR ====================
+        // Liga/desliga a Área do Corretor (perfil social + biblioteca de mídia).
+        // Quando OFF: sidebar esconde o item "Área do Corretor", deep-link
+        // /corretor.php redireciona pro dashboard e os endpoints /media/*
+        // retornam 403. Default true pra manter o comportamento existente.
+        'corretor_area_enabled' => [
+            'type'    => 'bool',
+            'default' => true,
+        ],
+
         // =================== SESSÕES SIMULTÂNEAS (Sprint 3.0a) ==========
         // Quantidade máxima de tokens Sanctum vivos por user. No login,
         // AuthController conta os tokens; se atingiu, devolve 409 com a

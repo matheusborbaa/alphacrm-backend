@@ -1187,14 +1187,20 @@ Route::middleware('auth:sanctum')->group(function () {
     |--------------------------------------------------------------------------
     | Materiais institucionais/marketing organizados em pastas hierárquicas.
     | Permissions granulares: view (todos), upload, create_folder, delete.
+    |
+    | TODAS as rotas passam pelo middleware corretor.area.enabled — quando o
+    | admin desliga o módulo em Configurações → Geral, devolvem 403 com code
+    | 'corretor_area_disabled'. Permissions individuais ainda valem por cima.
     */
-    Route::get   ('/media/contents',                   [MediaController::class, 'contents'])->middleware('permission:media.view');
-    Route::get   ('/media/folders/{folder}/contents',  [MediaController::class, 'contents'])->middleware('permission:media.view');
-    Route::get   ('/media/files/{file}/download',      [MediaController::class, 'downloadFile'])->middleware('permission:media.view');
-    Route::post  ('/media/folders',                    [MediaController::class, 'storeFolder'])->middleware('permission:media.create_folder');
-    Route::post  ('/media/files',                      [MediaController::class, 'uploadFile'])->middleware('permission:media.upload');
-    Route::delete('/media/folders/{folder}',           [MediaController::class, 'destroyFolder'])->middleware('permission:media.delete');
-    Route::delete('/media/files/{file}',               [MediaController::class, 'destroyFile'])->middleware('permission:media.delete');
+    Route::middleware('corretor.area.enabled')->group(function () {
+        Route::get   ('/media/contents',                   [MediaController::class, 'contents'])->middleware('permission:media.view');
+        Route::get   ('/media/folders/{folder}/contents',  [MediaController::class, 'contents'])->middleware('permission:media.view');
+        Route::get   ('/media/files/{file}/download',      [MediaController::class, 'downloadFile'])->middleware('permission:media.view');
+        Route::post  ('/media/folders',                    [MediaController::class, 'storeFolder'])->middleware('permission:media.create_folder');
+        Route::post  ('/media/files',                      [MediaController::class, 'uploadFile'])->middleware('permission:media.upload');
+        Route::delete('/media/folders/{folder}',           [MediaController::class, 'destroyFolder'])->middleware('permission:media.delete');
+        Route::delete('/media/files/{file}',               [MediaController::class, 'destroyFile'])->middleware('permission:media.delete');
+    });
 });
 
 
