@@ -760,11 +760,13 @@ Route::middleware('auth:sanctum')->group(function () {
 |--------------------------------------------------------------------------
 | GET /vps/status        → status + uptime + RAM + disco + CPU + rede
 |   ?refresh=1           → força bypass do cache de 60s
-| Admin-only. Se a integração não estiver configurada (HOSTINGER_API_KEY
-| + HOSTINGER_VPS_ID no .env), devolve ok=false sem 5xx — o frontend
-| renderiza um estado amigável com instruções.
+|
+| Sprint Cargos — protegido por permission `settings.system` (não mais
+| por role:admin). Admin tem essa permission via Catalog automaticamente.
+| Cargos custom podem ganhar essa permission pra ter acesso à aba Sistema
+| sem virar admin pleno.
 */
-Route::middleware(['auth:sanctum', 'role:admin'])->group(function () {
+Route::middleware(['auth:sanctum', 'permission:settings.system'])->group(function () {
     Route::get('/vps/status', [VpsStatusController::class, 'show']);
 
     // /server/capacity-alerts — fonte dos alertas que aparecem no
