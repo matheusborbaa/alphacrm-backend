@@ -665,14 +665,163 @@ protected function findDuplicateLeads(?string $phone, ?string $whatsapp, ?string
     return $query->limit(10)->get();
 }
 
-public function destroy(Lead $lead)
+public function destroy(Request $request, Lead $lead)
 {
 
     $this->authorize('delete', $lead);
 
+    $reason = (string) $request->input('reason', '');
+    if (mb_strlen($reason) > 500) {
+        $reason = mb_substr($reason, 0, 500);
+    }
+
+    $lead->update([
+        'deleted_by_user_id' => auth()->id(),
+        'deletion_reason'    => $reason !== '' ? $reason : null,
+    ]);
+
+    LeadHistory::create([
+        'lead_id'     => $lead->id,
+        'user_id'     => auth()->id(),
+        'type'        => 'soft_deleted',
+        'description' => 'Lead enviado para lixeira' . ($reason !== '' ? ' — motivo: ' . $reason : ''),
+    ]);
+
+
     $lead->delete();
 
-    return response()->json(['success' => true]);
+    return response()->json([
+        'success'           => true,
+        'soft_deleted'      => true,
+        'recoverable_until' => 'manualmente — não há expurgo automático',
+    ]);
+}
+
+/**
+ * LIXEIRA — listagem dos leads soft-deleted. Apenas admin.
+ */
+public function trash(Request $request)
+{
+    $this->ensureAdmin();
+
+    $perPage = max(10, min(200, (int) $request->input('per_page', 50)));
+    $search  = trim((string) $request->input('q', ''));
+
+    $query = Lead::onlyTrashed()
+        ->with([
+            'status:id,name,color_hex',
+            'corretor:id,name',
+            'source:id,name',
+        ])
+        ->orderByDesc('deleted_at');
+
+    if ($search !== '') {
+        $like = '%' . $search . '%';
+        $query->where(function ($q) use ($like) {
+            $q->where('name',     'like', $like)
+              ->orWhere('email',  'like', $like)
+              ->orWhere('phone',  'like', $like)
+              ->orWhere('whatsapp','like', $like);
+        });
+    }
+
+    $page = $query->paginate($perPage);
+
+    $rows = collect($page->items())->map(function ($l) {
+        $deleter = $l->deleted_by_user_id
+            ? \App\Models\User::query()->whereKey($l->deleted_by_user_id)->value('name')
+            : null;
+        return [
+            'id'             => $l->id,
+            'name'           => $l->name,
+            'phone'          => $l->phone,
+            'whatsapp'       => $l->whatsapp,
+            'email'          => $l->email,
+            'status'         => $l->status ? ['id' => $l->status->id, 'name' => $l->status->name, 'color_hex' => $l->status->color_hex] : null,
+            'corretor'       => $l->corretor ? ['id' => $l->corretor->id, 'name' => $l->corretor->name] : null,
+            'source'         => $l->source ? ['id' => $l->source->id, 'name' => $l->source->name] : null,
+            'deleted_at'     => $l->deleted_at?->toIso8601String(),
+            'deleted_by'     => $deleter ? ['id' => $l->deleted_by_user_id, 'name' => $deleter] : null,
+            'deletion_reason'=> $l->deletion_reason,
+            'created_at'     => $l->created_at?->toIso8601String(),
+        ];
+    });
+
+    return response()->json([
+        'data'         => $rows,
+        'current_page' => $page->currentPage(),
+        'per_page'     => $page->perPage(),
+        'total'        => $page->total(),
+        'last_page'    => $page->lastPage(),
+    ]);
+}
+
+/**
+ * Restaura um lead da lixeira (admin only).
+ */
+public function restore(int $id)
+{
+    $this->ensureAdmin();
+
+    $lead = Lead::onlyTrashed()->findOrFail($id);
+
+    $previousDeletedBy   = $lead->deleted_by_user_id;
+    $previousReason      = $lead->deletion_reason;
+
+    $lead->restore();
+    $lead->update([
+        'deleted_by_user_id' => null,
+        'deletion_reason'    => null,
+    ]);
+
+    LeadHistory::create([
+        'lead_id'     => $lead->id,
+        'user_id'     => auth()->id(),
+        'type'        => 'restored',
+        'description' => 'Lead restaurado da lixeira'
+            . ($previousReason ? ' — motivo original: ' . $previousReason : ''),
+    ]);
+
+    return response()->json([
+        'success' => true,
+        'lead'    => [
+            'id'   => $lead->id,
+            'name' => $lead->name,
+        ],
+    ]);
+}
+
+/**
+ * Expurgo DEFINITIVO. Remove permanentemente do banco. Apenas admin.
+ */
+public function forceDestroy(int $id)
+{
+    $this->ensureAdmin();
+
+    $lead = Lead::onlyTrashed()->findOrFail($id);
+    $name = $lead->name;
+    $idCopy = $lead->id;
+
+    $lead->forceDelete();
+
+    \Log::warning('Lead expurgado permanentemente', [
+        'lead_id'    => $idCopy,
+        'name'       => $name,
+        'by_user_id' => auth()->id(),
+    ]);
+
+    return response()->json(['success' => true, 'purged_id' => $idCopy]);
+}
+
+private function ensureAdmin(): void
+{
+    $u = auth()->user();
+    $role = method_exists($u, 'effectiveRole')
+        ? $u->effectiveRole()
+        : strtolower(trim((string) ($u->role ?? '')));
+    if ($role !== 'admin') {
+        abort(403, 'Ação restrita ao administrador.');
+    }
 }
 
 public function reveal(Request $request, Lead $lead)

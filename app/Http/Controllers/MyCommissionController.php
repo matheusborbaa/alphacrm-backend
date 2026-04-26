@@ -13,6 +13,7 @@ class MyCommissionController extends Controller
         $user = $request->user();
 
         $commissions = Commission::where('user_id', $user->id)
+            ->whereHas('lead')
             ->whereIn('status', ['prevista', 'pendente'])
             ->orderByDesc('created_at')
             ->get();

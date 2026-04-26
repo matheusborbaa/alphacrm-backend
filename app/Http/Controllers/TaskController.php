@@ -16,10 +16,12 @@ class TaskController extends Controller
     {
         $user = Auth::user();
 
-        $query = Appointment::tasks()->with([
-            'lead:id,name',
-            'user:id,name',
-        ]);
+        $query = Appointment::tasks()
+            ->withVisibleLead()
+            ->with([
+                'lead:id,name',
+                'user:id,name',
+            ]);
 
         $this->scopeByRole($query, $user);
 

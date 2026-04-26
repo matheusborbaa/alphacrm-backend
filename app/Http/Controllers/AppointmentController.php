@@ -20,7 +20,8 @@ public function byDate(Request $request)
     $start = \Carbon\Carbon::parse($request->date)->startOfDay();
     $end   = \Carbon\Carbon::parse($request->date)->endOfDay();
 
-    $appointments = Appointment::where(function ($q) use ($start, $end) {
+    $appointments = Appointment::withVisibleLead()
+        ->where(function ($q) use ($start, $end) {
             $q->where(function ($q2) use ($start, $end) {
                 $q2->whereBetween('starts_at', [$start, $end]);
             })->orWhere(function ($q2) use ($start, $end) {
@@ -75,7 +76,8 @@ public function summary(Request $request)
     $start = \Carbon\Carbon::parse($request->date)->startOfDay();
     $end   = \Carbon\Carbon::parse($request->date)->endOfDay();
 
-    $query = Appointment::where(function ($q) use ($start, $end) {
+    $query = Appointment::withVisibleLead()
+        ->where(function ($q) use ($start, $end) {
             $q->where(function ($q2) use ($start, $end) {
                 $q2->whereBetween('starts_at', [$start, $end]);
             })->orWhere(function ($q2) use ($start, $end) {
@@ -106,7 +108,8 @@ public function summary(Request $request)
     $completed = $list->where('status', 'completed')->count();
     $pending   = $list->where('status', 'pending')->count();
 
-    $overdueGlobal = Appointment::where('status', 'pending')
+    $overdueGlobal = Appointment::withVisibleLead()
+        ->where('status', 'pending')
         ->where('starts_at', '<', $now)
         ->when(!in_array($user->role, ['admin','gestor']), function ($q) use ($user) {
             $q->where(function ($sub) use ($user) {
@@ -132,7 +135,8 @@ public function overdueList(Request $request)
     $user = auth()->user();
     $now  = \Carbon\Carbon::now();
 
-    $appointments = Appointment::where('status', 'pending')
+    $appointments = Appointment::withVisibleLead()
+        ->where('status', 'pending')
         ->where('starts_at', '<', $now)
         ->when(!in_array($user->role, ['admin','gestor']), function ($q) use ($user) {
             $q->where(function ($sub) use ($user) {
@@ -165,7 +169,8 @@ public function byMonth(Request $request)
 
     $user = auth()->user();
 
-    $appointments = Appointment::where(function ($q) use ($request) {
+    $appointments = Appointment::withVisibleLead()
+        ->where(function ($q) use ($request) {
             $q->where(function ($q2) use ($request) {
                 $q2->whereYear('starts_at', $request->year)
                    ->whereMonth('starts_at', $request->month);
@@ -274,7 +279,8 @@ LeadHistory::create([
     {
         $user = Auth::user();
 
-        $query = Appointment::where('user_id', $user->id)
+        $query = Appointment::withVisibleLead()
+            ->where('user_id', $user->id)
             ->with('lead:id,name');
 
         if ($request->filled('date')) {
@@ -362,10 +368,11 @@ LeadHistory::create([
     {
         $user = Auth::user();
 
-        $query = Appointment::with([
-            'lead:id,name',
-            'user:id,name',
-        ]);
+        $query = Appointment::withVisibleLead()
+            ->with([
+                'lead:id,name',
+                'user:id,name',
+            ]);
 
         $this->applyRoleScope($query, $user);
 

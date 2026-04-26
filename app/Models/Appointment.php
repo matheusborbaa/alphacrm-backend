@@ -80,6 +80,19 @@ class Appointment extends Model
         return $this->belongsTo(Lead::class);
     }
 
+    /**
+     * Filtra appointments cujo lead esteja visível: ou tarefa interna (sem lead),
+     * ou lead que NÃO está soft-deleted. Usar em listagens globais que cruzam
+     * tarefas/agendamentos de vários leads.
+     */
+    public function scopeWithVisibleLead(Builder $query): Builder
+    {
+        return $query->where(function ($q) {
+            $q->whereNull('lead_id')
+              ->orWhereHas('lead');
+        });
+    }
+
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');

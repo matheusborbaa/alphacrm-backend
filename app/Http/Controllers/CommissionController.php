@@ -29,6 +29,8 @@ class CommissionController extends Controller
                 'lead.empreendimento:id,name',
                 'corretor:id,name',
             ])
+
+            ->whereHas('lead')
             ->when($user->role === 'corretor', fn ($q) => $q->where('user_id', $user->id));
 
         if ($request->filled('status')) {
@@ -70,6 +72,8 @@ class CommissionController extends Controller
         $user = $request->user();
 
         $base = Commission::query()
+
+            ->whereHas('lead')
             ->when($user->role === 'corretor', fn ($q) => $q->where('user_id', $user->id));
 
         if ($request->filled('from')) $base->whereDate('created_at', '>=', $request->from);
@@ -115,7 +119,10 @@ class CommissionController extends Controller
             'approver:id,name',
             'canceller:id,name',
             'comments.user:id,name',
-        ])->findOrFail($id);
+        ])
+
+            ->whereHas('lead')
+            ->findOrFail($id);
 
         $this->authorizeRead($commission, $user);
 

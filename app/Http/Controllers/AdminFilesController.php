@@ -80,6 +80,8 @@ class AdminFilesController extends Controller
     {
         return LeadDocument::query()
             ->with(['lead:id,name', 'uploader:id,name'])
+
+            ->whereHas('lead')
             ->whereNull('deleted_at')
             ->orderByDesc('created_at')
             ->get()
@@ -103,6 +105,8 @@ class AdminFilesController extends Controller
 
         return LeadCustomFieldValue::query()
             ->with(['lead:id,name', 'customField:id,name,slug,type'])
+
+            ->whereHas('lead')
             ->whereHas('customField', fn ($q) => $q->where('type', 'file'))
             ->whereNotNull('value')
             ->get()

@@ -13,7 +13,7 @@ public function myCommissions(Request $request)
 {
     $user = $request->user();
 
-    $query = \App\Models\Commission::with('lead');
+    $query = \App\Models\Commission::with('lead')->whereHas('lead');
 
     if (!in_array($user->role, ['admin', 'gestor'])) {
         $query->where('user_id', $user->id);
@@ -35,6 +35,7 @@ public function myCommissions(Request $request)
             : now()->endOfMonth();
 
         $query = Commission::with('corretor')
+            ->whereHas('lead')
             ->whereBetween('created_at', [$start, $end]);
 
         if ($request->filled('user_id')) {

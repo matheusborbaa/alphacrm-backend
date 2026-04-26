@@ -158,6 +158,8 @@ class LeadDocumentController extends Controller
                 'deletionRequester:id,name',
                 'lead:id,name',
             ])
+
+            ->whereHas('lead')
             ->whereNotNull('deletion_requested_at')
             ->whereNull('deleted_at')
             ->orderBy('deletion_requested_at', 'asc')
@@ -769,6 +771,8 @@ class LeadDocumentController extends Controller
                 'document:id,original_name,mime_type,lead_id',
                 'lead:id,name',
             ])
+
+            ->whereHas('lead')
             ->orderByDesc('accessed_at');
 
         if ($leadId = $request->input('lead_id')) {

@@ -435,6 +435,11 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::put('/leads/editar/{lead}', [LeadController::class, 'update']);
     Route::delete('/leads/{lead}', [LeadController::class, 'destroy']);
 
+
+    Route::get   ('/admin/leads/trash',                [LeadController::class, 'trash']);
+    Route::post  ('/admin/leads/{id}/restore',         [LeadController::class, 'restore']);
+    Route::delete('/admin/leads/{id}/force',           [LeadController::class, 'forceDestroy']);
+
     Route::get   ('/documents/pending-deletions',                             [LeadDocumentController::class, 'pendingDeletions']);
 
     Route::get   ('/documents/accesses',                                      [LeadDocumentController::class, 'allAccesses']);
