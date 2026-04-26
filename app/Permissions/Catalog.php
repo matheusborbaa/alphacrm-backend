@@ -261,6 +261,73 @@ class Catalog
     }
 
     /**
+     * Sprint Cargos — Permissions LEGADAS que ainda são checadas em
+     * vários pontos do backend (middlewares `can:status_required_fields.manage`,
+     * policies, etc.) mas que não estão no novo catálogo agrupado.
+     *
+     * Mantemos elas vivas pra não quebrar nada (admin precisa continuar
+     * podendo abrir tela de Etapas, criar usuário, etc.). Não aparecem
+     * na UI de Cargos — o admin lida com as equivalentes novas
+     * (settings.pipeline, users.create, etc.) e o seeder anexa estas
+     * automaticamente baseado no type do cargo.
+     *
+     * Cleanup futuro: refatorar os 37 pontos do backend pra checar as
+     * novas, e remover deste array.
+     */
+    public static function legacyAll(): array
+    {
+        return [
+            'status_required_fields.manage',
+            'custom_fields.manage',
+            'users.view',
+            'users.manage',
+            'leads.view_any',
+            'leads.view_own',
+            'leads.update_any',
+            'leads.update_own',
+            'leads.move_any',
+            'leads.move_own',
+            'kanban.reorder',
+            'appointments.view_any',
+            'appointments.view_own',
+            'appointments.manage_any',
+            'appointments.manage_own',
+            'empreendimentos.manage',
+            'dashboard.view',
+            'reports.view',
+        ];
+    }
+
+    /**
+     * Mapeamento de quais legacy permissions cada type system recebe.
+     * Espelha o comportamento ANTERIOR pra preservar compat.
+     * @return array<string, list<string>>
+     */
+    public static function legacyDefaultsByType(): array
+    {
+        $all = self::legacyAll();
+
+        // Corretor antigo só tinha permissions próprias
+        $corretor = [
+            'leads.view_own',
+            'leads.update_own',
+            'leads.move_own',
+            'appointments.view_own',
+            'appointments.manage_own',
+            'dashboard.view',
+        ];
+
+        // Gestor = tudo das legacy EXCETO users.assign_admin (que não está nas legacy mesmo)
+        $gestor = $all;
+
+        return [
+            'admin'    => $all,
+            'gestor'   => $gestor,
+            'corretor' => $corretor,
+        ];
+    }
+
+    /**
      * Permissions atribuídas por type (admin/gestor/corretor) — define
      * o "kit de fábrica" dos cargos system. Usado pelo seeder.
      *

@@ -42,16 +42,28 @@ class RolesPermissionsSeeder extends Seeder
 
         $guard = 'web';
 
-        // 1) Sincroniza catálogo com a tabela permissions (cria as faltantes)
-        foreach (Catalog::allNames() as $name) {
+        // 1) Sincroniza catálogo com a tabela permissions (cria as faltantes).
+        //    Inclui também as legacy pra preservar compat com middlewares
+        //    espalhados pelo backend que ainda checam permissions antigas
+        //    (cleanup futuro: refatorar essas checagens, remover legacyAll).
+        $catalogNames = Catalog::allNames();
+        $legacyNames  = Catalog::legacyAll();
+        $allToCreate  = array_unique(array_merge($catalogNames, $legacyNames));
+
+        foreach ($allToCreate as $name) {
             Permission::firstOrCreate([
                 'name'       => $name,
                 'guard_name' => $guard,
             ]);
         }
 
-        // 2) Cargos system — atualiza permissions e flags
-        $defaults = Catalog::defaultsByType();
+        // 2) Cargos system — atualiza permissions e flags.
+        //    Mescla defaults novos (Catalog) + legacy do mesmo type, pra
+        //    garantir que admin/gestor/corretor não percam acesso a nada
+        //    que dependia das permissions antigas.
+        $defaults       = Catalog::defaultsByType();
+        $legacyDefaults = Catalog::legacyDefaultsByType();
+
         foreach (['admin', 'gestor', 'corretor'] as $name) {
             $role = Role::firstOrCreate([
                 'name'       => $name,
@@ -68,7 +80,11 @@ class RolesPermissionsSeeder extends Seeder
                 ]);
             }
 
-            $role->syncPermissions($defaults[$name] ?? []);
+            $merged = array_unique(array_merge(
+                $defaults[$name] ?? [],
+                $legacyDefaults[$name] ?? []
+            ));
+            $role->syncPermissions($merged);
         }
 
         // 3) Migra users legados (coluna role string → spatie)
