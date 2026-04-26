@@ -280,11 +280,35 @@ class LeadStatusRequirementValidator
             ->all();
     }
 
+    /**
+     * "Vazio" pra fins de obrigatoriedade.
+     *
+     * Alinhado com o `empty()` do PHP — considera 0, "0", 0.0 e false como
+     * vazios. Razão: pra campos comerciais como "Valor da venda", "Valor
+     * do imóvel", "Comissão", o usuário não pretende registrar "zero
+     * reais" — é mais comum que ele simplesmente não tenha o número e
+     * deixe pra preencher depois (o input renderiza R$ 0,00 só como
+     * placeholder).
+     *
+     * Antes só pegava null/string vazia/array vazio. Isso causava
+     * inconsistência: o modal de obrigatórios (que usa !empty() em
+     * StatusRequiredFieldController::forTarget) PEDIA o campo, mas o
+     * backend ACEITAVA o save mesmo se o user cancelasse o modal e
+     * tentasse salvar com value=0/"0". Resultado: lead avançava de
+     * etapa sem preencher Valor, e em mudanças posteriores o "0" salvo
+     * fazia o validator considerar preenchido — nunca mais pedia.
+     *
+     * Edge case: se algum dia precisar de um campo onde 0 é resposta
+     * válida (ex: "anos de uso = 0" pra imóvel novo), criar um type-
+     * specific checker baseado em $rule->customField->type.
+     */
     private function isEmpty($value): bool
     {
-        if ($value === null) return true;
+        if ($value === null)  return true;
+        if ($value === false) return true;
         if (is_string($value) && trim($value) === '') return true;
-        if (is_array($value) && empty($value)) return true;
+        if (is_array($value)  && empty($value))       return true;
+        if (is_numeric($value) && (float) $value == 0.0) return true;
         return false;
     }
 
