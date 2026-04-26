@@ -9,8 +9,9 @@ return new class extends Migration {
     {
         Schema::table('users', function (Blueprint $table) {
 
+
             $table->string('theme_preference', 16)
-                  ->default('system')
+                  ->nullable()
                   ->after('chat_read_receipts');
         });
     }

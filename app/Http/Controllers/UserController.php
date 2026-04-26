@@ -349,7 +349,7 @@ class UserController extends Controller
     {
         $data = $request->validate([
             'chat_read_receipts' => ['sometimes', 'boolean'],
-            'theme_preference'   => ['sometimes', Rule::in(['system', 'light', 'dark'])],
+            'theme_preference'   => ['sometimes', 'nullable', Rule::in(['system', 'light', 'dark'])],
         ]);
 
         if (empty($data)) {

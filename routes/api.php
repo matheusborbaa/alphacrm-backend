@@ -520,6 +520,24 @@ Route::middleware('auth:sanctum')->get('/me', function (Request $request) {
             $payload['role'] = $eff;
         }
     }
+
+
+    try {
+        $defaultTheme = \App\Models\Setting::get('default_theme', 'system');
+        if (!in_array($defaultTheme, ['system', 'light', 'dark'], true)) {
+            $defaultTheme = 'system';
+        }
+    } catch (\Throwable $e) {
+        $defaultTheme = 'system';
+    }
+    $payload['default_theme'] = $defaultTheme;
+
+    $effectiveTheme = $payload['theme_preference'] ?? null;
+    if (!in_array($effectiveTheme, ['system', 'light', 'dark'], true)) {
+        $effectiveTheme = $defaultTheme;
+    }
+    $payload['effective_theme_preference'] = $effectiveTheme;
+
     return response()->json($payload);
 });
 

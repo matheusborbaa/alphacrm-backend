@@ -138,6 +138,13 @@ class SettingController extends Controller
             'type'    => 'int_or_null',
             'default' => null,
         ],
+
+
+        'default_theme' => [
+            'type'    => 'enum',
+            'default' => 'system',
+            'options' => ['system', 'light', 'dark'],
+        ],
     ];
 
     public function index()
