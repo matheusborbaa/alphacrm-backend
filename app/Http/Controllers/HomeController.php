@@ -53,13 +53,20 @@ class HomeController extends Controller
         /* ----------------------------------------------------
          | FINANCEIRO — escopo padrão por user logado, mas admin/gestor
          | pode trocar via ?corretor_id=X (specific) ou =all (agrega
-         | toda a equipe). Quando finUserId é null = sem filtro de user.
+         | toda a equipe). Quando finUserId é null = sem filtro de user
+         | OU array de ids (gestor escolheu "Todos" → só seus subordinados).
          | Empreendimento opcional aplica nos 4 KPIs sempre.
          |---------------------------------------------------- */
+        // Sprint Hierarquia — quando "Todos" e caller é gestor, escopa
+        // pra subordinados. Admin com "Todos" vê empresa inteira (null).
+        $finUserScope = $this->resolveFinanceUserScope($request, $user, $finUserId);
+
         $comissQuery = Commission::query()
             ->whereBetween('created_at', [$finStart, $finEnd]);
 
-        if ($finUserId !== null) {
+        if (is_array($finUserScope)) {
+            $comissQuery->whereIn('user_id', $finUserScope);
+        } elseif ($finUserId !== null) {
             $comissQuery->where('user_id', $finUserId);
         }
 
@@ -77,7 +84,9 @@ class HomeController extends Controller
         $soldLeadsQ = Lead::query()
             ->whereBetween('status_changed_at', [$finStart, $finEnd])
             ->whereHas('status', fn($q) => $q->where('name', 'Vendido'));
-        if ($finUserId !== null) {
+        if (is_array($finUserScope)) {
+            $soldLeadsQ->whereIn('assigned_user_id', $finUserScope);
+        } elseif ($finUserId !== null) {
             $soldLeadsQ->where('assigned_user_id', $finUserId);
         }
         if ($empreendimentoId) {
@@ -92,7 +101,9 @@ class HomeController extends Controller
         // faz sentido pro "VGV total da carteira da imobiliária".
         $vgvQ = Lead::query()
             ->whereDoesntHave('status', fn($q) => $q->whereIn('name', ['Vendido', 'Perdido']));
-        if ($finUserId !== null) {
+        if (is_array($finUserScope)) {
+            $vgvQ->whereIn('assigned_user_id', $finUserScope);
+        } elseif ($finUserId !== null) {
             $vgvQ->where('assigned_user_id', $finUserId);
         }
         if ($empreendimentoId) {
@@ -316,10 +327,15 @@ class HomeController extends Controller
                   });
             });
 
-        // Sprint H1.1b — quando admin/gestor escolhe "Todos os corretores"
-        // ($finUserId é null), pula o where de user_id pra retornar a
-        // lista agregada da equipe inteira.
-        if ($finUserId !== null) {
+        // Sprint H1.1b + Hierarquia — "Todos os corretores":
+        //   - Admin → null = sem filtro (empresa inteira)
+        //   - Gestor → array de subordinados (incluindo ele)
+        //   - Corretor → próprio id (controle de acesso já no resolveFinanceUserId)
+        $finUserScope = $this->resolveFinanceUserScope($request, $user, $finUserId);
+
+        if (is_array($finUserScope)) {
+            $query->whereIn('user_id', $finUserScope);
+        } elseif ($finUserId !== null) {
             $query->where('user_id', $finUserId);
         }
 
@@ -436,5 +452,34 @@ class HomeController extends Controller
     {
         $id = (int) $request->input('empreendimento_id', 0);
         return $id > 0 ? $id : 0;
+    }
+
+    /**
+     * Sprint Hierarquia — quando admin/gestor escolhe "Todos os corretores"
+     * (corretor_id=all), decide o ESCOPO real de users:
+     *
+     *   - Admin → null (sem filtro = vê empresa inteira, mantém comportamento)
+     *   - Gestor → array com self + descendentes (subordinados recursivos)
+     *
+     * Quando NÃO é 'all' (corretor específico ou sem filtro), retorna null
+     * — o caller usa o $finUserId direto pra where('user_id', X).
+     *
+     * Retorno:
+     *   - null         → não aplicar whereIn (caller decide próximo passo)
+     *   - array<int>   → aplicar whereIn('user_id', $array)
+     */
+    private function resolveFinanceUserScope(Request $request, $user, ?int $finUserId): ?array
+    {
+        // Só importa quando user pediu "all" explicitamente
+        $raw = (string) $request->input('corretor_id', '');
+        if ($raw !== 'all') return null;
+
+        $role = strtolower((string) ($user->role ?? ''));
+        if ($role === 'admin') return null;       // empresa inteira
+        if ($role === 'gestor') return $user->descendantIds();
+        // Corretor com 'all' → resolveFinanceUserId já forçou pro próprio
+        // id (defesa em profundidade). Aqui retorna null pra cair no
+        // where('user_id', $finUserId) normal.
+        return null;
     }
 }

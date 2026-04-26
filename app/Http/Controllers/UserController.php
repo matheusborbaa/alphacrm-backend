@@ -67,6 +67,14 @@ class UserController extends Controller
             $query->where('active', (bool) $request->get('active'));
         }
 
+        // Sprint Hierarquia — gestor só vê quem responde a ele (recursivo).
+        // Admin sempre vê todos. Corretor não chega aqui (policy bloqueia
+        // viewAny acima), mas defesa em profundidade não dói.
+        $allowedIds = $request->user()->accessibleUserIds();
+        if ($allowedIds !== null) {
+            $query->whereIn('id', $allowedIds);
+        }
+
         $users = $query->orderBy('name')->get();
 
         // injeta role_name + lead count na saída (evita N+1 explícito)

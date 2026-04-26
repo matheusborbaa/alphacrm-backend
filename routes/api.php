@@ -271,11 +271,51 @@ Route::post('/auth/reset-password', [AuthController::class, 'resetPassword'])
 | API PRIVADA (LEADS + EMPREENDIMENTOS)
 |--------------------------------------------------------------------------
 */
-Route::get('/users', function(){
+Route::get('/users', function(\Illuminate\Http\Request $request){
     // Inclui email e avatar — o chat usa isso pra renderizar a foto
     // do corretor nos itens de conversa e no seletor "Nova conversa".
     // Se virar pesado, paginar ou filtrar por active=true.
-    return \App\Models\User::select('id','name','email','avatar')->get();
+    //
+    // Sprint Hierarquia — quando ?scope=hierarchy, filtra pela árvore
+    // do caller (admin vê todos; gestor vê self+subordinados; corretor
+    // vê só self). Por padrão (sem scope) retorna TODOS pra preservar
+    // funcionamento do chat e outros lugares que precisam ver todo mundo.
+    // Inclui empreendimento_access_mode + parent_user_id pra cascata
+    // funcionar nos dropdowns que dependem dessa info (ex: cadastro user).
+    $q = \App\Models\User::select(
+        'id','name','email','avatar','role',
+        'empreendimento_access_mode','parent_user_id'
+    );
+
+    if ($request->input('scope') === 'hierarchy') {
+        $allowedIds = $request->user()->accessibleUserIds();
+        if ($allowedIds !== null) {
+            $q->whereIn('id', $allowedIds);
+        }
+    }
+
+    $users = $q->get();
+
+    // Sprint Hierarquia — anexa empreendimento_ids aos users de modo
+    // 'specific' pra a UI de cadastro fazer cascata sem 1 fetch por user.
+    // Carrega tudo de uma vez via whereIn → pluck. Barato (<<1k users).
+    $specificIds = $users->where('empreendimento_access_mode', 'specific')->pluck('id');
+    if ($specificIds->isNotEmpty()) {
+        $pivot = \Illuminate\Support\Facades\DB::table('user_empreendimentos')
+            ->whereIn('user_id', $specificIds)
+            ->get(['user_id', 'empreendimento_id'])
+            ->groupBy('user_id');
+
+        $users->each(function ($u) use ($pivot) {
+            $u->empreendimento_ids = $u->empreendimento_access_mode === 'specific'
+                ? ($pivot->get($u->id)?->pluck('empreendimento_id')->all() ?? [])
+                : [];
+        });
+    } else {
+        $users->each(fn ($u) => $u->empreendimento_ids = []);
+    }
+
+    return $users;
 })->middleware('auth:sanctum');
 Route::get('/empreendimentos-lista', function(){
     return \App\Models\Empreendimento::select('id','name')->get();

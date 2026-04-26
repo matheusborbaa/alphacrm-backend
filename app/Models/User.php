@@ -123,6 +123,30 @@ class User extends Authenticatable
     }
 
     /**
+     * Sprint Hierarquia (fix) — devolve o role "efetivo" combinando coluna
+     * users.role (legado) + Spatie roles. Algumas contas antigas têm só a
+     * coluna populada; outras têm só Spatie; outras as duas. Antes os
+     * helpers liam só `$this->role`, e admins criados via `assignRole()`
+     * sem setar a coluna acabavam tratados como corretor (bug: "sou admin,
+     * deveria ver todos" no dropdown de corretor da Home).
+     *
+     * Mesma resolução que o resto do sistema usa em respostas JSON
+     * (UserController@index linha 97 etc): Spatie primeiro, coluna depois.
+     */
+    public function effectiveRole(): string
+    {
+        // getRoleNames() pode disparar query — proteção pra contextos onde
+        // a relação não foi eager-loaded (ex: $request->user() já vem com
+        // roles carregadas via auth middleware na maior parte dos casos).
+        try {
+            $spatie = $this->getRoleNames()->first();
+        } catch (\Throwable $e) {
+            $spatie = null;
+        }
+        return strtolower((string) ($spatie ?? $this->role ?? ''));
+    }
+
+    /**
      * Decide se este user pode atender o empreendimento $id.
      *
      * Regras (em ordem):
@@ -135,7 +159,7 @@ class User extends Authenticatable
      */
     public function canAccessEmpreendimento(int $empreendimentoId): bool
     {
-        if (strtolower((string) ($this->role ?? '')) === 'admin') {
+        if ($this->effectiveRole() === 'admin') {
             return true;
         }
         if ($this->empreendimento_access_mode === 'all') {
@@ -159,10 +183,65 @@ class User extends Authenticatable
      */
     public function accessibleEmpreendimentoIds(): \Illuminate\Support\Collection
     {
-        $isAdmin = strtolower((string) ($this->role ?? '')) === 'admin';
-        if ($isAdmin || $this->empreendimento_access_mode === 'all') {
+        if ($this->effectiveRole() === 'admin' || $this->empreendimento_access_mode === 'all') {
             return Empreendimento::query()->pluck('id');
         }
         return $this->empreendimentos()->pluck('empreendimentos.id');
+    }
+
+    /**
+     * Sprint Hierarquia — IDs de TODOS os usuários "abaixo" deste user na
+     * árvore de subordinação (parent_user_id), incluindo ele mesmo.
+     *
+     * Usado pra escopar filtros (financeiro, relatórios, etc) onde gestor
+     * só pode ver dados de quem responde a ele.
+     *
+     * Algoritmo BFS limitado a 10 níveis pra evitar loop em árvore mal
+     * configurada (apesar do anti-ciclo no UserController, defesa extra).
+     *
+     * Retorna array de int (não collection) pra usar direto em whereIn.
+     */
+    public function descendantIds(int $maxDepth = 10): array
+    {
+        $ids = [$this->id];
+        $frontier = [$this->id];
+        $depth = 0;
+
+        while (!empty($frontier) && $depth < $maxDepth) {
+            $next = static::query()
+                ->whereIn('parent_user_id', $frontier)
+                ->pluck('id')
+                ->all();
+
+            // Filtra fora ids já visitados (proteção anti-ciclo)
+            $next = array_values(array_diff($next, $ids));
+            if (empty($next)) break;
+
+            $ids = array_merge($ids, $next);
+            $frontier = $next;
+            $depth++;
+        }
+
+        return $ids;
+    }
+
+    /**
+     * Sprint Hierarquia — IDs dos users que ESTE user pode "ver" em filtros
+     * que exigem hierarquia (ex: dropdown de corretor no financeiro).
+     *
+     *   - Admin → retorna null (caller deve interpretar como "sem filtro,
+     *     vê todos"). Retornar todos os IDs seria caro e desnecessário.
+     *   - Gestor → self + descendentes recursivos.
+     *   - Corretor → só ele mesmo (não vê outros — esses dropdowns nem
+     *     deveriam estar visíveis pra ele, mas defesa em profundidade).
+     *
+     * @return array<int>|null  null = sem filtro (admin)
+     */
+    public function accessibleUserIds(): ?array
+    {
+        $role = $this->effectiveRole();
+        if ($role === 'admin') return null;
+        if ($role === 'gestor') return $this->descendantIds();
+        return [$this->id];
     }
 }
