@@ -4,17 +4,6 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-/**
- * Sprint 3.7a — Módulo financeiro (base).
- *
- * Cada entry é imutável (append-only). Direção `in` = entrada; `out` = saída.
- * Usado hoje pra registrar:
- *   - Venda confirmada     → direction=in,  category=sale,       ref=Commission
- *   - Comissão paga        → direction=out, category=commission, ref=Commission
- *
- * No futuro receberá fontes de outros módulos (RH, fornecedores, etc)
- * via polimorfismo em (reference_type, reference_id).
- */
 class FinanceEntry extends Model
 {
     public const DIRECTION_IN  = 'in';
@@ -42,10 +31,6 @@ class FinanceEntry extends Model
         'entry_date' => 'date',
     ];
 
-    /**
-     * Escopo polimórfico pra buscar entries vindas de uma Commission
-     * (ou de qualquer Model no futuro).
-     */
     public function scopeFor($q, $model)
     {
         return $q->where('reference_type', get_class($model))

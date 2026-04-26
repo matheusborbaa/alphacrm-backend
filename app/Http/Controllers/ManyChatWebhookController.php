@@ -10,35 +10,12 @@ use App\Models\LeadStatus;
 use App\Models\Empreendimento;
 use App\Services\LeadAssignmentService;
 
-/**
- * @group ManyChat
- */
-
-
 class ManyChatWebhookController extends Controller
 {
-/**
- * Webhook ManyChat � Cria��o de Lead
- *
- * Recebe dados enviados pelo ManyChat, cria ou atualiza um lead,
- * associa empreendimento (se informado) e executa o rod�zio autom�tico.
- *
- * @bodyParam phone string required Telefone do lead. Example: 11999999999
- * @bodyParam name string Nome do lead. Example: Jo�o Silva
- * @bodyParam email string Email do lead. Example: joao@email.com
- * @bodyParam channel string Canal de origem. Example: Instagram
- * @bodyParam campaign string Campanha. Example: Black Friday
- * @bodyParam empreendimento string Nome do empreendimento. Example: Residencial Alpha
- * @bodyParam manychat_id string ID do ManyChat. Example: mc_123456
- *
- * @response 200 {
- *   "success": true,
- *   "lead_id": 42
- * }
- */
+
     public function store(Request $request)
     {
-        // Valida��o m�nima
+
         $data = $request->validate([
             'phone'          => 'required|string',
             'name'           => 'nullable|string',
@@ -52,19 +29,17 @@ class ManyChatWebhookController extends Controller
         DB::beginTransaction();
 
         try {
-            // Origem (ManyChat)
+
             $source = LeadSource::firstOrCreate([
                 'name' => 'ManyChat'
             ]);
 
-            // Status inicial
             $status = LeadStatus::firstOrCreate([
                 'name' => 'Novo'
             ], [
                 'order' => 1
             ]);
 
-            // Deduplica��o por telefone
             $lead = Lead::where('phone', $data['phone'])->first();
 
             if (!$lead) {
@@ -79,7 +54,7 @@ class ManyChatWebhookController extends Controller
                     'campaign'    => $data['campaign'] ?? null,
                 ]);
             } else {
-                // Atualiza dados se o lead j� existir
+
                 $lead->update([
                     'name'     => $data['name'] ?? $lead->name,
                     'email'    => $data['email'] ?? $lead->email,
@@ -87,7 +62,6 @@ class ManyChatWebhookController extends Controller
                 ]);
             }
 
-            // Empreendimento (opcional)
             if (!empty($data['empreendimento'])) {
                 $empreendimento = Empreendimento::firstOrCreate([
                     'name' => $data['empreendimento']
@@ -100,7 +74,6 @@ class ManyChatWebhookController extends Controller
                 }
             }
 
-            // Rodizio automático
             $assignmentService = new LeadAssignmentService();
             $assignmentService->assign($lead);
 

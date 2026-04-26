@@ -10,24 +10,6 @@ use App\Models\StatusRequiredField;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
 
-/**
- * Valida se um lead pode mudar para um novo status/substatus baseado nas regras
- * de campos obrigatórios configuradas em `status_required_fields`.
- *
- * Regra principal:
- *   - Se o usuário PULAR etapas (target.order > current.order + 1), os campos
- *     obrigatórios de TODAS as etapas intermediárias também precisam estar
- *     preenchidos. Isso garante histórico comercial completo.
- *   - Para o substatus, só valida o substatus destino (os intermediários de
- *     substatus não fazem sentido cobrar em salto).
- *
- * A validação considera campos que JÁ estão preenchidos no lead + campos que
- * estão chegando no request (pra permitir preencher tudo de uma vez).
- *
- * Usado em:
- *  - LeadController@update (mudança de status na página do lead)
- *  - KanbanController@move (arrastar entre colunas)
- */
 class LeadStatusRequirementValidator
 {
     public function validate(
@@ -48,7 +30,6 @@ class LeadStatusRequirementValidator
         $effectiveStatusId    = $newStatusId    ?? $lead->status_id;
         $effectiveSubstatusId = $newSubstatusId ?? $lead->lead_substatus_id;
 
-        // Busca regras aplicáveis: de TODAS as etapas do percurso
         $rules = $this->collectRulesForTransition(
             $lead->status_id,
             $effectiveStatusId,
@@ -59,26 +40,21 @@ class LeadStatusRequirementValidator
             return;
         }
 
-        // Valores chegando no request
         $incomingCustomBySlug = collect($incomingCustomValues)
             ->keyBy('slug')
             ->map(fn($e) => $e['value'] ?? null);
 
-        // Valores atuais do lead
         $lead->loadMissing('customFieldValues.customField');
         $currentCustomBySlug = $lead->customFieldValues
             ->mapWithKeys(fn($v) => [$v->customField?->slug => $v->value])
             ->filter(fn($_, $slug) => $slug !== null);
 
         $missing = [];
-        $seen    = []; // dedupe: evita pedir o mesmo campo duas vezes
+        $seen    = [];
 
         foreach ($rules as $rule) {
             if (!$rule->required) continue;
 
-            // Regra de tarefa obrigatória: bloqueia avanço se o lead não
-            // tem ao menos 1 appointment do tipo 'task' que bate com o
-            // kind/completed exigidos. Dedup por (stage, kind, completed).
             if ($rule->isTaskRequirement()) {
                 $kind     = $rule->require_task_kind ?: 'any';
                 $needDone = (bool) $rule->require_task_completed;
@@ -158,19 +134,6 @@ class LeadStatusRequirementValidator
         }
     }
 
-    /**
-     * Coleta TODAS as regras que se aplicam à transição, inclusive etapas
-     * intermediárias caso haja salto.
-     *
-     *  - currentStatusId → targetStatusId : considera todos os status com
-     *      currentStatus.order < s.order <= targetStatus.order
-     *      (quando estiver indo pra frente; se o target.order <= current.order,
-     *       só olha o target).
-     *  - targetSubstatusId : adiciona regras do substatus destino.
-     *
-     * Retorna coleção de StatusRequiredField com uma propriedade extra
-     * _stage_label (nome da etapa de origem da regra) pra UI exibir.
-     */
     public function collectRulesForTransition(
         ?int $currentStatusId,
         ?int $targetStatusId,
@@ -185,13 +148,11 @@ class LeadStatusRequirementValidator
             return $rules;
         }
 
-        // Mapa id→nome de todos os status envolvidos (pra rotular as regras)
         $statusesMap = LeadStatus::whereIn('id', $statusIdsToCheck)
             ->orderBy('order')
             ->get()
             ->keyBy('id');
 
-        // -------- 1) Regras de STATUS (inicio -> target, inclusive) --------
         if (!empty($statusIdsToCheck)) {
             $statusRules = StatusRequiredField::with('customField')
                 ->where('required', true)
@@ -204,15 +165,6 @@ class LeadStatusRequirementValidator
             }
         }
 
-        // NOTA: regras de substatus INTERMEDIÁRIOS não são cobradas.
-        // O lead pode ter passado por qualquer substatus (ou nenhum) dentro
-        // de uma etapa — não temos como saber retroativamente. Pedir a
-        // união de todos os obrigatórios de substatus da etapa vira uma
-        // enxurrada pro usuário. Se alguma regra precisa ser realmente
-        // transversal à etapa, o admin deve configurá-la no STATUS e não
-        // no substatus.
-
-        // -------- 2) Regras do SUBSTATUS destino (específico) --------
         if ($targetSubstatusId) {
             $sub = LeadSubstatus::with('status')->find($targetSubstatusId);
             if ($sub) {
@@ -233,32 +185,6 @@ class LeadStatusRequirementValidator
         return $rules;
     }
 
-    /**
-     * Resolve quais IDs de status devem ser validados.
-     *
-     * Estratégia "desde o início": sempre cobra TODAS as etapas com
-     * order <= target.order. Se o campo já estiver preenchido (seja no
-     * próprio lead ou no incomingData), o filtro de `isEmpty` no validate()
-     * ou de `is_filled` no controller garante que ele não será pedido
-     * novamente. Isso cobre os cenários em que:
-     *   - o lead foi importado direto numa etapa avançada;
-     *   - o admin criou regras novas DEPOIS do lead ter passado pela etapa;
-     *   - o lead está voltando de uma etapa adiante e alguma regra antiga
-     *     nunca foi preenchida.
-     *
-     * Quando target.order <= current.order (voltando), ainda assim pegamos
-     * tudo até o destino: os campos ja preenchidos simplesmente nao viram
-     * "missing" e não aparecem no modal.
-     *
-     * EXCEÇÃO — etapas de DESCARTE (is_discard=true):
-     *   Descartado/Perdido/Cancelado NÃO cobram a cascata. O lead foi
-     *     abandonado justamente porque o corretor NÃO conseguiu coletar
-     *     as infos das etapas anteriores; cobrar tudo de novo bloqueia
-     *     o descarte e gera fricção pura. Cobramos apenas as regras
-     *     configuradas para a própria etapa de descarte (típico:
-     *     "motivo do descarte" custom field).
-     *   Vendido continua na cascata — venda quer histórico completo.
-     */
     private function intermediateAndTargetStatusIds(?int $currentStatusId, ?int $targetStatusId): array
     {
         if (!$targetStatusId) {
@@ -268,40 +194,16 @@ class LeadStatusRequirementValidator
         $target = LeadStatus::find($targetStatusId);
         if (!$target) return [];
 
-        // Etapa de descarte → só ela mesma. Sem cascata de anteriores.
         if (!empty($target->is_discard)) {
             return [(int) $target->id];
         }
 
-        // Todas as etapas do início até o destino (inclusive)
         return LeadStatus::where('order', '<=', $target->order)
             ->orderBy('order')
             ->pluck('id')
             ->all();
     }
 
-    /**
-     * "Vazio" pra fins de obrigatoriedade.
-     *
-     * Alinhado com o `empty()` do PHP — considera 0, "0", 0.0 e false como
-     * vazios. Razão: pra campos comerciais como "Valor da venda", "Valor
-     * do imóvel", "Comissão", o usuário não pretende registrar "zero
-     * reais" — é mais comum que ele simplesmente não tenha o número e
-     * deixe pra preencher depois (o input renderiza R$ 0,00 só como
-     * placeholder).
-     *
-     * Antes só pegava null/string vazia/array vazio. Isso causava
-     * inconsistência: o modal de obrigatórios (que usa !empty() em
-     * StatusRequiredFieldController::forTarget) PEDIA o campo, mas o
-     * backend ACEITAVA o save mesmo se o user cancelasse o modal e
-     * tentasse salvar com value=0/"0". Resultado: lead avançava de
-     * etapa sem preencher Valor, e em mudanças posteriores o "0" salvo
-     * fazia o validator considerar preenchido — nunca mais pedia.
-     *
-     * Edge case: se algum dia precisar de um campo onde 0 é resposta
-     * válida (ex: "anos de uso = 0" pra imóvel novo), criar um type-
-     * specific checker baseado em $rule->customField->type.
-     */
     private function isEmpty($value): bool
     {
         if ($value === null)  return true;
@@ -328,7 +230,6 @@ class LeadStatusRequirementValidator
         return $labels[$column] ?? ucfirst(str_replace('_', ' ', $column));
     }
 
-    /** Espelha o método do controller pra manter a mensagem consistente. */
     private function humanizeTaskRule(StatusRequiredField $rule): string
     {
         $kinds = [

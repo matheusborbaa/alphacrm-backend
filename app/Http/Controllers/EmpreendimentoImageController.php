@@ -12,23 +12,10 @@ use Illuminate\Validation\ValidationException;
 
 class EmpreendimentoImageController extends Controller
 {
-    /**
-     * Upload de imagem para a galeria de um empreendimento.
-     *
-     * Armazena em storage público (disk 'public') e devolve o registro
-     * já com `image_path` apontando pra URL servível (/storage/...). O
-     * frontend só precisa prefixar com o host.
-     *
-     * Guarda pré-validação pra post_max_size/upload_max_filesize exceeded
-     * — nesses casos o PHP zera $_FILES silenciosamente e a validação
-     * padrão do Laravel só diz "o arquivo é obrigatório", mascarando o
-     * motivo real (limite de upload estourado).
-     */
+
     public function store(Request $request, Empreendimento $empreendimento)
     {
-        // Detecta post_max_size estourado: o PHP zera $_POST/$_FILES mas o
-        // CONTENT_LENGTH vem populado. Sem essa guarda cai na validação
-        // genérica "required" e o usuário não entende o que aconteceu.
+
         $contentLength = (int) $request->server('CONTENT_LENGTH');
         $postMax       = $this->iniBytes(ini_get('post_max_size'));
 
@@ -47,8 +34,7 @@ class EmpreendimentoImageController extends Controller
                 'is_cover' => 'nullable|boolean',
             ]);
         } catch (ValidationException $e) {
-            // Se o único erro é "image required" e tinha payload, provavelmente
-            // upload_max_filesize foi o causa.
+
             $errors = $e->errors();
             $onlyImageRequired = isset($errors['image'])
                 && count($errors) === 1
@@ -67,8 +53,6 @@ class EmpreendimentoImageController extends Controller
 
         $file = $request->file('image');
 
-        // Safety-net pra UPLOAD_ERR_*; o validador já trata mime/size mas
-        // erros tipo NO_TMP_DIR / CANT_WRITE passariam batido.
         if (!$file->isValid()) {
             $errorMap = [
                 UPLOAD_ERR_INI_SIZE   => 'Imagem maior que o limite do servidor.',
@@ -85,9 +69,7 @@ class EmpreendimentoImageController extends Controller
         }
 
         try {
-            // `store` na disk 'public' devolve path cru tipo
-            // "empreendimentos/abc/xyz.jpg". Guardamos com Storage::url pra
-            // o frontend só precisar prefixar o host.
+
             $slug = $empreendimento->code
                 ? Str::slug($empreendimento->code)
                 : $empreendimento->id;
@@ -97,7 +79,6 @@ class EmpreendimentoImageController extends Controller
             $category = $request->input('category', EmpreendimentoImage::CATEGORY_IMAGENS);
             $wantCover = (bool) $request->boolean('is_cover');
 
-            // Se for marcada como capa já na criação, limpa a flag das outras.
             if ($wantCover) {
                 EmpreendimentoImage::where('empreendimento_id', $empreendimento->id)
                     ->update(['is_cover' => false]);
@@ -111,9 +92,6 @@ class EmpreendimentoImageController extends Controller
                 'is_cover'          => $wantCover,
             ]);
 
-            // Espelha a capa na coluna cover_image do empreendimento pra manter
-            // compat com listagens antigas que leem direto. Se o empreendimento
-            // ainda não tinha cover_image, auto-ativa (regra: sem capa = inativo).
             if ($wantCover) {
                 $empreendimento->update([
                     'cover_image' => $img->image_path,
@@ -133,11 +111,6 @@ class EmpreendimentoImageController extends Controller
         }
     }
 
-    /**
-     * Marca uma imagem como capa do empreendimento. Limpa a flag das outras
-     * imagens do mesmo empreendimento e atualiza empreendimentos.cover_image
-     * (mantendo compat com listagens/cards antigos).
-     */
     public function setCover(Request $request, EmpreendimentoImage $image)
     {
         abort_unless(in_array($request->user()?->role, ['admin', 'gestor'], true), 403);
@@ -147,7 +120,6 @@ class EmpreendimentoImageController extends Controller
 
         $image->update(['is_cover' => true]);
 
-        // Atualiza a capa e — se era a primeira capa — auto-ativa o empreendimento.
         $emp = Empreendimento::find($image->empreendimento_id);
         $wasInactive = !$emp->active;
 
@@ -159,21 +131,15 @@ class EmpreendimentoImageController extends Controller
         return response()->json([
             'success'         => true,
             'image'           => $image->fresh(),
-            'just_activated'  => $wasInactive, // frontend usa pra exibir toast "ativado!"
+            'just_activated'  => $wasInactive,
             'empreendimento_active' => true,
         ]);
     }
 
-    /**
-     * Remove imagem da galeria. Só admin/gestor chegam aqui (rota protegida).
-     * Apaga o arquivo físico (best-effort) e depois a row.
-     */
     public function destroy(Request $request, EmpreendimentoImage $image)
     {
         abort_unless(in_array($request->user()?->role, ['admin', 'gestor'], true), 403);
 
-        // image_path é salvo como "/storage/empreendimentos/.../x.jpg" —
-        // pra acessar via disk('public') precisamos tirar o prefixo.
         $relative = ltrim(preg_replace('#^/?storage/#', '', (string) $image->image_path), '/');
 
         if ($relative && Storage::disk('public')->exists($relative)) {
@@ -193,9 +159,6 @@ class EmpreendimentoImageController extends Controller
 
         $image->delete();
 
-        // Se removeu a capa: desativa o empreendimento e tenta eleger
-        // outra imagem da mesma categoria ('imagens' de preferência)
-        // como nova capa. Se não há mais imagens, fica sem capa e inativo.
         $justDeactivated = false;
         if ($wasCover) {
             $next = EmpreendimentoImage::where('empreendimento_id', $empreendimentoId)
@@ -223,13 +186,6 @@ class EmpreendimentoImageController extends Controller
         ]);
     }
 
-    /* =========================================================================
-     * HELPERS
-     * =======================================================================*/
-
-    /**
-     * Converte valor de ini ("20M", "2G", "8388608") em bytes.
-     */
     private function iniBytes(?string $val): int
     {
         if ($val === null || $val === '') return 0;
@@ -244,9 +200,6 @@ class EmpreendimentoImageController extends Controller
         return $num;
     }
 
-    /**
-     * Formata bytes em "15 MB" / "512 KB".
-     */
     private function formatBytes(int $bytes): string
     {
         if ($bytes <= 0) return '0 B';

@@ -44,50 +44,30 @@ use App\Http\Controllers\ChatAttachmentController;
 use App\Http\Controllers\VpsStatusController;
 
     Route::post('/me', [UserController::class, 'updateProfile'])->middleware(['auth:sanctum']);
-    // Status do corretor (disponivel/ocupado/offline) — usado pelo rodízio.
+
     Route::post('/users/me/status', [UserController::class, 'updateStatus'])->middleware(['auth:sanctum']);
-    // Sprint Auto-Offline — heartbeat de presença. Frontend manda ~60/60s
-    // pra atualizar last_seen_at. Comando MarkInactiveCorretoresOffline
-    // marca offline quem não bate há mais de N min.
+
     Route::post('/users/me/heartbeat', [UserController::class, 'heartbeat'])->middleware(['auth:sanctum']);
-    // Sprint 3.8d — preferências pessoais (self-service). Hoje só
-    // chat_read_receipts; futuras preferências de usuário entram aqui.
+
     Route::post('/users/me/preferences', [UserController::class, 'updatePreferences'])->middleware(['auth:sanctum']);
 
-    // GET do usuário logado — precisa estar acessível pra QUALQUER role
-    // (admin, gestor, corretor), senão o corretor não consegue sincronizar
-    // o status_corretor do dropdown do header. A versão antiga dessa rota
-    // mora dentro do grupo role:admin,gestor — mantemos ela lá por compat,
-    // mas essa aqui é a canônica pra uso do frontend.
     Route::get('/user/me', function (\Illuminate\Http\Request $request) {
         return response()->json($request->user());
     })->middleware('auth:sanctum');
 
-    // ALIAS LEGADO: home.js antigo (em cache do browser) chama POST /user/status.
-    // A rota oficial é /users/me/status, mas enquanto os browsers não baixam
-    // a versão nova do JS, redireciona pro mesmo controller pra manter o fluxo
-    // (inclusive o rodízio de órfãos). Auth-only, sem role gate.
     Route::post('/user/status', [UserController::class, 'updateStatus'])
         ->middleware('auth:sanctum');
-// usuario rotas
 
-
-/* leads que precisam de atenção */
-// Protegida com auth:sanctum — expõe nomes de leads, não pode ficar aberta.
 Route::get('/dashboard/leads-atencao', function () {
 
-    // Sprint H1.3 — limite de dias é configurável via Settings.
-    // Default 5 dias (mantém compat com behavior anterior).
-    // Range válido: 1-30 dias (validado tanto na escrita quanto aqui no
-    // read pra defender contra valores absurdos que escapem da UI).
     $limiteDias = (int) \App\Models\Setting::get('leads_atencao_dias_sem_contato', 5);
     $limiteDias = max(1, min(30, $limiteDias));
 
     $leads = Lead::where(function ($q) use ($limiteDias) {
 
-        $q->whereNull('updated_at') // nunca teve interação
+        $q->whereNull('updated_at')
 
-          ->orWhere('updated_at', '<=', now()->subDays($limiteDias)); // mais de X dias
+          ->orWhere('updated_at', '<=', now()->subDays($limiteDias));
 
     })->orderBy('updated_at', 'asc')
     ->limit(5)
@@ -117,41 +97,18 @@ Route::get('/dashboard/leads-atencao', function () {
     return response()->json($result);
 })->middleware('auth:sanctum');
 
-
-
-/*
-|--------------------------------------------------------------------------
-| DASHBOARD
-|--------------------------------------------------------------------------
-*/
 Route::get('/meta/empreendimento-fields', function () {
     return \App\Models\EmpreendimentoFieldDefinition::orderBy('name')->get();
 });
-// Funil de conversão — exige auth pra não vazar dados de pipeline.
+
 Route::get('/funnel', [DashboardHomeController::class, 'funnel'])
     ->middleware('auth:sanctum');
 
-
-
-// Route::get('/ksanban', [KanbanController::class, 'index']);
-/*
-|--------------------------------------------------------------------------
-| CIDADES (FILTRO)
-|--------------------------------------------------------------------------
-*/
 Route::middleware('auth:sanctum')->get(
     '/empreendimentos/cities',
     [EmpreendimentoController::class, 'cities']
 );
 
-
-/*
-|--------------------------------------------------------------------------
-| ADMIN - FIELD DEFINITIONS
-|--------------------------------------------------------------------------
-| Sprint Cargos — protegido pela permission `empreendimentos.field_definitions.manage`
-| (no Catalog). Admin tem por default; cargos custom podem ganhar.
-*/
 Route::middleware(['auth:sanctum', 'permission:empreendimentos.field_definitions.manage|settings.empreendimento_fields'])
     ->prefix('admin')
     ->group(function () {
@@ -161,14 +118,10 @@ Route::middleware(['auth:sanctum', 'permission:empreendimentos.field_definitions
         );
     });
 
-
 Route::post('/auth/refresh', [AuthController::class, 'refresh']);
 Route::get('/auth/permissions', [AuthController::class, 'permissions'])
     ->middleware('auth:sanctum');
 
-// Sprint 3.0a — sessões + reauth. Essas rotas NÃO recebem o middleware
-// 'fresh-auth' — senão vira deadlock (o user precisaria estar "fresh"
-// pra poder confirmar a senha que o torna fresh).
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/auth/sessions',             [\App\Http\Controllers\SessionsController::class, 'index']);
     Route::delete('/auth/sessions/{token}',  [\App\Http\Controllers\SessionsController::class, 'destroy']);
@@ -185,49 +138,26 @@ Route::post(
     [EmpreendimentoFieldValueController::class, 'store']
 )->middleware(['auth:sanctum', 'permission:settings.empreendimento_fields|empreendimentos.field_definitions.manage|empreendimentos.update']);
 
-
-/*
-|--------------------------------------------------------------------------
-| ROTAS PÚBLICAS (SITE)
-|--------------------------------------------------------------------------
-*/
 Route::get('/public/', [EmpreendimentoController::class, 'publicIndex']);
 Route::get('/public/home', [EmpreendimentoController::class, 'publicIndexHome']);
 Route::get('/public/empreendimentos/{code}', [EmpreendimentoController::class, 'publicShow']);
 Route::get('/public/empreendimentos/{code}/gallery', [EmpreendimentoController::class, 'publicGallery']);
 
-
-/*
-|--------------------------------------------------------------------------
-| IMAGENS EMPREENDIMENTOS
-|--------------------------------------------------------------------------
-*/
 Route::post(
     '/empreendimentos/{empreendimento}/images',
     [EmpreendimentoImageController::class, 'store']
 )->middleware(['auth:sanctum', 'permission:empreendimentos.update|empreendimentos.manage']);
 
-// Remover imagem da galeria. Sprint Cargos — exige permission de editar
-// empreendimento (legacy `empreendimentos.manage` ou nova `empreendimentos.update`).
 Route::delete(
     '/empreendimento-images/{image}',
     [EmpreendimentoImageController::class, 'destroy']
 )->middleware(['auth:sanctum', 'permission:empreendimentos.update|empreendimentos.manage']);
 
-// Marca uma imagem como capa do empreendimento.
 Route::post(
     '/empreendimento-images/{image}/cover',
     [EmpreendimentoImageController::class, 'setCover']
 )->middleware(['auth:sanctum', 'permission:empreendimentos.update|empreendimentos.manage']);
 
-
-/*
-|--------------------------------------------------------------------------
-| DOCUMENTOS DO EMPREENDIMENTO (Book + Tabela de Valores)
-|--------------------------------------------------------------------------
-| Slots fixos — o slot vai no path como {slot} e é validado no controller
-| contra whitelist ['book', 'price_table'].
-*/
 Route::post(
     '/empreendimentos/{empreendimento}/documents/{slot}',
     [\App\Http\Controllers\EmpreendimentoDocumentController::class, 'upload']
@@ -238,57 +168,23 @@ Route::delete(
     [\App\Http\Controllers\EmpreendimentoDocumentController::class, 'destroy']
 )->middleware(['auth:sanctum', 'permission:empreendimentos.update|empreendimentos.manage']);
 
-
-/*
-|--------------------------------------------------------------------------
-| LEAD STATUS
-|--------------------------------------------------------------------------
-*/
 Route::middleware('auth:sanctum')->get('/lead-status', function () {
-    // Sprint H1.4 — inclui is_terminal pra Configurações poder ler o estado
-    // atual do checkbox "Etapa terminal" ao abrir o modal de edição. Sem
-    // isso o checkbox sempre abria desmarcado e gravava false ao salvar,
-    // sobrescrevendo a flag silenciosamente.
+
     return LeadStatus::select('id', 'name', 'order', 'color_hex', 'is_terminal')
         ->with(['substatus:id,lead_status_id,name,order,color_hex'])
         ->orderBy('order')
         ->get();
 });
 
-
-/*
-|--------------------------------------------------------------------------
-| AUTH
-|--------------------------------------------------------------------------
-*/
 Route::post('/auth/login', [AuthController::class, 'login']);
 
-// Fluxo de recuperação de senha. Ambas as rotas são públicas (sem auth):
-//  - forgot-password recebe email e dispara o ResetPasswordMail;
-//  - reset-password recebe email+token+senha nova e grava a senha.
-// Throttle por IP pra dificultar abuso (5 tentativas/minuto).
 Route::post('/auth/forgot-password', [AuthController::class, 'forgotPassword'])
     ->middleware('throttle:5,1');
 Route::post('/auth/reset-password', [AuthController::class, 'resetPassword'])
     ->middleware('throttle:5,1');
 
-
-/*
-|--------------------------------------------------------------------------
-| API PRIVADA (LEADS + EMPREENDIMENTOS)
-|--------------------------------------------------------------------------
-*/
 Route::get('/users', function(\Illuminate\Http\Request $request){
-    // Inclui email e avatar — o chat usa isso pra renderizar a foto
-    // do corretor nos itens de conversa e no seletor "Nova conversa".
-    // Se virar pesado, paginar ou filtrar por active=true.
-    //
-    // Sprint Hierarquia — quando ?scope=hierarchy, filtra pela árvore
-    // do caller (admin vê todos; gestor vê self+subordinados; corretor
-    // vê só self). Por padrão (sem scope) retorna TODOS pra preservar
-    // funcionamento do chat e outros lugares que precisam ver todo mundo.
-    // Inclui empreendimento_access_mode + parent_user_id pra cascata
-    // funcionar nos dropdowns que dependem dessa info (ex: cadastro user).
+
     $q = \App\Models\User::select(
         'id','name','email','avatar','role',
         'empreendimento_access_mode','parent_user_id'
@@ -303,9 +199,6 @@ Route::get('/users', function(\Illuminate\Http\Request $request){
 
     $users = $q->get();
 
-    // Sprint Hierarquia — anexa empreendimento_ids aos users de modo
-    // 'specific' pra a UI de cadastro fazer cascata sem 1 fetch por user.
-    // Carrega tudo de uma vez via whereIn → pluck. Barato (<<1k users).
     $specificIds = $users->where('empreendimento_access_mode', 'specific')->pluck('id');
     if ($specificIds->isNotEmpty()) {
         $pivot = \Illuminate\Support\Facades\DB::table('user_empreendimentos')
@@ -328,17 +221,6 @@ Route::get('/empreendimentos-lista', function(){
     return \App\Models\Empreendimento::select('id','name')->get();
 })->middleware('auth:sanctum');
 
-
-/*
-|--------------------------------------------------------------------------
-| ADMIN — CONFIGURAÇÃO DO PIPELINE (STATUS / SUBSTATUS)
-|--------------------------------------------------------------------------
-| Sprint Cargos — usa middleware `permission:` do Spatie (registrado em
-| bootstrap/app.php) que SUPORTA `|` como OR. O `can:` nativo do Laravel
-| NÃO trata pipe — lê tudo como um nome único de permission e dá 403.
-| Aceita legacy `status_required_fields.manage` OU nova `settings.pipeline`
-| pra cargos system + custom funcionarem juntos.
-*/
 Route::middleware(['auth:sanctum', 'permission:status_required_fields.manage|settings.pipeline'])
     ->prefix('admin')
     ->group(function () {
@@ -354,27 +236,6 @@ Route::middleware(['auth:sanctum', 'permission:status_required_fields.manage|set
             ->except(['show']);
     });
 
-
-/*
-|--------------------------------------------------------------------------
-| ADMIN — CARGOS E PERMISSÕES (Sprint Cargos — fase 2)
-|--------------------------------------------------------------------------
-| CRUD de cargos custom + leitura do catálogo de permissions.
-| Admin-only (RoleController valida via ensureAdmin internamente
-| usando effectiveRole — coluna + Spatie).
-|
-| Endpoints:
-|   GET    /admin/permissions/catalog → estrutura agrupada pra UI
-|   GET    /admin/roles               → lista cargos com perms + counts
-|   GET    /admin/roles/{role}        → detalhe
-|   POST   /admin/roles               → cria cargo custom (vazio)
-|   PUT    /admin/roles/{role}        → atualiza nome/desc/perms
-|                                       (cargos system: só desc/perms)
-|   DELETE /admin/roles/{role}        → só se !is_system + 0 usuários
-|
-| Anti lock-out embutido: PUT bloqueia se admin removeria sua própria
-| permission `settings.roles` (perderia acesso à tela).
-*/
 Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
     Route::get('/permissions/catalog', [\App\Http\Controllers\RoleController::class, 'catalog']);
     Route::get('/roles',               [\App\Http\Controllers\RoleController::class, 'index']);
@@ -384,23 +245,12 @@ Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
     Route::delete('/roles/{role}',     [\App\Http\Controllers\RoleController::class, 'destroy']);
 });
 
-
-/*
-|--------------------------------------------------------------------------
-| LEAD SOURCES / CHANNELS / CAMPAIGNS — cadastros base
-|--------------------------------------------------------------------------
-| GET é liberado pra qualquer user autenticado (corretor também lê pra
-| popular os selects dos formulários). Write (POST/PUT/DELETE) só admin
-| e gestor, que gerenciam esses cadastros em Configurações.
-*/
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/lead-sources',   [App\Http\Controllers\LeadSourceController::class,   'index']);
     Route::get('/lead-channels',  [App\Http\Controllers\LeadChannelController::class,  'index']);
     Route::get('/lead-campaigns', [App\Http\Controllers\LeadCampaignController::class, 'index']);
 });
 
-// Sprint Cargos — CRUD de cadastros de origens/canais/campanhas exige
-// permission de Configurações Gerais (cargo system: admin/gestor têm).
 Route::middleware(['auth:sanctum', 'permission:settings.general|status_required_fields.manage'])->group(function () {
     Route::apiResource('lead-sources',   App\Http\Controllers\LeadSourceController::class)
         ->parameters(['lead-sources' => 'leadSource'])
@@ -415,16 +265,9 @@ Route::middleware(['auth:sanctum', 'permission:settings.general|status_required_
         ->only(['store', 'update', 'destroy']);
 });
 
-
-/*
-|--------------------------------------------------------------------------
-| ADMIN — GERENCIAMENTO DE USUÁRIOS (CORRETORES)
-|--------------------------------------------------------------------------
-| Usa UserPolicy via authorize() dentro do controller.
-*/
 Route::middleware('auth:sanctum')->group(function () {
     Route::get   ('/users/admin',                  [UserController::class, 'index']);
-    // Precisa vir ANTES de /users/{user} senão 'check-email' bate no wildcard.
+
     Route::get   ('/users/check-email',            [UserController::class, 'checkEmail']);
     Route::post  ('/users',                        [UserController::class, 'store']);
     Route::get   ('/users/{user}',                 [UserController::class, 'show']);
@@ -436,39 +279,24 @@ Route::middleware('auth:sanctum')->group(function () {
         ->middleware('permission:users.update|users.manage');
 });
 
-// Sprint Cargos — leitura ampla de leads/empreendimentos. Aceita TODAS as
-// permissions de view (all/team/own + legacy any/own) — o controller faz o
-// filtro de escopo internamente. Cargo custom só com view_own também passa.
 Route::middleware(['auth:sanctum', 'permission:leads.view_all|leads.view_team|leads.view_own|leads.view_any|empreendimentos.view'])->group(function () {
 
     Route::get('/leads',                  [LeadController::class, 'index']);
     Route::get('/leads/counts',           [LeadController::class, 'counts']);
     Route::get('/leads/check-duplicates', [LeadController::class, 'checkDuplicates']);
 
-    // Fila de órfãos. Controller filtra: corretor não vê (mostra vazio).
     Route::get('/leads/queue',            [LeadController::class, 'queue']);
     Route::get('/leads/queue/count',      [LeadController::class, 'queueCount']);
 
     Route::apiResource('empreendimentos', EmpreendimentoController::class);
 });
 
-// Sprint Cargos — endpoints admin/gestor da Home + dashboards (resumos
-// que exigem visão ampla, não pessoal).
 Route::middleware(['auth:sanctum', 'permission:reports.productivity|reports.financial|leads.view_all|leads.view_team|reports.view'])->group(function () {
-// /user/me agora é declarado acima fora do grupo role:admin,gestor — qualquer
-// usuário autenticado (inclusive corretor) precisa dela pra sincronizar dados
-// próprios no frontend (ex.: dropdown statusCorretor).
 
-// buscar resumo inicial
 Route::get('/dashboard/atividades', function (Request $request) {
 
-    // Sprint 3.5a — DashboardPeriod resolve diario/semanal/mensal + range
-    // customizado (periodo=custom&from=X&to=Y) vindo do filtro do Resumo
-    // de Produtividade. Sem esse helper, o range custom era ignorado e
-    // caía no default mensal.
     [$start, $end] = \App\Support\DashboardPeriod::resolve($request);
 
-    // 🔥 AJUSTA NOMES DAS COLUNAS AQUI SE NECESSÁRIO
     $base = \App\Models\Appointment::whereBetween('starts_at', [$start, $end])
         ->where('status', 'completed');
 
@@ -480,8 +308,6 @@ Route::get('/dashboard/atividades', function (Request $request) {
     ]);
 })->middleware('auth:sanctum');
 
-
-// busca global
 Route::get('/search', function (Request $request) {
 
     $q = $request->get('q');
@@ -504,40 +330,14 @@ Route::get('/search', function (Request $request) {
 
     ]);
 })->middleware('auth:sanctum');
-// /user/status LEGADO: a rota oficial agora é /users/me/status (declarada
-// no topo, fora do grupo role). Mantida aqui só como alias pra browsers
-// com home.js antigo em cache — delega pra UserController@updateStatus
-// (que também dispara rodízio de órfão quando vira 'disponivel').
-// APPOINTMENTS — rotas movidas pra fora do group (ver abaixo do fechamento do group).
-
 
 Route::get('/dashboard/appointments', function (Request $request) {
 
-    // Sprint 3.1b — "Próximas Tarefas" do dashboard.
-    //
-    // Antes: filtrava só por starts_at num intervalo fixo (diário/semanal/mensal)
-    // e NÃO filtrava por user — o que deixava o card:
-    //   1) vazio quase sempre (tarefas novas usam due_at, não starts_at);
-    //   2) vazando tarefas de outros corretores pro admin/gestor (e pro
-    //      corretor, qualquer horário errado no sistema expõe tarefa alheia);
-    //   3) misturando tarefas já concluídas.
-    //
-    // Agora:
-    //   - Só do user autenticado (admin/gestor veem as PRÓPRIAS tarefas; pra
-    //     visão de time, a /agenda.php tem filtro de usuário).
-    //   - Não concluídas (completed_at IS NULL).
-    //   - Janela: de 7 dias atrás (pra mostrar atrasadas) até 30 dias à frente.
-    //   - Usa COALESCE(due_at, starts_at) pra ordenar por "quando" real,
-    //     cobrindo tanto tarefas (due_at) quanto agendamentos (starts_at).
     $user = $request->user();
     if (!$user) {
         return response()->json(['message' => 'Não autenticado'], 401);
     }
 
-    // Sprint 3.5+ — janela aceita range customizado (from/to) vindo do
-    // filtro do Resumo de Produtividade. Sem filtro explícito, usa o
-    // default "7 dias atrás → 30 dias à frente" pra mostrar atrasadas +
-    // próximas no widget. Com filtro, usa o range/periodo do front.
     if ($request->hasAny(['periodo', 'from', 'to'])) {
         [$windowStart, $windowEnd] = \App\Support\DashboardPeriod::resolve($request);
     } else {
@@ -545,9 +345,6 @@ Route::get('/dashboard/appointments', function (Request $request) {
         $windowEnd   = now()->addDays(30);
     }
 
-    // Quando o filtro de produtividade está ativo (chip ou range), o front
-    // manda ?include_completed=1 pra também trazer tarefas já concluídas,
-    // que aparecem riscadas no widget.
     $includeCompleted = (bool) $request->boolean('include_completed', false);
 
     $query = Appointment::with('lead:id,name')
@@ -568,8 +365,6 @@ Route::get('/dashboard/appointments', function (Request $request) {
         ->get(['id', 'lead_id', 'title', 'type', 'task_kind',
                'due_at', 'starts_at', 'completed_at']);
 
-    // Normaliza o campo "when" pro frontend não precisar escolher entre
-    // due_at e starts_at (cada tarefa tem um ou outro, às vezes os dois).
     return $rows->map(function ($a) {
         $when = $a->due_at ?? $a->starts_at ?? $a->completed_at;
         $isCompleted = $a->completed_at !== null;
@@ -579,7 +374,7 @@ Route::get('/dashboard/appointments', function (Request $request) {
             'type'         => $a->type,
             'task_kind'    => $a->task_kind,
             'when'         => optional($when)->toIso8601String(),
-            // Atrasada só faz sentido se ainda estiver aberta.
+
             'is_overdue'   => !$isCompleted && $when && $when->isPast(),
             'is_completed' => $isCompleted,
             'completed_at' => optional($a->completed_at)->toIso8601String(),
@@ -588,36 +383,15 @@ Route::get('/dashboard/appointments', function (Request $request) {
     });
 });
 
-// /empreendimentos POST já é coberto por Route::apiResource acima (grupo
-// role:admin,gestor,corretor). A rota duplicada que existia aqui cadastrava
-// o mesmo verbo pra `role:admin,gestor`, e como Laravel usa "última vence"
-// ela sobrescrevia a do apiResource — efeito colateral: excluía corretor
-// mesmo quando a política de fato permitia. Removida.
 Route::post('/empreendimentos/{id}/fields', [EmpreendimentoFieldValueController::class,'storeCadastro']);
 });
 
-
-/*
-|--------------------------------------------------------------------------
-| APPOINTMENTS
-|--------------------------------------------------------------------------
-| IMPORTANTE: rotas com segmentos estáticos (/by-date, /by-month, /summary,
-| /overdue) DEVEM vir antes da rota genérica /{id} — caso contrário, o
-| Laravel interpreta "by-month" como id de Appointment.
-|
-| Mantidas FORA do group `role:admin,gestor` pra que o corretor também tenha
-| acesso (agenda pessoal).
-*/
-// Sprint Cargos — leitura de agenda. Aceita view_all/team/own + legacy.
-// Controller filtra escopo internamente baseado no que o user pode ver.
 Route::middleware(['auth:sanctum', 'permission:agenda.view_all|agenda.view_team|agenda.view_own|appointments.view_any|appointments.view_own'])->group(function () {
     Route::get('/appointments/by-date',  [AppointmentController::class, 'byDate']);
     Route::get('/appointments/by-month', [AppointmentController::class, 'byMonth']);
     Route::get('/appointments/summary',  [AppointmentController::class, 'summary']);
     Route::get('/appointments/overdue',  [AppointmentController::class, 'overdueList']);
 
-    // Listagem unificada — alimenta o MODO LISTA da /agenda.php
-    // (ligação + visita + reunião + tarefa em um só feed).
     Route::get('/appointments/list',     [AppointmentController::class, 'listUnified']);
 });
 
@@ -627,20 +401,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/appointments/{id}',            [AppointmentController::class, 'show']);
 });
 
-/*
-|--------------------------------------------------------------------------
-| TASKS / FOLLOW-UPS
-|--------------------------------------------------------------------------
-| Tarefas são appointments com type='task'. Controller próprio pra manter
-| o fluxo (complete/reopen + filtros hoje/atrasadas/futuras) separado do
-| de eventos de agenda.
-|
-| Regras de acesso:
-|   - admin/gestor: enxergam e editam tudo.
-|   - corretor:     próprias + scope='company' (leitura); só próprias (edição).
-*/
-// Sprint Cargos — tasks (leitura + escrita). Permissions de agenda cobrem
-// tudo. Controller faz validação fina (corretor só edita as próprias).
 Route::middleware(['auth:sanctum', 'permission:agenda.view_all|agenda.view_team|agenda.view_own|agenda.create|agenda.update_all|agenda.update_own|agenda.delete|appointments.view_any|appointments.view_own|appointments.manage_any|appointments.manage_own'])->group(function () {
     Route::get('/tasks',                 [TaskController::class, 'index']);
     Route::post('/tasks',                [TaskController::class, 'store']);
@@ -650,18 +410,11 @@ Route::middleware(['auth:sanctum', 'permission:agenda.view_all|agenda.view_team|
     Route::put('/tasks/{id}/reopen',     [TaskController::class, 'reopen']);
     Route::delete('/tasks/{id}',         [TaskController::class, 'destroy']);
 
-    // Comentários da tarefa — quem vê a tarefa pode comentar.
     Route::get   ('/tasks/{id}/comments',              [TaskCommentController::class, 'index']);
     Route::post  ('/tasks/{id}/comments',              [TaskCommentController::class, 'store']);
     Route::delete('/tasks/{id}/comments/{commentId}',  [TaskCommentController::class, 'destroy']);
 });
 
-
-/*
-|--------------------------------------------------------------------------
-| MANYCHAT WEBHOOK
-|--------------------------------------------------------------------------
-*/
 Route::post('/webhooks/manychat/leads', [
     \App\Http\Controllers\ManyChatWebhookController::class,
     'store'
@@ -669,61 +422,23 @@ Route::post('/webhooks/manychat/leads', [
 
 Route::post('/leads', [LeadController::class, 'store'])
     ->middleware('auth:sanctum');
-/*
-|--------------------------------------------------------------------------
-| LEADS
-|--------------------------------------------------------------------------
-*/
+
 Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::post('/leads/{lead}/interactions', [LeadInteractionController::class, 'store']);
 
-    // Registro de primeiro contato — usado pelo banner dentro de lead.php.
-    // Fecha o SLA (sla_status='met'), opcionalmente move o lead pra etapa+subetapa
-    // definidas em /configuracoes (lead_after_first_contact_status_id/substatus_id)
-    // e loga LeadHistory (first_contact + status_change + substatus_change quando aplicável).
-    // Permissão: corretor responsável, admin ou gestor.
     Route::post('/leads/{id}/first-contact', [LeadController::class, 'firstContact']);
 
     Route::get('/leads/{lead}', [LeadController::class, 'show']);
-    // LGPD: devolve o valor cleartext de um campo sensível (fixo ou custom)
-    // e registra LeadHistory type='pii_revealed'. Permissão: gestor/admin
-    // ou corretor responsável pelo lead.
+
     Route::get('/leads/{lead}/reveal', [LeadController::class, 'reveal']);
     Route::put('/leads/editar/{lead}', [LeadController::class, 'update']);
     Route::delete('/leads/{lead}', [LeadController::class, 'destroy']);
 
-    /*
-    |----------------------------------------------------------------------
-    | DOCUMENTOS DO LEAD
-    |----------------------------------------------------------------------
-    | Uploads ficam em storage/app/private/leads/{lead}/ — nunca servidos
-    | estaticamente. Download sempre passa pelo controller, que valida
-    | permissão via LeadPolicy@view.
-    |
-    | Fluxo de exclusão (produto):
-    |  - qualquer usuário com acesso ao lead SOLICITA (request-deletion)
-    |  - o solicitante pode CANCELAR a própria solicitação
-    |  - apenas admin APROVA (remove arquivo + row) ou REJEITA
-    |
-    | O LeadDocumentController encapsula a checagem de role='admin' para
-    | approve/reject (ensureAdmin), então não precisamos de middleware
-    | role aqui — a proteção continua funcionando mesmo se alguém trocar
-    | a rota por engano.
-    */
-    // Lista GLOBAL de solicitações de exclusão pendentes (admin-only).
-    // Fica antes da rota com {lead} pra não ser interpretada como lead_id.
     Route::get   ('/documents/pending-deletions',                             [LeadDocumentController::class, 'pendingDeletions']);
 
-    // Lista GLOBAL de acessos/downloads de documentos (admin-only).
-    // Alimenta a tela "Configurações → Logs de Download".
     Route::get   ('/documents/accesses',                                      [LeadDocumentController::class, 'allAccesses']);
 
-    // Listagem unificada de TODOS os arquivos do servidor (admin-only).
-    // Agrega lead_documents, custom field files, chat attachments e
-    // documentos/imagens de empreendimentos. Foto de perfil de user
-    // NÃO aparece — só "documentos mesmo".
-    // Alimenta a tela "Configurações → Arquivos do Servidor".
     Route::get   ('/admin/files',                                             [AdminFilesController::class, 'index'])
         ->middleware('permission:settings.system');
 
@@ -736,36 +451,19 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post  ('/leads/{lead}/documents/{document}/approve-deletion',      [LeadDocumentController::class, 'approveDeletion']);
     Route::post  ('/leads/{lead}/documents/{document}/reject-deletion',       [LeadDocumentController::class, 'rejectDeletion']);
 
-    // Retenção / lixeira (admin)
     Route::post  ('/leads/{lead}/documents/{document}/restore',               [LeadDocumentController::class, 'restore']);
     Route::post  ('/leads/{lead}/documents/{document}/force-purge',           [LeadDocumentController::class, 'forcePurge']);
 
-    // Auditoria de acesso (admin)
     Route::get   ('/leads/{lead}/documents/{document}/accesses',              [LeadDocumentController::class, 'accesses']);
 
 });
 
-
-/*
-|--------------------------------------------------------------------------
-| SETTINGS (CONFIGURAÇÕES GLOBAIS)
-|--------------------------------------------------------------------------
-| Leitura: qualquer usuário autenticado (páginas leem flags como
-| watermark_enabled pra decidir comportamento).
-| Escrita: só admin — o controller valida role via ensureAdmin().
-|
-| Chaves conhecidas ficam no array ALLOWED_KEYS do controller; chave
-| desconhecida retorna 404 tanto em leitura quanto em escrita.
-*/
 Route::middleware('auth:sanctum')->group(function () {
-    // Rotas específicas de email vêm ANTES da wildcard /settings/{key}
-    // pra o Laravel resolver corretamente (senão 'email' bateria no {key}).
+
     Route::get('/settings/email',       [EmailSettingsController::class, 'index']);
     Route::put('/settings/email',       [EmailSettingsController::class, 'update']);
     Route::post('/settings/email/test', [EmailSettingsController::class, 'test']);
 
-    // Histórico de envios (admin-only). Namespace /admin/email-logs pra
-    // deixar claro o escopo; roteado junto com os demais de settings.
     Route::get('/admin/email-logs',        [EmailLogsController::class, 'index']);
     Route::get('/admin/email-logs/{log}',  [EmailLogsController::class, 'show']);
 
@@ -774,35 +472,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/settings/{key}',      [SettingController::class, 'update']);
 });
 
-
-/*
-|--------------------------------------------------------------------------
-| INFRA / VPS — MONITORAMENTO DA HOSTINGER
-|--------------------------------------------------------------------------
-| GET /vps/status        → status + uptime + RAM + disco + CPU + rede
-|   ?refresh=1           → força bypass do cache de 60s
-|
-| Sprint Cargos — protegido por permission `settings.system` (não mais
-| por role:admin). Admin tem essa permission via Catalog automaticamente.
-| Cargos custom podem ganhar essa permission pra ter acesso à aba Sistema
-| sem virar admin pleno.
-*/
 Route::middleware(['auth:sanctum', 'permission:settings.system'])->group(function () {
     Route::get('/vps/status', [VpsStatusController::class, 'show']);
 
-    // /server/capacity-alerts — fonte dos alertas que aparecem no
-    // dashboard do admin. Diferente de /vps/status, só devolve o que
-    // está ACIMA do threshold (lista pode vir vazia). Usado por
-    // modules/home.js pra renderizar o banner de capacidade.
     Route::get('/server/capacity-alerts', [VpsStatusController::class, 'capacityAlerts']);
 });
 
-
-/*
-|--------------------------------------------------------------------------
-| NOTIFICAÇÕES
-|--------------------------------------------------------------------------
-*/
 Route::middleware('auth:sanctum')
     ->get('/notifications', function (Request $request) {
 
@@ -835,18 +510,9 @@ Route::middleware('auth:sanctum')
         return response()->json(['success' => true]);
     });
 
-
-/*
-|--------------------------------------------------------------------------
-| USER
-|--------------------------------------------------------------------------
-*/
 Route::middleware('auth:sanctum')->get('/me', function (Request $request) {
     $u = $request->user();
-    // Sprint Hierarquia (fix) — força o `role` no payload a refletir o
-    // effectiveRole (coluna + Spatie), e não só a coluna. O frontend
-    // sincroniza isso no localStorage via core/auth.js → refreshCurrentUser,
-    // e o gate de páginas admin-only depende desse valor estar certo.
+
     $payload = $u->toArray();
     if (method_exists($u, 'effectiveRole')) {
         $eff = $u->effectiveRole();
@@ -857,30 +523,15 @@ Route::middleware('auth:sanctum')->get('/me', function (Request $request) {
     return response()->json($payload);
 });
 
-
-/*
-|--------------------------------------------------------------------------
-| DASHBOARD
-|--------------------------------------------------------------------------
-*/
-// Sprint Cargos — Dashboard exige permission de relatórios.
 Route::middleware(['auth:sanctum', 'permission:reports.productivity|reports.financial|reports.view'])->group(function () {
 
     Route::get('/dashboard', [DashboardController::class, 'index']);
-    // Sprint H1.4 — funnel com filtro is_terminal + tempo médio + conversão.
+
     Route::get('/dashboard/funnel', [DashboardHomeController::class, 'funnel']);
 });
-    // Fora do group acima de propósito? Não — só faltava middleware. Agora
-    // exige auth:sanctum pra não expor resumo de métricas pra anônimos.
+
     Route::get('/dashboard/resumo', [DashboardController::class, 'resumo'])
         ->middleware('auth:sanctum');
-
-/*
-|--------------------------------------------------------------------------
-| KANBAN
-|--------------------------------------------------------------------------
-*/
-
 
 Route::patch('/kanban/{lead}/move', [KanbanController::class, 'move'])
     ->middleware('auth:sanctum');
@@ -888,26 +539,7 @@ Route::get('/kanban', [KanbanController::class, 'index'])
     ->middleware(['auth:sanctum', 'permission:kanban.view']);
 Route::post('/kanban/reorder', [KanbanController::class, 'reorder'])
     ->middleware('auth:sanctum');
-// Route::patch('/kanbans/leads/{lead}/move', [KanbanController::class, 'move'])
-//  ->middleware(['auth:sanctum', 'role:admin,gestor,corretor']);
 
-
-/*
-|--------------------------------------------------------------------------
-| CALENDÁRIO
-|--------------------------------------------------------------------------
-| Rotas movidas pra cima (antes de /appointments/{id}) pra evitar que o
-| Laravel interprete "by-date", "by-month", "summary" e "overdue" como {id}.
-*/
-
-
-
-
-/*
-|--------------------------------------------------------------------------
-| RELATÓRIOS
-|--------------------------------------------------------------------------
-*/
 Route::get('/reports/marketing', [MarketingReportController::class, 'index'])
     ->middleware(['auth:sanctum', 'permission:reports.productivity|reports.view']);
 
@@ -917,25 +549,6 @@ Route::get('/leads/{lead}/audits', [\App\Http\Controllers\AuditController::class
 Route::get('/reports/commissions', [CommissionReportController::class, 'index'])
     ->middleware(['auth:sanctum', 'permission:commissions.view_all|commissions.view_team|reports.financial']);
 
-/*
-|--------------------------------------------------------------------------
-| RELATÓRIOS — MÓDULO #44
-|--------------------------------------------------------------------------
-| Endpoints do novo módulo de relatórios (Corretor + Gerente).
-| Middleware role:admin,gestor,corretor — o controller faz o escopo:
-| corretor só vê os próprios dados; admin/gestor vê tudo e pode filtrar
-| por corretor_id via query param.
-|
-| /reports/funnel            → Funil de conversão (por status)
-| /reports/productivity      → Appointments, SLA, tempo de resposta
-| /reports/origin-campaign   → Leads por origem / canal / campanha / cidade
-| /reports/ranking           → Ranking de corretores + % meta
-| /reports/evolution         → Série temporal últimos N meses
-| /reports/export/{tipo}/{formato} → PDF ou XLSX
-*/
-// Sprint Cargos — relatórios. Aceita reports.productivity (geral) ou
-// reports.view (legacy). Controller filtra escopo: corretor vê só
-// próprios; admin/gestor pode passar corretor_id na query.
 Route::middleware(['auth:sanctum', 'permission:reports.productivity|reports.financial|reports.view'])->group(function () {
     Route::get('/reports/funnel',           [RelatoriosController::class, 'funnel']);
     Route::get('/reports/productivity',     [RelatoriosController::class, 'productivity']);
@@ -949,45 +562,24 @@ Route::middleware(['auth:sanctum', 'permission:reports.productivity|reports.fina
         ->where('formato', 'pdf|xlsx');
 });
 
-/*
-|--------------------------------------------------------------------------
-| METAS DOS CORRETORES (gamificação / ranking)
-|--------------------------------------------------------------------------
-| Admin/gestor gerenciam. Corretor só lê a própria.
-*/
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user-metas',            [UserMetaController::class, 'index']);
     Route::get('/user-metas/{userMeta}', [UserMetaController::class, 'show']);
 });
 
-// Sprint Cargos — gerenciar metas exige permission de editar usuário.
 Route::middleware(['auth:sanctum', 'permission:users.update|users.manage'])->group(function () {
     Route::post  ('/user-metas',             [UserMetaController::class, 'store']);
     Route::put   ('/user-metas/{userMeta}',  [UserMetaController::class, 'update']);
     Route::delete('/user-metas/{userMeta}',  [UserMetaController::class, 'destroy']);
 });
 
-/*
-|--------------------------------------------------------------------------
-| HOME — MÓDULO #45
-|--------------------------------------------------------------------------
-| Endpoint consolidado da Home (financeiro + gamificação + metas do mês).
-*/
-// Sprint Cargos — Home + comissões. Cargo precisa de pelo menos uma das
-// permissions de view/produtividade pra acessar a Home; o controller faz
-// o resto da lógica fina (commissions: corretor só vê os próprios).
 Route::middleware(['auth:sanctum', 'permission:reports.productivity|reports.financial|commissions.view_all|commissions.view_team|commissions.view_own|reports.view'])->group(function () {
     Route::get('/home/summary',                [HomeController::class, 'summary']);
     Route::get('/dashboard/next-commissions',  [HomeController::class, 'nextCommissions']);
 
-    // Cores de tarefa: GET pra todos (precisa pra renderizar badges).
-    // PUT é restrito por settings.task_colors no próprio controller.
     Route::get('/task-kind-colors',          [\App\Http\Controllers\TaskKindColorController::class, 'index']);
     Route::put('/task-kind-colors/{kind}',   [\App\Http\Controllers\TaskKindColorController::class, 'update']);
 
-    // Comissões — listagem + ações. CommissionController faz authorization
-    // interna fina: corretor só vê dele; ações como approve/pay precisam
-    // de commissions.approve/pay (validado dentro do controller).
     Route::get('/commissions',                 [\App\Http\Controllers\CommissionController::class, 'index']);
     Route::get('/commissions/summary',         [\App\Http\Controllers\CommissionController::class, 'summary']);
     Route::get('/commissions/{id}',            [\App\Http\Controllers\CommissionController::class, 'show']);
@@ -1001,12 +593,6 @@ Route::middleware(['auth:sanctum', 'permission:reports.productivity|reports.fina
     Route::post('/commissions/{id}/comments',  [\App\Http\Controllers\CommissionController::class, 'addComment']);
 });
 
-
-/*
-|--------------------------------------------------------------------------
-| AGENDA
-|--------------------------------------------------------------------------
-*/
 Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('/myCommissions', [CommissionReportController::class, 'myCommissions']);
@@ -1018,39 +604,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/agenda/{appointment}', [AppointmentController::class, 'destroy']);
 });
 
-
-/*
-|--------------------------------------------------------------------------
-| LOGOUT
-|--------------------------------------------------------------------------
-*/
 Route::middleware('auth:sanctum')->post('/auth/logout', function (Request $request) {
     $request->user()->currentAccessToken()->delete();
     return response()->json(['message' => 'Logout realizado']);
 });
 
-
-/*
-|--------------------------------------------------------------------------
-| CHAT INTERNO (DM 1-a-1)
-|--------------------------------------------------------------------------
-| Fase D - Sprint 1: só texto, sem anexos (anexos vêm no Sprint 2).
-| Qualquer usuário autenticado pode abrir DM com qualquer outro ativo.
-| O controller garante autorização por conversa (ensureParticipant).
-|
-| Endpoints:
-|   GET  /chat/conversations                      -> lista conversas do user (com unread_count)
-|   POST /chat/conversations                      -> abre/retorna DM com user_id
-|   GET  /chat/conversations/{id}/messages        -> lista msgs (paginada)
-|   POST /chat/conversations/{id}/messages        -> envia msg
-|   POST /chat/conversations/{id}/read            -> marca conversa como lida (Sprint 3)
-|   GET  /chat/unread-count                       -> total consolidado p/ badge global (Sprint 3)
-|
-| Sprint 2 - Anexos:
-|   POST /chat/attachments/upload                 -> upload draft (multipart file)
-|   GET  /chat/attachments/{id}/download          -> baixa/preview do anexo upload
-|   DELETE /chat/attachments/{id}/draft           -> cancela upload draft (antes de enviar msg)
-*/
 Route::middleware(['auth:sanctum', 'chat.enabled'])->prefix('chat')->group(function () {
     Route::get ('/unread-count',                  [ChatConversationController::class, 'unreadCount']);
 
@@ -1063,7 +621,6 @@ Route::middleware(['auth:sanctum', 'chat.enabled'])->prefix('chat')->group(funct
     Route::post('/conversations/{id}/read',       [ChatMessageController::class, 'markRead'])
         ->whereNumber('id');
 
-    // Sprint 4.1 — Pin de mensagens importantes
     Route::get   ('/conversations/{id}/pinned',   [ChatMessageController::class, 'pinned'])
         ->whereNumber('id');
     Route::post  ('/messages/{id}/pin',           [ChatMessageController::class, 'togglePin'])
@@ -1071,57 +628,29 @@ Route::middleware(['auth:sanctum', 'chat.enabled'])->prefix('chat')->group(funct
     Route::delete('/messages/{id}/pin',           [ChatMessageController::class, 'togglePin'])
         ->whereNumber('id');
 
-    // Sprint 4.6 — Editar e apagar mensagem.
-    // PATCH valida regras de janela (15min) + não-lida; DELETE valida
-    // não-lida pra autor mas é livre pra admin (LGPD/moderação).
-    // Eventos ChatMessageEdited/ChatMessageDeleted disparam pro canal
-    // private-conversation.{id} pra UI atualizar nos dois lados.
     Route::patch ('/messages/{id}',               [ChatMessageController::class, 'update'])
         ->whereNumber('id');
     Route::delete('/messages/{id}',               [ChatMessageController::class, 'destroy'])
         ->whereNumber('id');
 
-    // Sprint 4.2 — Busca no histórico. Escopa por default só às conversas
-    // do user; conversation_id (opcional) restringe a uma conversa específica.
     Route::get   ('/search',                      [ChatMessageController::class, 'search']);
 
-    // Sprint 2 — Anexos
     Route::post  ('/attachments/upload',          [ChatAttachmentController::class, 'upload']);
     Route::get   ('/attachments/{id}/download',   [ChatAttachmentController::class, 'download'])
         ->whereNumber('id');
     Route::delete('/attachments/{id}/draft',      [ChatAttachmentController::class, 'cancelDraft'])
         ->whereNumber('id');
 
-    // Sprint 4.x — endpoint dedicado pra abrir lead_document pelo link do chat.
-    // Valida participação + availability ao vivo (bloqueia mesmo admin se o
-    // doc foi excluído / tem solicitação pendente).
     Route::get   ('/attachments/{id}/lead-document', [ChatAttachmentController::class, 'openLeadDocument'])
         ->whereNumber('id');
 });
 
-
-/*
-|--------------------------------------------------------------------------
-| REALTIME (Sprint 4.5)
-|--------------------------------------------------------------------------
-| Config pública do Reverb (pubkey, host, port, scheme) pro frontend
-| inicializar o Echo. NUNCA expõe o app_secret. Fora do grupo /chat
-| de propósito — esse endpoint é genérico de realtime, não chat-específico,
-| e não passa pelo middleware chat.enabled (precisamos saber se realtime
-| está disponível mesmo se o chat estiver desligado).
-*/
 Route::middleware('auth:sanctum')->get('/realtime/config', function () {
     $driver = config('broadcasting.default');
     if ($driver !== 'reverb') {
         return response()->json(['enabled' => false]);
     }
 
-    // Sprint 4.5 — host PÚBLICO (browser conecta via nginx) é diferente
-    // do host SERVER-SIDE (Laravel publica direto no daemon local).
-    // Lemos via config() em vez de env() porque com config:cache em
-    // produção o env() retorna null fora dos arquivos de config.
-    // Se 'public' não foi configurado, cai pro 'options' (compat com
-    // setups single-host antigos).
     $publicHost   = config('broadcasting.connections.reverb.public.host')
                     ?: config('broadcasting.connections.reverb.options.host');
     $publicPort   = config('broadcasting.connections.reverb.public.port')
@@ -1140,22 +669,8 @@ Route::middleware('auth:sanctum')->get('/realtime/config', function () {
     ]);
 });
 
-
-/*
-|--------------------------------------------------------------------------
-| CAMPOS CUSTOMIZADOS + REGRAS DE OBRIGATORIEDADE POR STATUS
-|--------------------------------------------------------------------------
-| - custom-fields           : CRUD do catálogo de campos customizados
-| - status-required-fields  : CRUD das regras "quando status X, campo Y obrigatório"
-| - for-target              : endpoint consumido pelo modal no frontend
-|                             (dado um status/substatus, quais campos pedir)
-| - leads/{lead}/custom-field-values : salvar/ler valores custom do lead
-|--------------------------------------------------------------------------
-*/
 Route::middleware('auth:sanctum')->group(function () {
 
-    // Catálogo de campos customizados — leitura livre (qualquer user precisa
-    // pra renderizar formulários); escrita exige permission de configurar.
     Route::get   ('/custom-fields',              [CustomFieldController::class, 'index']);
     Route::get   ('/custom-fields/{customField}', [CustomFieldController::class, 'show']);
     Route::post  ('/custom-fields',              [CustomFieldController::class, 'store'])
@@ -1165,7 +680,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/custom-fields/{customField}', [CustomFieldController::class, 'destroy'])
         ->middleware('permission:custom_fields.manage|settings.pipeline');
 
-    // Regras de obrigatoriedade — mesma lógica das custom-fields.
     Route::get   ('/status-required-fields',                           [StatusRequiredFieldController::class, 'index']);
     Route::get   ('/status-required-fields/for-target',                [StatusRequiredFieldController::class, 'forTarget']);
     Route::post  ('/status-required-fields',                           [StatusRequiredFieldController::class, 'store'])
@@ -1175,27 +689,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/status-required-fields/{statusRequiredField}',     [StatusRequiredFieldController::class, 'destroy'])
         ->middleware('permission:status_required_fields.manage|settings.pipeline');
 
-    // Valores dos custom fields por lead
     Route::get ('/leads/{lead}/custom-field-values', [LeadCustomFieldValueController::class, 'index']);
     Route::post('/leads/{lead}/custom-field-values', [LeadCustomFieldValueController::class, 'bulkStore']);
 
-    // Custom fields tipo 'file' — upload/download/remove (multipart).
-    // Autorização interna: LeadPolicy@update (mesma do bulkStore acima).
     Route::post  ('/leads/{lead}/custom-field-files/{slug}', [LeadCustomFieldFileController::class, 'store']);
     Route::get   ('/leads/{lead}/custom-field-files/{slug}', [LeadCustomFieldFileController::class, 'download']);
     Route::delete('/leads/{lead}/custom-field-files/{slug}', [LeadCustomFieldFileController::class, 'destroy']);
 
-    /*
-    |--------------------------------------------------------------------------
-    | BIBLIOTECA DE MÍDIA — Área do Corretor
-    |--------------------------------------------------------------------------
-    | Materiais institucionais/marketing organizados em pastas hierárquicas.
-    | Permissions granulares: view (todos), upload, create_folder, delete.
-    |
-    | TODAS as rotas passam pelo middleware corretor.area.enabled — quando o
-    | admin desliga o módulo em Configurações → Geral, devolvem 403 com code
-    | 'corretor_area_disabled'. Permissions individuais ainda valem por cima.
-    */
     Route::middleware('corretor.area.enabled')->group(function () {
         Route::get   ('/media/contents',                   [MediaController::class, 'contents'])->middleware('permission:media.view');
         Route::get   ('/media/folders/{folder}/contents',  [MediaController::class, 'contents'])->middleware('permission:media.view');
@@ -1207,27 +707,6 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 });
 
-
-
-/*
-|--------------------------------------------------------------------------
-| ================= ROTAS DUPLICADAS (ISOLADAS PARA TESTE) =================
-|--------------------------------------------------------------------------
-| Mantidas apenas para verificação.
-| NÃO ESTÃO ATIVAS.
-|--------------------------------------------------------------------------
-*/
-
-// Route::middleware(['auth:sanctum', 'role:admin,gestor'])->group(function () {
-//     Route::apiResource('empreendimentos', EmpreendimentoController::class);
-// });
-
-
-
-
-
-
-// rotas criação email — exige permission settings.email (cargo system admin tem).
 Route::post('/emails/create', [EmailController::class, 'store'])
     ->middleware(['auth:sanctum', 'permission:settings.email']);
 

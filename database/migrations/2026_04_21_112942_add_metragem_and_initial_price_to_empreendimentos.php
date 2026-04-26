@@ -4,11 +4,6 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-/**
- * Adiciona os campos exigidos pela doc funcional na listagem de
- * empreendimentos (metragem, preço inicial). Campos status/tipo/finalidade
- * já foram criados por migration anterior.
- */
 return new class extends Migration
 {
     public function up(): void

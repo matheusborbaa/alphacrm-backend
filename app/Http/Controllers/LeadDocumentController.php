@@ -15,36 +15,6 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
-/**
- * Documentos anexados a um lead.
- *
- * Storage: disco 'local' (storage/app/private/ no Laravel 11), prefixo
- * 'leads/{leadId}/'. Nenhum arquivo é servido estaticamente — sempre passa
- * pelo @download que checa permissão antes de streamear. Isso evita URL
- * pública acidental e crawler indexando conteúdo sensível.
- *
- * Fluxo de exclusão (produto, configurável em Settings):
- *
- *   - doc_deletion_requires_approval = true  (default):
- *       corretor/gestor SOLICITAM -> admin APROVA -> soft-delete ->
- *       janela de retenção (doc_retention_days) -> purge pelo job.
- *
- *   - doc_deletion_requires_approval = false:
- *       corretor/gestor clicam "excluir" -> vai direto pra soft-delete
- *       -> janela de retenção -> purge pelo job.
- *
- * Em ambos os casos o doc passa pela "lixeira" por N dias antes de sumir
- * de vez; admin pode Restaurar nesse período.
- *
- * Auditoria:
- *   - Cada upload/request/approve/reject/restore gera LeadHistory.
- *   - Cada download gera uma row em lead_document_accesses com IP + geo.
- *
- * Permissões:
- *   - listar/upload/download/solicitar exclusão: quem pode ver o lead.
- *   - cancelar a PRÓPRIA solicitação: o solicitante.
- *   - aprovar/rejeitar, restaurar, expurgar agora, ver access log: só admin.
- */
 class LeadDocumentController extends Controller
 {
     use AuthorizesRequests;
@@ -67,31 +37,118 @@ class LeadDocumentController extends Controller
         'image/heif',
     ];
 
-    /* ==============================================================
-     * LIST
-     * ============================================================== */
     public function index(Lead $lead)
     {
         $this->authorize('view', $lead);
 
-        // Inclui docs em "retenção" (deleted_at setado mas purge_at no futuro)
-        // pra UI renderizar riscado com badge "será excluído em X dias".
-        // NÃO inclui docs já expurgados (row inexistente).
-        $docs = LeadDocument::with(['uploader:id,name', 'deletionRequester:id,name'])
+        $native = LeadDocument::with(['uploader:id,name', 'deletionRequester:id,name'])
             ->where('lead_id', $lead->id)
             ->orderByDesc('created_at')
             ->get()
-            ->map(fn ($d) => $this->present($d));
+            ->map(function ($d) {
+                $row = $this->present($d);
+                $row['source']       = 'lead_doc';
+                $row['source_label'] = 'Documento do lead';
+                return $row;
+            })
+            ->all();
 
-        return response()->json($docs);
+        $extras = array_merge(
+            $this->aggregateMediaFiles($lead->id),
+            $this->aggregateCustomFieldFiles($lead->id)
+        );
+
+        $all = array_merge($native, $extras);
+        usort($all, fn ($a, $b) =>
+            strcmp((string) ($b['created_at'] ?? ''), (string) ($a['created_at'] ?? ''))
+        );
+
+        return response()->json($all);
     }
 
-    /* ==============================================================
-     * PENDING DELETIONS (CROSS-LEAD)
-     * ==============================================================
-     * Só solicitações PENDENTES de aprovação (ainda não soft-deleted).
-     * Docs em retenção não aparecem aqui — o admin vê eles direto no lead.
-     */
+    private function aggregateMediaFiles(int $leadId): array
+    {
+        try {
+            $folder = \App\Models\MediaFolder::where('lead_id', $leadId)->first();
+            if (!$folder) return [];
+
+            return \App\Models\MediaFile::query()
+                ->where('folder_id', $folder->id)
+                ->with('uploader:id,name')
+                ->orderByDesc('created_at')
+                ->get()
+                ->map(fn ($f) => [
+                    'id'              => 'media_' . $f->id,
+                    'original_name'   => $f->original_name ?? $f->name,
+                    'mime_type'       => $f->mime_type,
+                    'size_bytes'      => (int) $f->size_bytes,
+                    'category'        => $f->category,
+                    'description'     => $f->description,
+                    'uploader'        => $f->uploader ? [
+                        'id' => $f->uploader->id, 'name' => $f->uploader->name,
+                    ] : null,
+                    'created_at'      => optional($f->created_at)->toIso8601String(),
+                    'download_blocked' => false,
+                    'deletion'        => null,
+                    'pending_purge'   => null,
+
+                    'download_url'    => "/media/files/{$f->id}/download",
+                    'source'          => 'media',
+                    'source_label'    => 'Biblioteca',
+                ])
+                ->all();
+        } catch (\Throwable $e) {
+            \Log::warning('Falha ao agregar media_files na aba Documentos', [
+                'lead_id' => $leadId, 'error' => $e->getMessage(),
+            ]);
+            return [];
+        }
+    }
+
+    private function aggregateCustomFieldFiles(int $leadId): array
+    {
+        try {
+            $rows = \App\Models\LeadCustomFieldValue::query()
+                ->where('lead_id', $leadId)
+                ->whereNotNull('value')
+                ->with('customField:id,slug,name,type')
+                ->get()
+                ->filter(fn ($v) => optional($v->customField)->type === 'file');
+
+            $out = [];
+            foreach ($rows as $v) {
+                $meta = is_string($v->value) ? json_decode($v->value, true) : (array) $v->value;
+                if (!is_array($meta) || empty($meta['path'])) continue;
+
+                $cfName = $v->customField->name ?? 'Campo customizado';
+                $slug   = $v->customField->slug ?? '';
+
+                $out[] = [
+                    'id'              => 'cf_' . $v->id,
+                    'original_name'   => $meta['name'] ?? 'Arquivo',
+                    'mime_type'       => $meta['mime'] ?? null,
+                    'size_bytes'      => (int) ($meta['size'] ?? 0),
+                    'category'        => $cfName,
+                    'description'     => 'Campo customizado: ' . $cfName,
+                    'uploader'        => null,
+                    'created_at'      => optional($v->updated_at)->toIso8601String(),
+                    'download_blocked' => false,
+                    'deletion'        => null,
+                    'pending_purge'   => null,
+                    'download_url'    => "/leads/{$leadId}/custom-field-files/{$slug}",
+                    'source'          => 'custom_field',
+                    'source_label'    => 'Campo personalizado',
+                ];
+            }
+            return $out;
+        } catch (\Throwable $e) {
+            \Log::warning('Falha ao agregar custom field files na aba Documentos', [
+                'lead_id' => $leadId, 'error' => $e->getMessage(),
+            ]);
+            return [];
+        }
+    }
+
     public function pendingDeletions(Request $request)
     {
         $this->ensureAdmin();
@@ -102,7 +159,7 @@ class LeadDocumentController extends Controller
                 'lead:id,name',
             ])
             ->whereNotNull('deletion_requested_at')
-            ->whereNull('deleted_at') // ← só os que AINDA precisam de aprovação
+            ->whereNull('deleted_at')
             ->orderBy('deletion_requested_at', 'asc')
             ->get()
             ->map(function ($d) {
@@ -117,20 +174,10 @@ class LeadDocumentController extends Controller
         return response()->json($docs);
     }
 
-    /* ==============================================================
-     * UPLOAD
-     * ============================================================== */
     public function store(Request $request, Lead $lead)
     {
         $this->authorize('view', $lead);
 
-        // ⚠️ Guard contra post_max_size estourado no PHP.
-        // Quando o payload passa do post_max_size do php.ini, o PHP descarta
-        // $_POST e $_FILES silenciosamente — só sobra Content-Length no header.
-        // Sem esse check, o validate() abaixo reclama de "The file field is
-        // required" e o usuário vê uma mensagem sem sentido, porque ele sabe
-        // que selecionou o arquivo. Detectamos aqui e devolvemos 413 com
-        // mensagem clara, apontando o limite.
         $contentLength = (int) $request->server('CONTENT_LENGTH', 0);
         $postMax       = $this->iniBytes(ini_get('post_max_size'));
         if ($contentLength > 0 && $postMax > 0 && $contentLength > $postMax
@@ -148,12 +195,10 @@ class LeadDocumentController extends Controller
                 'description' => 'nullable|string|max:500',
             ]);
         } catch (\Illuminate\Validation\ValidationException $e) {
-            // Mensagens PT-BR amigáveis pros erros mais comuns do uploader.
+
             $errors = $e->errors();
             $first  = collect($errors)->flatten()->first() ?: 'Dados inválidos.';
-            // Se o erro é "file required" mas o upload veio com tamanho > 0,
-            // quase sempre é upload_max_filesize estourado (o PHP descarta o
-            // arquivo individualmente mas mantém $_POST). Mostra mensagem clara.
+
             if (($errors['file'][0] ?? null)
                 && str_contains(strtolower($errors['file'][0]), 'required')
                 && $contentLength > 0) {
@@ -171,9 +216,6 @@ class LeadDocumentController extends Controller
 
         $file = $request->file('file');
 
-        // Safety-net: em cenários raros (erros de I/O do upload) o PHP marca
-        // o file com isValid() false. O validate() já pega isso quase sempre,
-        // mas tratamos aqui pra nunca chamar getMimeType() num arquivo inválido.
         if (!$file || !$file->isValid()) {
             $errMap = [
                 UPLOAD_ERR_INI_SIZE   => 'Arquivo excede upload_max_filesize do servidor.',
@@ -240,24 +282,11 @@ class LeadDocumentController extends Controller
         return response()->json($this->present($doc->fresh(['uploader:id,name'])), 201);
     }
 
-    /* ==============================================================
-     * DOWNLOAD
-     * ==============================================================
-     * - Permite download de docs em retenção (admin/gestor precisam poder
-     *   revisar antes de decidir restaurar/expurgar).
-     * - CORRETOR fica bloqueado assim que existe solicitação de exclusão
-     *   (pendente OU em retenção) — só admin/gestor podem visualizar o
-     *   documento depois da solicitação. Isso atende LGPD: corretor solicita,
-     *   gestor/admin auditam.
-     * - Registra cada acesso em lead_document_accesses com IP + geo.
-     */
     public function download(Request $request, Lead $lead, LeadDocument $document): StreamedResponse
     {
         $this->authorize('view', $lead);
         $this->ensureDocBelongsToLead($lead, $document);
 
-        // Bloqueio LGPD: se o doc tem solicitação de exclusão (pendente
-        // ou já em retenção), corretor não pode mais baixar. Só admin/gestor.
         if (
             ($document->isDeletionPending() || $document->deleted_at !== null)
             && !$this->userIsAdminOrManager()
@@ -272,8 +301,6 @@ class LeadDocumentController extends Controller
             abort(404, 'Arquivo não encontrado no storage.');
         }
 
-        // Log do acesso. Qualquer erro aqui não pode atrapalhar o download —
-        // logAccess é try/catch-isolada internamente.
         $this->logAccess($request, $lead, $document, 'download');
 
         $mime = $document->mime_type ?: 'application/octet-stream';
@@ -295,21 +322,11 @@ class LeadDocumentController extends Controller
         }, $document->original_name, $headers);
     }
 
-    /**
-     * Preview inline — serve o arquivo com Content-Disposition: inline pra
-     * exibir direto no navegador (via iframe/img no blob URL do frontend).
-     *
-     * Mesmas regras do download (auth, LGPD, lixeira), mas loga em
-     * lead_document_accesses com action='preview' pra separar métrica de
-     * visualização de download efetivo.
-     */
     public function preview(Request $request, Lead $lead, LeadDocument $document): StreamedResponse
     {
         $this->authorize('view', $lead);
         $this->ensureDocBelongsToLead($lead, $document);
 
-        // Mesmo bloqueio LGPD do download: doc com solicitação em aberto ou
-        // em retenção só abre pra admin/gestor.
         if (
             ($document->isDeletionPending() || $document->deleted_at !== null)
             && !$this->userIsAdminOrManager()
@@ -324,13 +341,11 @@ class LeadDocumentController extends Controller
             abort(404, 'Arquivo não encontrado no storage.');
         }
 
-        // Log do acesso com action='preview' (distingue de download pro audit log).
         $this->logAccess($request, $lead, $document, 'preview');
 
         $mime = $document->mime_type ?: 'application/octet-stream';
         $size = (int) $document->size_bytes;
 
-        // Sanitiza nome do arquivo pro header (evita quebra de linha / aspas).
         $safeName = str_replace(['"', "\r", "\n"], ['\\"', '', ''], (string) $document->original_name);
 
         $headers = [
@@ -338,7 +353,7 @@ class LeadDocumentController extends Controller
             'Content-Disposition' => 'inline; filename="' . $safeName . '"',
             'Cache-Control'       => 'private, no-store, no-cache, must-revalidate',
             'Pragma'              => 'no-cache',
-            // Permite embed via iframe/img no mesmo domínio do frontend.
+
             'X-Content-Type-Options' => 'nosniff',
         ];
         if ($size > 0) $headers['Content-Length'] = (string) $size;
@@ -361,17 +376,6 @@ class LeadDocumentController extends Controller
         return null;
     }
 
-    /* ==============================================================
-     * DELETION WORKFLOW
-     * ============================================================== */
-
-    /**
-     * Solicita exclusão.
-     *
-     *   - Se doc_deletion_requires_approval = true: marca como pendente e
-     *     aguarda admin aprovar.
-     *   - Se false: vai DIRETO pra soft-delete (pula etapa de aprovação).
-     */
     public function requestDeletion(Request $request, Lead $lead, LeadDocument $document)
     {
         $this->authorize('view', $lead);
@@ -391,7 +395,7 @@ class LeadDocumentController extends Controller
         $requiresApproval = (bool) Setting::get('doc_deletion_requires_approval', true);
 
         if ($requiresApproval) {
-            // Modo padrão: marca pendente pra admin aprovar
+
             $document->update([
                 'deletion_requested_by' => auth()->id(),
                 'deletion_requested_at' => now(),
@@ -404,7 +408,7 @@ class LeadDocumentController extends Controller
                 $document->original_name . ($data['reason'] ?? '' ? ' — motivo: ' . $data['reason'] : '')
             );
         } else {
-            // Modo "sem aprovação": vai direto pra retenção (lixeira).
+
             $this->softDeleteWithRetention($document, auth()->id(), $data['reason'] ?? null);
 
             $this->logHistory(
@@ -445,13 +449,6 @@ class LeadDocumentController extends Controller
         return response()->json($this->present($document->fresh(['uploader:id,name'])));
     }
 
-    /**
-     * Admin aprova exclusão.
-     *
-     * NÃO é mais hard-delete: move pra "lixeira" (soft-delete) e programa
-     * o purge pra now() + doc_retention_days. Admin ainda pode restaurar
-     * dentro dessa janela.
-     */
     public function approveDeletion(Lead $lead, LeadDocument $document)
     {
         $this->ensureAdmin();
@@ -461,9 +458,6 @@ class LeadDocumentController extends Controller
             return response()->json(['message' => 'Nenhuma solicitação pendente pra aprovar.'], 409);
         }
 
-        // Solicitante fica registrado como responsável pela solicitação original;
-        // não sobrescrevemos os campos deletion_* aqui — eles viram contexto
-        // histórico do doc em retenção.
         $this->softDeleteWithRetention(
             $document,
             $document->deletion_requested_by,
@@ -510,10 +504,6 @@ class LeadDocumentController extends Controller
         return response()->json($this->present($document->fresh(['uploader:id,name'])));
     }
 
-    /**
-     * Admin restaura um doc que está aguardando expurgo (dentro da janela).
-     * Zera deleted_at/purge_at e limpa o estado de solicitação de exclusão.
-     */
     public function restore(Lead $lead, LeadDocument $document)
     {
         $this->ensureAdmin();
@@ -538,10 +528,6 @@ class LeadDocumentController extends Controller
         ])));
     }
 
-    /**
-     * Admin força o expurgo imediato de um doc em retenção (ou até um
-     * doc ativo, a pedido). Faz o hard-delete que o job faria amanhã.
-     */
     public function forcePurge(Lead $lead, LeadDocument $document)
     {
         $this->ensureAdmin();
@@ -559,11 +545,6 @@ class LeadDocumentController extends Controller
         return response()->json(['ok' => true]);
     }
 
-    /* ==============================================================
-     * ACCESS LOG (admin only)
-     * ============================================================== */
-
-    /** Lista os acessos/downloads de um documento. Só admin. */
     public function accesses(Lead $lead, LeadDocument $document)
     {
         $this->ensureAdmin();
@@ -596,10 +577,6 @@ class LeadDocumentController extends Controller
         return response()->json($rows);
     }
 
-    /* ==============================================================
-     * HELPERS
-     * ============================================================== */
-
     private function ensureDocBelongsToLead(Lead $lead, LeadDocument $document): void
     {
         if ((int) $document->lead_id !== (int) $lead->id) {
@@ -607,10 +584,6 @@ class LeadDocumentController extends Controller
         }
     }
 
-    /**
-     * Converte valor de ini (ex.: "15M", "1G", "8388608") em bytes.
-     * Retorna 0 quando não consegue parsear.
-     */
     private function iniBytes(?string $val): int
     {
         if ($val === null || $val === '') return 0;
@@ -625,7 +598,6 @@ class LeadDocumentController extends Controller
         return $num;
     }
 
-    /** Formata bytes em "15 MB" / "512 KB" pra mostrar na mensagem de erro. */
     private function formatBytes(int $bytes): string
     {
         if ($bytes <= 0) return '0 B';
@@ -644,14 +616,13 @@ class LeadDocumentController extends Controller
     {
         $u = auth()->user();
         if (!$u) return false;
-        // Sprint Hierarquia (fix) — coluna + Spatie via effectiveRole().
+
         $role = method_exists($u, 'effectiveRole')
             ? $u->effectiveRole()
             : strtolower(trim((string) ($u->role ?? '')));
         return $role === 'admin';
     }
 
-    /** Admin OU gestor (a "visão gerencial" que pode auditar documentos). */
     private function userIsAdminOrManager(): bool
     {
         $u = auth()->user();
@@ -669,17 +640,12 @@ class LeadDocumentController extends Controller
         }
     }
 
-    /** Dias de retenção (lê do settings, clampa em 1..365). */
     private function retentionDays(): int
     {
         $raw  = (int) Setting::get('doc_retention_days', 7);
         return max(1, min(365, $raw ?: 7));
     }
 
-    /**
-     * Marca o doc como soft-deleted: deleted_at = agora, purge_at = agora + N.
-     * Se deletion_requested_by/at/reason vieram vazios, deixa como estão.
-     */
     private function softDeleteWithRetention(
         LeadDocument $document,
         ?int $byUserId,
@@ -692,8 +658,6 @@ class LeadDocumentController extends Controller
             'purge_at'   => now()->addDays($days),
         ];
 
-        // Preserva contexto da solicitação se veio do fluxo "sem aprovação",
-        // onde esses campos ainda não foram preenchidos.
         if ($document->deletion_requested_at === null) {
             $update['deletion_requested_by'] = $byUserId;
             $update['deletion_requested_at'] = now();
@@ -716,10 +680,6 @@ class LeadDocumentController extends Controller
         ]);
     }
 
-    /**
-     * Registra um acesso ao documento (download/preview). Falhas aqui são
-     * silenciosas — nunca podem impedir o download em si.
-     */
     private function logAccess(
         Request $request,
         Lead $lead,
@@ -754,14 +714,11 @@ class LeadDocumentController extends Controller
         }
     }
 
-    /** Serializa o doc pra JSON consumido pelo frontend. */
     private function present(LeadDocument $d): array
     {
         $pendingPurge = $d->isPendingPurge();
         $hasDeletion  = $d->isDeletionPending() || $pendingPurge;
 
-        // Espelha a regra do @download: com solicitação em aberto, corretor
-        // perde o botão de baixar. Admin/gestor mantêm acesso pra auditoria.
         $downloadBlocked = $hasDeletion && !$this->userIsAdminOrManager();
 
         return [
@@ -778,7 +735,6 @@ class LeadDocumentController extends Controller
             'created_at'      => $d->created_at?->toIso8601String(),
             'download_blocked' => $downloadBlocked,
 
-            // Pendente de aprovação (ainda no fluxo "request -> approve")
             'deletion' => $d->isDeletionPending() ? [
                 'requested_by' => $d->relationLoaded('deletionRequester') && $d->deletionRequester ? [
                     'id'   => $d->deletionRequester->id,
@@ -788,8 +744,6 @@ class LeadDocumentController extends Controller
                 'reason'       => $d->deletion_reason,
             ] : null,
 
-            // Aguardando expurgo (soft-deleted, janela de retenção aberta).
-            // Frontend usa isso pra renderizar riscado + badge "será excluído em X dias".
             'pending_purge' => $pendingPurge ? [
                 'deleted_at'       => $d->deleted_at?->toIso8601String(),
                 'purge_at'         => $d->purge_at?->toIso8601String(),
@@ -803,21 +757,6 @@ class LeadDocumentController extends Controller
         ];
     }
 
-    /* ==============================================================
-     * ACCESS LOG — GLOBAL (admin only)
-     * ==============================================================
-     * Lista TODOS os acessos a documentos do CRM (paginado), com filtros
-     * opcionais. Alimenta a tela "Configurações → Logs de Download".
-     *
-     * Filtros (query string):
-     *   - lead_id           int    filtra por lead
-     *   - document_id       int    filtra por doc específico
-     *   - user_id           int    filtra por quem baixou
-     *   - action            string 'download' (default) ou 'preview'
-     *   - from / to         date   YYYY-MM-DD (inclusive)
-     *   - q                 string busca por IP / país / cidade / ISP
-     *   - per_page          int    default 50, max 200
-     */
     public function allAccesses(Request $request)
     {
         $this->ensureAdmin();

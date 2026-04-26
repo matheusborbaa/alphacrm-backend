@@ -11,39 +11,9 @@ use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Spatie\Permission\PermissionRegistrar;
 
-/**
- * Sprint Cargos — controller de Cargos (Roles + Permissions).
- * ---------------------------------------------------------------
- * CRUD admin-only sobre Spatie roles. Cargos `is_system` (admin/
- * gestor/corretor) têm regras especiais:
- *
- *   - Nome e type imutáveis (defesa pra não quebrar middlewares
- *     `role:admin` etc espalhados pelo backend).
- *   - is_system=1 não pode virar 0.
- *   - DELETE bloqueado.
- *   - PUT continua aceitando ajuste de permissions e description
- *     (admin pode "tunar" o que cada cargo system pode fazer).
- *
- * Cargos custom (is_system=0):
- *   - Tudo editável: nome, type (entre admin/gestor/corretor),
- *     description, permissions.
- *   - DELETE só se nenhum usuário tem a role atribuída (pra não
- *     deixar usuário sem cargo).
- *
- * Anti lock-out: admin LOGADO não pode aplicar nenhuma operação que
- * remova `settings.roles` da própria role efetiva. Sem isso ele se
- * trancaria fora da tela e ninguém mais conseguiria reabilitar.
- *
- * Endpoint extra: GET /admin/permissions/catalog devolve a estrutura
- * agrupada pra a UI montar a matriz de checkboxes — single source of
- * truth com o `App\Permissions\Catalog`.
- */
 class RoleController extends Controller
 {
-    /**
-     * GET /admin/permissions/catalog
-     * Devolve o catálogo agrupado pra UI montar a matriz.
-     */
+
     public function catalog()
     {
         $this->ensureAdmin();
@@ -53,21 +23,12 @@ class RoleController extends Controller
         ]);
     }
 
-    /**
-     * GET /admin/roles
-     * Lista cargos com permissions atribuídas e contagem de users.
-     */
     public function index()
     {
         $this->ensureAdmin();
 
         $roles = Role::with('permissions:id,name')->orderBy('id')->get();
 
-        // Contagem de usuários por role. INNER JOIN com `users` exclui
-        // automaticamente atribuições órfãs (model_id sem user existente
-        // — comum em hard-delete sem ON DELETE CASCADE na pivot do Spatie).
-        // Bug original: 4 "admins" quando só havia 2 reais por causa de 2
-        // contas excluídas que deixaram registros perdidos.
         $userCounts = DB::table('model_has_roles as mhr')
             ->join('users as u', 'u.id', '=', 'mhr.model_id')
             ->where('mhr.model_type', \App\Models\User::class)
@@ -79,7 +40,7 @@ class RoleController extends Controller
             return [
                 'id'           => $r->id,
                 'name'         => $r->name,
-                'type'         => $r->type,        // pode ser null em cargos custom mal-formados
+                'type'         => $r->type,
                 'is_system'    => (bool) $r->is_system,
                 'description'  => $r->description,
                 'permissions'  => $r->permissions->pluck('name')->values(),
@@ -89,10 +50,6 @@ class RoleController extends Controller
         }));
     }
 
-    /**
-     * GET /admin/roles/{role}
-     * Detalhe de um cargo específico (mesmo shape do index).
-     */
     public function show(Role $role)
     {
         $this->ensureAdmin();
@@ -105,7 +62,7 @@ class RoleController extends Controller
             'is_system'    => (bool) $role->is_system,
             'description'  => $role->description,
             'permissions'  => $role->permissions->pluck('name')->values(),
-            // INNER JOIN exclui automaticamente atribuições órfãs (sem user).
+
             'users_count'  => DB::table('model_has_roles as mhr')
                 ->join('users as u', 'u.id', '=', 'mhr.model_id')
                 ->where('mhr.model_type', \App\Models\User::class)
@@ -114,12 +71,6 @@ class RoleController extends Controller
         ]);
     }
 
-    /**
-     * POST /admin/roles
-     * Cria cargo novo. Começa SEM permissions (decisão UX: admin marca
-     * tudo manual). Aceita opcionalmente um array de permissions iniciais
-     * pra futura UI "Duplicar cargo X" que seria mais ergonômico.
-     */
     public function store(Request $request)
     {
         $this->ensureAdmin();
@@ -132,9 +83,6 @@ class RoleController extends Controller
             'permissions.*' => ['string', Rule::in(Catalog::allNames())],
         ]);
 
-        // Cargo type=admin só pode ser criado por quem tem users.assign_admin.
-        // Defesa adicional: evita gestor (caso ganhe settings.roles algum dia)
-        // criar role admin pra escalar privilégio.
         if ($data['type'] === 'admin'
             && !$request->user()->can('users.assign_admin')) {
             throw ValidationException::withMessages([
@@ -167,18 +115,12 @@ class RoleController extends Controller
         ], 201);
     }
 
-    /**
-     * PUT /admin/roles/{role}
-     * Atualiza cargo. Regras especiais pra is_system (ver doc da classe).
-     */
     public function update(Request $request, Role $role)
     {
         $this->ensureAdmin();
 
         $isSystem = (bool) $role->is_system;
 
-        // Sistema: só description e permissions são editáveis.
-        // Custom: tudo editável (com unique check no name).
         $rules = [
             'description' => ['sometimes', 'nullable', 'string', 'max:500'],
             'permissions' => ['sometimes', 'array'],
@@ -197,15 +139,10 @@ class RoleController extends Controller
 
         $data = $request->validate($rules);
 
-        // Defesa: se é cargo system e tentaram mandar name/type, ignora
-        // silenciosamente (não dispara erro pra UI poder reaproveitar
-        // mesmo formulário). O frontend deve esconder os inputs de qualquer
-        // jeito, mas não custa.
         if ($isSystem) {
             unset($data['name'], $data['type']);
         }
 
-        // Promoção de role pra type=admin segue exigindo users.assign_admin
         if (!$isSystem
             && isset($data['type'])
             && $data['type'] === 'admin'
@@ -215,9 +152,6 @@ class RoleController extends Controller
             ]);
         }
 
-        // Anti lock-out: bloqueia se a operação remove settings.roles do
-        // CARGO QUE O ADMIN LOGADO TEM. Se passar essa, o admin perderia
-        // acesso à tela e ninguém poderia desfazer.
         if (array_key_exists('permissions', $data)) {
             $this->guardSelfLockout($request, $role, $data['permissions']);
         }
@@ -245,10 +179,6 @@ class RoleController extends Controller
         ]);
     }
 
-    /**
-     * DELETE /admin/roles/{role}
-     * Só permite se !is_system E nenhum user tem a role atribuída.
-     */
     public function destroy(Role $role)
     {
         $this->ensureAdmin();
@@ -259,9 +189,6 @@ class RoleController extends Controller
             ], 422);
         }
 
-        // Igual ao counts: INNER JOIN naturalmente exclui órfãs, senão
-        // um cargo poderia ficar bloqueado pra exclusão por um user
-        // que foi removido mas deixou registro perdido na pivot.
         $usersWithRole = DB::table('model_has_roles as mhr')
             ->join('users as u', 'u.id', '=', 'mhr.model_id')
             ->where('mhr.model_type', \App\Models\User::class)
@@ -281,10 +208,6 @@ class RoleController extends Controller
         return response()->json(['ok' => true]);
     }
 
-    // =================================================================
-    // Helpers privados
-    // =================================================================
-
     private function ensureAdmin(): void
     {
         $u = auth()->user();
@@ -296,32 +219,19 @@ class RoleController extends Controller
         }
     }
 
-    /**
-     * Bloqueia operação se ela tirar `settings.roles` do cargo que o admin
-     * logado USA. Sem isso, o admin sobe a alteração, perde acesso à tela
-     * de cargos, e fica sem como reverter.
-     *
-     * Lógica:
-     *   - Se a role afetada NÃO é uma das roles do user logado → segue.
-     *   - Se a role afetada É do user logado E o array `permissions` novo
-     *     NÃO contém 'settings.roles' → 422.
-     *   - Tem outras roles do user que ainda têm settings.roles? Aí libera
-     *     (ele ainda terá acesso pelas outras).
-     */
     private function guardSelfLockout(Request $request, Role $role, array $newPermissions): void
     {
         $me = $request->user();
         $myRoleIds = $me->roles()->pluck('roles.id')->all();
 
         if (!in_array($role->id, $myRoleIds, true)) {
-            return; // não é minha role, sem risco
+            return;
         }
 
         if (in_array('settings.roles', $newPermissions, true)) {
-            return; // a alteração mantém a permission, OK
+            return;
         }
 
-        // Verifica se alguma OUTRA role minha ainda tem settings.roles
         $stillHave = DB::table('role_has_permissions as rhp')
             ->join('permissions as p', 'p.id', '=', 'rhp.permission_id')
             ->whereIn('rhp.role_id', array_diff($myRoleIds, [$role->id]))

@@ -9,36 +9,11 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
-/**
- * CRUD da biblioteca de mídia (Área do Corretor → Biblioteca).
- *
- * Permissions usadas (rotas em routes/api.php):
- *   media.view          → listar pastas/arquivos + download
- *   media.upload        → subir arquivo
- *   media.create_folder → criar pasta
- *   media.delete        → apagar pasta/arquivo (CASCADE: pasta apaga
- *                         subpastas e arquivos junto)
- *
- * Storage: disco 'local' (storage/app/media/...). Não acessível via URL
- * pública — tudo vai pelo endpoint download() que valida permission.
- */
 class MediaController extends Controller
 {
     private const DISK = 'local';
     private const ROOT = 'media';
 
-    /* ====================================================================
-     * PASTAS
-     * ==================================================================== */
-
-    /**
-     * GET /media/folders/{folder?}/contents
-     *
-     * Devolve filhos diretos (pastas + arquivos) da pasta indicada.
-     * `folder=null` ou ausente = raiz da biblioteca.
-     *
-     * Inclui breadcrumb (ancestrais até a raiz) pra UI montar nav.
-     */
     public function contents(Request $request, ?int $folderId = null)
     {
         $folder = $folderId ? MediaFolder::with('parent.parent.parent')->find($folderId) : null;
@@ -48,20 +23,12 @@ class MediaController extends Controller
 
         $user = $request->user();
 
-        // Sprint Biblioteca — Se a pasta atual está dentro de uma subárvore
-        // vinculada a empreendimento e o user não tem acesso, recusa direto.
         if ($folder && !$this->userCanSeeFolder($user, $folder)) {
             return response()->json(['message' => 'Você não tem acesso a esta pasta.'], 403);
         }
 
-        // Lista de empreendimento_ids que o user pode ver. null = admin/all
-        // (sem filtro). Usado pra esconder pastas vinculadas que o user
-        // não atende.
         $allowedEmpIds  = $this->allowedEmpreendimentoIds($user);
 
-        // Sprint Biblioteca/Lead — leads que o user pode ver. null = admin/
-        // gestor (vê tudo); array vazio = sem leads. Aplicamos filtro
-        // separado das pastas de empreendimento.
         $isManager      = $this->isManagerRole($user);
         $allowedLeadIds = $isManager ? null : $this->accessibleLeadIds($user);
 
@@ -69,16 +36,14 @@ class MediaController extends Controller
             ->when($folder, fn ($q) => $q->where('parent_id', $folder->id))
             ->when(!$folder, fn ($q) => $q->whereNull('parent_id'))
             ->when(is_array($allowedEmpIds), function ($q) use ($allowedEmpIds) {
-                // Mostra: pastas SEM vínculo de empreendimento OU com
-                // empreendimento_id que o user atende.
+
                 $q->where(function ($qq) use ($allowedEmpIds) {
                     $qq->whereNull('empreendimento_id')
                        ->orWhereIn('empreendimento_id', $allowedEmpIds);
                 });
             })
             ->when(is_array($allowedLeadIds), function ($q) use ($allowedLeadIds) {
-                // Mesma lógica pra leads: pastas SEM lead_id OU com
-                // lead_id que o user (corretor) é responsável.
+
                 $q->where(function ($qq) use ($allowedLeadIds) {
                     $qq->whereNull('lead_id')
                        ->orWhereIn('lead_id', $allowedLeadIds);
@@ -112,12 +77,26 @@ class MediaController extends Controller
                 'mime_type'     => $f->mime_type,
                 'size_bytes'    => $f->size_bytes,
                 'description'   => $f->description,
+                'category'      => $f->category,
                 'uploader'      => $f->uploader?->name,
                 'created_at'    => optional($f->created_at)->toIso8601String(),
                 'download_url'  => "/media/files/{$f->id}/download",
-            ]);
+                'source'        => 'media',
+                'source_label'  => 'Biblioteca',
+            ])
+            ->all();
 
-        // Breadcrumb (raiz → pasta atual)
+        $isLeadRootFolder = $folder && $folder->lead_id;
+        if ($isLeadRootFolder) {
+            $files = array_merge(
+                $files,
+                $this->aggregateLeadDocuments($folder->lead_id),
+                $this->aggregateCustomFieldFiles($folder->lead_id)
+            );
+
+            usort($files, fn ($a, $b) => strcasecmp($a['name'] ?? '', $b['name'] ?? ''));
+        }
+
         $breadcrumb = [];
         $cur = $folder;
         while ($cur) {
@@ -140,28 +119,20 @@ class MediaController extends Controller
         ]);
     }
 
-    /**
-     * Decide se o user pode ver a pasta. Regras combinadas:
-     *   - Sem vínculo (empreendimento ou lead, próprio ou herdado): todos veem
-     *   - Com empreendimento_id: só quem canAccessEmpreendimento()
-     *   - Com lead_id: admin/gestor sempre + corretor responsável (assigned_user_id)
-     */
     private function userCanSeeFolder($user, MediaFolder $folder): bool
     {
-        // Empreendimento — mantido como antes
+
         $effectiveEmp = $folder->effectiveEmpreendimentoId();
         if ($effectiveEmp) {
             if (!$user) return false;
             if (!$user->canAccessEmpreendimento($effectiveEmp)) return false;
         }
 
-        // Lead — admin/gestor passa direto, corretor só se for o dono
         $effectiveLead = $folder->effectiveLeadId();
         if ($effectiveLead) {
             if (!$user) return false;
             if ($this->isManagerRole($user)) return true;
 
-            // Carrega só o assigned_user_id (sem hidratar o lead inteiro)
             $assigned = \App\Models\Lead::whereKey($effectiveLead)
                 ->value('assigned_user_id');
             if ((int) $assigned !== (int) $user->id) return false;
@@ -170,11 +141,6 @@ class MediaController extends Controller
         return true;
     }
 
-    /**
-     * Retorna array de empreendimento_ids que o user atende, ou null se
-     * o user vê tudo (admin ou access_mode=all). Quando user não autenticado
-     * por algum motivo, retorna [] = nada visível.
-     */
     private function allowedEmpreendimentoIds($user): ?array
     {
         if (!$user) return [];
@@ -184,11 +150,6 @@ class MediaController extends Controller
         return $user->accessibleEmpreendimentoIds()->all();
     }
 
-    /**
-     * Sprint Biblioteca/Lead — IDs de leads que o corretor é responsável.
-     * Usado SÓ pra corretor (admin/gestor passa por isManagerRole + null).
-     * Retorna array (pode ser vazio) — nunca null.
-     */
     private function accessibleLeadIds($user): array
     {
         if (!$user) return [];
@@ -197,9 +158,6 @@ class MediaController extends Controller
             ->all();
     }
 
-    /**
-     * Decide se o user é admin ou gestor (vê leads de todos).
-     */
     private function isManagerRole($user): bool
     {
         if (!$user) return false;
@@ -207,15 +165,6 @@ class MediaController extends Controller
         return in_array(strtolower((string) $role), ['admin', 'gestor'], true);
     }
 
-    /**
-     * POST /media/folders
-     * Body: { name, parent_id? }
-     *
-     * Sprint Biblioteca — quando o parent tem empreendimento_id (ou herda
-     * de algum ancestral), a nova subpasta também herda — assim materiais
-     * organizados em subpastas dentro de "/EMPREENDIMENTOS/Reserva Verde/"
-     * continuam restritos a quem atende esse empreendimento.
-     */
     public function storeFolder(Request $request)
     {
         $data = $request->validate([
@@ -232,8 +181,7 @@ class MediaController extends Controller
         if ($parentId) {
             $parent = MediaFolder::with('parent.parent.parent')->find($parentId);
             if ($parent) {
-                // Bloqueia user sem acesso (de empreendimento OU de lead) de
-                // criar pasta dentro da subárvore restrita.
+
                 if (!$this->userCanSeeFolder($user, $parent)) {
                     return response()->json(['message' => 'Sem acesso à pasta destino.'], 403);
                 }
@@ -265,20 +213,9 @@ class MediaController extends Controller
         ], 201);
     }
 
-    /**
-     * DELETE /media/folders/{folder}
-     * Cascade: apaga subpastas e arquivos juntos. Tenta apagar arquivos
-     * físicos do disco também.
-     *
-     * Bloqueia delete de pasta system (raiz EMPREENDIMENTOS e pasta
-     * gerenciada de cada empreendimento) — só backend deleta essas.
-     */
     public function destroyFolder(Request $request, MediaFolder $folder)
     {
-        // 1) Pasta system (raiz EMPREENDIMENTOS + pastas de cada empreendimento)
-        //    NUNCA pode ser excluída manualmente — nem pelo admin. As pastas
-        //    de empreendimento só são removidas quando o próprio empreendimento
-        //    é apagado em /empreendimentos (via EmpreendimentoObserver).
+
         if ($folder->is_system) {
             $msg = 'Esta pasta é gerenciada pelo sistema e não pode ser excluída.';
             if ($folder->empreendimento_id) {
@@ -289,8 +226,6 @@ class MediaController extends Controller
             return response()->json(['message' => $msg], 422);
         }
 
-        // 2) Defesa redundante: pasta não-system mas vinculada (caso de
-        //    inconsistência) — também bloqueia.
         if ($folder->empreendimento_id) {
             return response()->json([
                 'message' => 'Pastas vinculadas a empreendimentos só são removidas ao excluir o empreendimento.',
@@ -302,12 +237,10 @@ class MediaController extends Controller
             ], 422);
         }
 
-        // Defesa: corretor sem acesso ao empreendimento da pasta não apaga.
         if (!$this->userCanSeeFolder($request->user(), $folder)) {
             return response()->json(['message' => 'Sem acesso a esta pasta.'], 403);
         }
 
-        // Antes de deletar do banco, junta paths físicos pra apagar do disco
         $paths = $this->collectFilePathsRecursive($folder);
 
         $folder->delete();
@@ -317,10 +250,6 @@ class MediaController extends Controller
         return response()->json(['deleted' => true]);
     }
 
-    /**
-     * Recursivamente coleta storage_paths de TODOS os arquivos
-     * descendentes da pasta (filhos diretos + subpastas).
-     */
     private function collectFilePathsRecursive(MediaFolder $folder): array
     {
         $paths = $folder->files()->pluck('storage_path')->all();
@@ -330,25 +259,17 @@ class MediaController extends Controller
         return $paths;
     }
 
-    /* ====================================================================
-     * ARQUIVOS
-     * ==================================================================== */
-
-    /**
-     * POST /media/files (multipart)
-     * Body: file, folder_id?, name?, description?
-     */
     public function uploadFile(Request $request)
     {
         $request->validate([
-            'file'        => 'required|file|max:51200',  // 50MB
+            'file'        => 'required|file|max:51200',
             'folder_id'   => 'nullable|integer|exists:media_folders,id',
             'name'        => 'nullable|string|max:200',
             'description' => 'nullable|string|max:1000',
+
+            'category'    => 'nullable|string|max:60',
         ]);
 
-        // Defesa: bloqueia upload em pasta vinculada a empreendimento que o
-        // user não atende. (Frontend já esconde, mas reforço aqui.)
         if ($request->filled('folder_id')) {
             $target = MediaFolder::with('parent.parent.parent')->find($request->input('folder_id'));
             if ($target && !$this->userCanSeeFolder($request->user(), $target)) {
@@ -373,6 +294,7 @@ class MediaController extends Controller
             'size_bytes'       => $upload->getSize(),
             'uploader_user_id' => auth()->id(),
             'description'      => $request->input('description'),
+            'category'         => $request->input('category'),
         ]);
 
         return response()->json([
@@ -385,17 +307,9 @@ class MediaController extends Controller
         ], 201);
     }
 
-    /**
-     * GET /media/files/{file}/download?inline=1?
-     * Streamed download. ?inline=1 → Content-Disposition: inline (preview).
-     */
     public function downloadFile(Request $request, MediaFile $file): StreamedResponse
     {
-        // Sprint Biblioteca — bloqueia download de arquivo dentro de pasta
-        // vinculada a empreendimento sem acesso. Sem essa checagem, alguém
-        // podia adivinhar IDs e baixar materiais de empreendimentos que não
-        // atende. Mais barato carregar a pasta com ancestrais aqui (1 query
-        // a mais) do que vazar arquivo institucional.
+
         if ($file->folder_id) {
             $folder = MediaFolder::with('parent.parent.parent')->find($file->folder_id);
             if ($folder && !$this->userCanSeeFolder($request->user(), $folder)) {
@@ -424,13 +338,9 @@ class MediaController extends Controller
         ]);
     }
 
-    /**
-     * DELETE /media/files/{file}
-     */
     public function destroyFile(Request $request, MediaFile $file)
     {
-        // Defesa: arquivo dentro de pasta de empreendimento que o user
-        // não atende não pode ser apagado.
+
         if ($file->folder_id) {
             $folder = MediaFolder::with('parent.parent.parent')->find($file->folder_id);
             if ($folder && !$this->userCanSeeFolder($request->user(), $folder)) {
@@ -444,10 +354,6 @@ class MediaController extends Controller
         return response()->json(['deleted' => true]);
     }
 
-    /* ====================================================================
-     * HELPERS
-     * ==================================================================== */
-
     private function sanitizeFilename(string $name): string
     {
         $info = pathinfo($name);
@@ -459,5 +365,85 @@ class MediaController extends Controller
         if ($base === '') $base = 'arquivo';
 
         return $base . $ext;
+    }
+
+    private function aggregateLeadDocuments(int $leadId): array
+    {
+        try {
+            return \App\Models\LeadDocument::query()
+                ->where('lead_id', $leadId)
+                ->whereNull('deleted_at')
+                ->with('uploader:id,name')
+                ->orderBy('created_at', 'desc')
+                ->get()
+                ->map(fn ($d) => [
+                    'id'            => 'doc_' . $d->id,
+                    'name'          => $d->original_name ?? ('Documento #' . $d->id),
+                    'original_name' => $d->original_name,
+                    'mime_type'     => $d->mime_type,
+                    'size_bytes'    => (int) ($d->size_bytes ?? 0),
+                    'description'   => $d->description,
+                    'category'      => $d->category,
+                    'uploader'      => $d->uploader?->name,
+                    'created_at'    => optional($d->created_at)->toIso8601String(),
+                    'download_url'  => "/leads/{$leadId}/documents/{$d->id}/download",
+                    'preview_url'   => "/leads/{$leadId}/documents/{$d->id}/preview",
+                    'source'        => 'lead_doc',
+                    'source_label'  => 'Documento do lead',
+                ])
+                ->all();
+        } catch (\Throwable $e) {
+            \Log::warning('Falha ao agregar lead_documents na biblioteca', [
+                'lead_id' => $leadId,
+                'error'   => $e->getMessage(),
+            ]);
+            return [];
+        }
+    }
+
+    private function aggregateCustomFieldFiles(int $leadId): array
+    {
+        try {
+
+            $rows = \App\Models\LeadCustomFieldValue::query()
+                ->where('lead_id', $leadId)
+                ->whereNotNull('value')
+                ->with('customField:id,slug,name,type')
+                ->get()
+                ->filter(fn ($v) => optional($v->customField)->type === 'file');
+
+            $out = [];
+            foreach ($rows as $v) {
+
+                $meta = is_string($v->value) ? json_decode($v->value, true) : (array) $v->value;
+                if (!is_array($meta) || empty($meta['path'])) continue;
+
+                $cfName = $v->customField->name ?? 'Campo customizado';
+                $slug   = $v->customField->slug ?? '';
+
+                $out[] = [
+                    'id'            => 'cf_' . $v->id,
+                    'name'          => $meta['name'] ?? 'Arquivo',
+                    'original_name' => $meta['name'] ?? null,
+                    'mime_type'     => $meta['mime'] ?? null,
+                    'size_bytes'    => (int) ($meta['size'] ?? 0),
+
+                    'description'   => 'Campo customizado: ' . $cfName,
+                    'category'      => $cfName,
+                    'uploader'      => null,
+                    'created_at'    => optional($v->updated_at)->toIso8601String(),
+                    'download_url'  => "/leads/{$leadId}/custom-field-files/{$slug}",
+                    'source'        => 'custom_field',
+                    'source_label'  => 'Campo personalizado',
+                ];
+            }
+            return $out;
+        } catch (\Throwable $e) {
+            \Log::warning('Falha ao agregar custom field files na biblioteca', [
+                'lead_id' => $leadId,
+                'error'   => $e->getMessage(),
+            ]);
+            return [];
+        }
     }
 }

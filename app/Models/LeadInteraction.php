@@ -15,7 +15,7 @@ class LeadInteraction extends Model
         'user_id',
         'type',
         'note',
-        'appointment_id', // 👈 TEM QUE ESTAR AQUI
+        'appointment_id',
 
     ];
 

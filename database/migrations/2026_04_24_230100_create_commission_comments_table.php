@@ -4,13 +4,6 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-/**
- * Sprint 3.7a — Comentários por comissão.
- *
- * Pedido da Marcia: "corretor pode ver as em processamento e adicionar
- * comentários por fatura caso discorde". Gestor também pode responder.
- * Thread simples (sem reply aninhado) — ordem cronológica basta.
- */
 return new class extends Migration
 {
     public function up(): void
@@ -18,7 +11,7 @@ return new class extends Migration
         Schema::create('commission_comments', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('commission_id');
-            $table->unsignedBigInteger('user_id');      // quem comentou
+            $table->unsignedBigInteger('user_id');
             $table->text('body');
             $table->timestamps();
 

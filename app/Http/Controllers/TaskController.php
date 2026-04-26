@@ -9,47 +9,9 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Database\Eloquent\Builder;
 
-/**
- * TaskController — gerencia TAREFAS / FOLLOW-UPS.
- *
- * Tarefas são um tipo especial de Appointment (type='task'). Mantemos
- * controller separado porque o fluxo é bem diferente do de eventos de
- * agenda:
- *
- *   - Agenda trabalha com horário (starts_at/ends_at) e é usada pra
- *     calendário/day-view.
- *   - Tarefa trabalha com PRAZO (due_at) e tem ciclo de vida
- *     pending → done / cancelled → reopen.
- *
- * Regras de autorização (inline, não Policy, pra manter padrão do
- * AppointmentController):
- *   - admin/gestor: enxergam e editam tudo, EXCETO tarefas "internas"
- *                   de outros corretores. "Interna" = scope='private'
- *                   SEM lead vinculado — é a lista pessoal do corretor,
- *                   usada pra se organizar; ninguém (nem admin) bisbilhota.
- *                   Se a tarefa tem lead_id (é trabalho) ou scope='company'
- *                   (é da empresa), admin/gestor VÊ normalmente.
- *   - corretor:    enxergam as próprias (user_id=self) + scope='company'.
- *                  Editam/concluem/deletam só as próprias.
- *
- * Histórico do lead: cada operação grava LeadHistory semanticamente
- * tipada (task_created, task_completed, task_reopened, task_deleted)
- * — facilita filtrar a timeline por tipo no futuro.
- */
 class TaskController extends Controller
 {
-    /* ==================================================================
-     * INDEX — lista tarefas com filtros combináveis
-     *
-     * Filtros suportados (todos opcionais):
-     *   filter    = today | overdue | upcoming | done | open
-     *   lead_id   = id do lead (tarefas vinculadas a ele)
-     *   user_id   = id do dono (só admin/gestor podem filtrar por outro)
-     *   priority  = low | medium | high
-     *   from/to   = intervalo de datas no due_at
-     *   q         = busca textual no title
-     *   per_page  = paginação (default 50)
-     * ================================================================== */
+
     public function index(Request $request)
     {
         $user = Auth::user();
@@ -61,7 +23,6 @@ class TaskController extends Controller
 
         $this->scopeByRole($query, $user);
 
-        // ---- filtro por estado ----
         switch ($request->query('filter')) {
             case 'today':
                 $query->dueToday();
@@ -78,15 +39,13 @@ class TaskController extends Controller
             case 'open':
                 $query->open();
                 break;
-            // sem filtro → retorna tudo (paginado)
+
         }
 
-        // ---- escopos adicionais ----
         if ($request->filled('lead_id')) {
             $query->where('lead_id', $request->lead_id);
         }
 
-        // Só admin/gestor podem consultar tarefas de OUTRO user.
         if ($request->filled('user_id') && $this->isManager($user)) {
             $query->where('user_id', $request->user_id);
         }
@@ -107,7 +66,6 @@ class TaskController extends Controller
             $query->where('title', 'like', '%' . $request->q . '%');
         }
 
-        // Ordenação: abertas primeiro (por prazo asc), concluídas depois.
         $query->orderByRaw('completed_at IS NULL DESC')
               ->orderBy('due_at', 'asc')
               ->orderBy('id', 'desc');
@@ -117,9 +75,6 @@ class TaskController extends Controller
         return response()->json($query->paginate($perPage));
     }
 
-    /* ==================================================================
-     * STORE — cria nova tarefa
-     * ================================================================== */
     public function store(Request $request)
     {
         $data = $request->validate([
@@ -129,27 +84,20 @@ class TaskController extends Controller
             'due_at'      => 'nullable|date',
             'priority'    => 'nullable|in:low,medium,high',
             'reminder_at' => 'nullable|date',
-            // Subtipo da tarefa — usado pelas regras de obrigatoriedade
-            // pra exigir tipo específico (ligação, visita, anotação, genérica).
-            // Sprint 3.2c — whitelist delegada à constante Appointment::KINDS
-            // (Ligação/WhatsApp/E-mail/Follow-up/Agendamento/Visita/Reunião/
-            // Anotação/Genérica). Manter aqui hard-coded faria desync com o Model.
+
             'task_kind'   => ['nullable', \Illuminate\Validation\Rule::in(\App\Models\Appointment::KINDS)],
-            // admin/gestor podem atribuir a outro user
+
             'user_id'     => 'nullable|exists:users,id',
-            // admin/gestor podem marcar a tarefa como da EMPRESA (visível pra todos)
+
             'scope'       => 'nullable|in:private,company',
         ]);
 
         $user = Auth::user();
 
-        // Corretor só cria tarefa pra si mesmo.
         $assigneeId = isset($data['user_id']) && $this->isManager($user)
             ? $data['user_id']
             : $user->id;
 
-        // Scope só pode ser 'company' se quem está criando é admin/gestor.
-        // Corretor sempre cria tarefas privadas, mesmo que mande scope=company no payload.
         $scope = (isset($data['scope']) && $this->isManager($user))
             ? $data['scope']
             : 'private';
@@ -176,9 +124,6 @@ class TaskController extends Controller
         return response()->json($task->load(['lead:id,name', 'user:id,name']), 201);
     }
 
-    /* ==================================================================
-     * SHOW — retorna uma tarefa com comentários já carregados
-     * ================================================================== */
     public function show(int $id)
     {
         $task = Appointment::tasks()
@@ -196,9 +141,6 @@ class TaskController extends Controller
         return response()->json($task);
     }
 
-    /* ==================================================================
-     * UPDATE — altera campos editáveis da tarefa
-     * ================================================================== */
     public function update(Request $request, int $id)
     {
         $task = Appointment::tasks()->findOrFail($id);
@@ -211,27 +153,22 @@ class TaskController extends Controller
             'due_at'      => 'nullable|date',
             'priority'    => 'nullable|in:low,medium,high',
             'reminder_at' => 'nullable|date',
-            // Sprint 3.2c — whitelist delegada à constante Appointment::KINDS
-            // (Ligação/WhatsApp/E-mail/Follow-up/Agendamento/Visita/Reunião/
-            // Anotação/Genérica). Manter aqui hard-coded faria desync com o Model.
+
             'task_kind'   => ['nullable', \Illuminate\Validation\Rule::in(\App\Models\Appointment::KINDS)],
             'user_id'     => 'nullable|exists:users,id',
             'scope'       => 'nullable|in:private,company',
         ]);
 
-        // Reatribuição só por admin/gestor.
         if (isset($data['user_id']) && !$this->isManager(Auth::user())) {
             unset($data['user_id']);
         }
 
-        // Mudança de scope (private <-> company) só por admin/gestor.
         if (isset($data['scope']) && !$this->isManager(Auth::user())) {
             unset($data['scope']);
         }
 
         $task->update($data);
 
-        // Histórico só se mudou algo significativo.
         $changed = array_keys($task->getChanges());
         $significant = array_intersect($changed, ['title', 'due_at', 'priority', 'user_id']);
         if (!empty($significant)) {
@@ -243,9 +180,6 @@ class TaskController extends Controller
         return response()->json($task->fresh(['lead:id,name', 'user:id,name']));
     }
 
-    /* ==================================================================
-     * COMPLETE — marca como concluída
-     * ================================================================== */
     public function complete(int $id)
     {
         $task = Appointment::tasks()->findOrFail($id);
@@ -275,9 +209,6 @@ class TaskController extends Controller
         ]);
     }
 
-    /* ==================================================================
-     * REOPEN — desmarca a conclusão (útil se concluiu por engano)
-     * ================================================================== */
     public function reopen(int $id)
     {
         $task = Appointment::tasks()->findOrFail($id);
@@ -307,9 +238,6 @@ class TaskController extends Controller
         ]);
     }
 
-    /* ==================================================================
-     * DESTROY — remove a tarefa
-     * ================================================================== */
     public function destroy(int $id)
     {
         $task = Appointment::tasks()->findOrFail($id);
@@ -320,7 +248,6 @@ class TaskController extends Controller
 
         $task->delete();
 
-        // Histórico registrado manualmente (a tarefa já foi removida).
         if ($leadId) {
             LeadHistory::create([
                 'lead_id'     => $leadId,
@@ -333,42 +260,20 @@ class TaskController extends Controller
         return response()->json(['success' => true]);
     }
 
-    /* ==================================================================
-     * HELPERS PRIVADOS
-     * ================================================================== */
-
-    /**
-     * Normaliza o valor do campo role — evita falsos negativos por
-     * espaço em branco ou caixa alta vindo do banco.
-     */
     private function normalizedRole($user): string
     {
         return strtolower(trim((string) ($user->role ?? '')));
     }
 
-    /**
-     * True se o usuário é admin ou gestor (tem acesso total às tarefas).
-     */
     private function isManager($user): bool
     {
         return in_array($this->normalizedRole($user), ['admin', 'gestor'], true);
     }
 
-    /**
-     * Restringe o query builder de acordo com o papel do usuário.
-     *
-     * admin/gestor → vê tudo, MENOS tarefa "interna" de outro corretor
-     *                (scope='private' E sem lead_id E não é dele próprio/criada
-     *                por ele). Isso respeita a privacidade da lista pessoal
-     *                que o corretor usa pra se organizar.
-     * corretor     → tarefas onde ele é dono (user_id), criador
-     *                (created_by) ou scope='company'.
-     */
     private function scopeByRole(Builder $query, $user): void
     {
         if ($this->isManager($user)) {
-            // Filtra fora o "cantinho pessoal" do corretor. Só é considerado
-            // pessoal se: scope=private AND lead_id IS NULL AND não é do próprio manager.
+
             $query->where(function (Builder $q) use ($user) {
                 $q->where('scope', 'company')
                   ->orWhereNotNull('lead_id')
@@ -385,11 +290,6 @@ class TaskController extends Controller
         });
     }
 
-    /**
-     * True se a tarefa é "pessoal de outro corretor" do ponto de vista
-     * do usuário atual — ou seja: scope=private, sem lead, e nem dono
-     * nem criador é o $user. Usado pra aplicar a regra de privacidade.
-     */
     private function isOthersPrivateTask(Appointment $task, $user): bool
     {
         if ($task->scope !== 'private')   return false;
@@ -399,11 +299,6 @@ class TaskController extends Controller
         return true;
     }
 
-    /**
-     * LEITURA
-     *   - manager: tudo, menos tarefa pessoal de outro corretor.
-     *   - corretor: dono, criador ou scope='company'.
-     */
     private function authorizeRead(Appointment $task): void
     {
         $user = Auth::user();
@@ -437,19 +332,12 @@ class TaskController extends Controller
         abort_if(!$ok, 403, 'Sem permissão pra visualizar esta tarefa.');
     }
 
-    /**
-     * EDIÇÃO de campos (title, due_at, priority, scope, user_id).
-     * Só pode editar: manager, dono ou quem CRIOU a tarefa.
-     * Tarefas scope='company' só podem ser editadas pelo criador/dono/manager
-     * — visualização livre não implica edição.
-     */
     private function authorizeEdit(Appointment $task): void
     {
         $user = Auth::user();
 
         if ($this->isManager($user)) {
-            // Mesma regra de privacidade da leitura: manager não mexe
-            // na lista pessoal do corretor. Se nem pode ver, não pode editar.
+
             if ($this->isOthersPrivateTask($task, $user)) {
                 Log::warning('TaskController::authorizeEdit bloqueou manager em tarefa pessoal', [
                     'user_id' => $user->id,
@@ -481,12 +369,6 @@ class TaskController extends Controller
         );
     }
 
-    /**
-     * CONCLUIR / REABRIR — regra mais frouxa que edição.
-     *   - manager, dono ou criador: sempre.
-     *   - scope='company': qualquer corretor pode concluir (é uma tarefa
-     *     da empresa, quem fez registra quem concluiu via completed_by).
-     */
     private function authorizeComplete(Appointment $task): void
     {
         $user = Auth::user();
@@ -520,11 +402,6 @@ class TaskController extends Controller
         abort_if(!$ok, 403, 'Sem permissão pra concluir esta tarefa.');
     }
 
-    /**
-     * Grava uma entrada no histórico do lead, se a tarefa estiver
-     * vinculada a um. Tarefas internas (lead_id=null) ficam fora da
-     * timeline do lead — isso é intencional.
-     */
     private function logLeadHistory(Appointment $task, string $type, string $description): void
     {
         if (!$task->lead_id) {

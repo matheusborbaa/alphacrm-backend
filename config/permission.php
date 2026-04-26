@@ -1,20 +1,9 @@
 <?php
 
-/**
- * Sprint Cargos — config publicada do Spatie permission.
- * Única customização: `models.role` apontando pra App\Models\Role
- * (estende o Role do Spatie pra incluir type/is_system/description
- * no fillable). Resto é o default oficial.
- */
-
 return [
 
     'models' => [
-        /*
-         * Sprint Cargos — usa App\Models\Role estendido (adiciona type,
-         * is_system, description ao $fillable). Antes usava o default
-         * \Spatie\Permission\Models\Role.
-         */
+
         'permission' => Spatie\Permission\Models\Permission::class,
         'role'       => App\Models\Role::class,
     ],

@@ -9,60 +9,13 @@ use App\Services\AuditService;
 use App\Services\LeadStatusRequirementValidator;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 
-/**
- * @group Kanban
- *
- * Funil visual de leads (drag & drop).
- * Usado na tela Kanban do CRM.
- */
 class KanbanController extends Controller
 {
     use AuthorizesRequests;
-    /**
-     * Listar colunas do Kanban
-     *
-     * Retorna os status do funil com seus respectivos leads.
-     * Usado para montar o Kanban visual.
-     *
-     * @response 200 [
-     *   {
-     *     "id": 1,
-     *     "name": "Novo",
-     *     "leads": [
-     *       {
-     *         "id": 10,
-     *         "name": "João Silva",
-     *         "phone": "11999999999",
-     *         "sla_status": "pending"
-     *       }
-     *     ]
-     *   }
-     * ]
-     */
+
    public function index()
 {
     $user = auth()->user();
-
-    /*
-    |--------------------------------------------------------------------------
-    | Resposta esperada:
-    |
-    |   [
-    |     {
-    |       "id": 1, "name": "Lead Cadastrado", "order": 1,
-    |       "substatuses": [
-    |          { "id": 1, "name": "IA", "order": 1, "leads": [...] },
-    |          ...
-    |       ],
-    |       "leads_without_substatus": [...]
-    |     }
-    |   ]
-    |
-    | O frontend renderiza uma coluna por SUBSTATUS, agrupadas visualmente
-    | pelo STATUS pai. Leads sem substatus aparecem numa coluna "sem etapa"
-    | dentro do grupo do status.
-    |--------------------------------------------------------------------------
-    */
 
     $leadSelect = [
         'id',
@@ -93,7 +46,6 @@ class KanbanController extends Controller
     ->orderBy('order')
     ->get(['id', 'name', 'order', 'color_hex']);
 
-    // Carrega todos os leads visíveis pro user de uma vez e distribui em memória
     $leadsQuery = Lead::with([
             'corretor:id,name',
             'empreendimento:id,name',
@@ -112,7 +64,6 @@ class KanbanController extends Controller
 
         $statusLeads = $leadsByStatus->get($status->id, collect());
 
-        // Agrupa por substatus_id; leads sem substatus vão num bucket separado
         $leadsBySub = $statusLeads->groupBy('lead_substatus_id');
 
         $substatuses = $status->substatus->map(function ($sub) use ($leadsBySub) {
@@ -138,36 +89,15 @@ class KanbanController extends Controller
     return response()->json($result->values());
 }
 
-
-
-
-    /**
-     * Mover lead no Kanban
-     *
-     * Atualiza o status de um lead quando ele é movido no Kanban.
-     *
-     * @urlParam lead int ID do lead. Example: 10
-     *
-     * @bodyParam status_id int required ID do novo status do lead. Example: 3
-     *
-     * @response 200 {
-     *   "success": true
-     * }
-     *
-     * @response 404 {
-     *   "message": "Lead not found."
-     * }
-     */
     public function move(Request $request, Lead $lead, LeadStatusRequirementValidator $validator)
 {
-    // Bloqueia corretor de mover lead alheio (LeadPolicy@move)
+
     $this->authorize('move', $lead);
 
     $data = $request->validate([
         'status_id'         => 'required|exists:lead_status,id',
         'lead_substatus_id' => 'sometimes|nullable|exists:lead_substatus,id',
 
-        // Opcional: valores de custom fields preenchidos junto (pelo modal do frontend)
         'custom_field_values'         => 'sometimes|array',
         'custom_field_values.*.slug'  => 'required_with:custom_field_values|string|exists:custom_fields,slug',
         'custom_field_values.*.value' => 'nullable',
@@ -176,7 +106,6 @@ class KanbanController extends Controller
     $customValues = $data['custom_field_values'] ?? [];
     unset($data['custom_field_values']);
 
-    // Valida campos obrigatórios ANTES de mover
     $validator->validate(
         $lead,
         $data['status_id'] ?? null,
@@ -185,7 +114,6 @@ class KanbanController extends Controller
         $customValues
     );
 
-    // pega última posição da nova coluna
     $lastPosition = Lead::where('status_id', $data['status_id'])
         ->max('position');
 
@@ -198,16 +126,10 @@ class KanbanController extends Controller
         'position'          => ($lastPosition ?? 0) + 1,
     ];
 
-    // Marca quando entrou na etapa (usado pra "ociosidade" no card)
     if ($newStatusId !== $lead->status_id) {
         $updatePayload['status_changed_at'] = now();
     }
 
-    // Deriva temperatura automaticamente baseado no nome do substatus.
-    // Convenção combinada com o cliente (doc):
-    //   Em Atendimento > "Sem Avanço" = frio
-    //                  > "Conversando" = morno
-    //                  > "Qualificado" = quente
     if ($newSubstatusId) {
         $subName = \App\Models\LeadSubstatus::where('id', $newSubstatusId)->value('name');
         $derived = $this->derivedTemperature($subName);
@@ -218,13 +140,10 @@ class KanbanController extends Controller
 
     $lead->update($updatePayload);
 
-    // Salva custom values se vieram
     if (!empty($customValues)) {
         $slugs  = collect($customValues)->pluck('slug')->unique();
         $fields = \App\Models\CustomField::whereIn('slug', $slugs)->get()->keyBy('slug');
 
-        // Snapshot antes do upsert pra conseguir logar diff (ex: CPF
-        // preenchido pelo wizard de campos obrigatórios no drag).
         $oldByFieldId = \App\Models\LeadCustomFieldValue::where('lead_id', $lead->id)
             ->whereIn('custom_field_id', $fields->pluck('id'))
             ->get()
@@ -280,10 +199,6 @@ public function reorder(Request $request)
     return response()->json(['success' => true]);
 }
 
-/**
- * Deriva a temperatura baseado no nome do substatus.
- * Retorna 'frio' | 'morno' | 'quente' ou null quando não aplicável.
- */
 private function derivedTemperature(?string $substatusName): ?string
 {
     if (!$substatusName) return null;

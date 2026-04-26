@@ -20,10 +20,6 @@ public function byDate(Request $request)
     $start = \Carbon\Carbon::parse($request->date)->startOfDay();
     $end   = \Carbon\Carbon::parse($request->date)->endOfDay();
 
-    // Sprint 3.2b — o calendário da agenda deixava de mostrar tarefas
-    // criadas com `due_at` (e sem `starts_at`), porque o filtro era só
-    // por starts_at. Agora pegamos no dia tanto quem tem starts_at quanto
-    // quem tem due_at — igual /by-month já fazia.
     $appointments = Appointment::where(function ($q) use ($start, $end) {
             $q->where(function ($q2) use ($start, $end) {
                 $q2->whereBetween('starts_at', [$start, $end]);
@@ -51,14 +47,10 @@ public function byDate(Request $request)
             'due_at',
             'status',
             'completed_at',
-            'lead_id',  // usado pelo frontend pra navegar pro lead ao clicar
+            'lead_id',
             'user_id',
         ]);
 
-    // Marca cada item como atrasado quando está pendente e a data efetiva
-    // (due_at ou starts_at) já passou. Também expõe `effective_at` pra o
-    // frontend renderizar a hora correta (antes usava só starts_at que
-    // vinha nulo pra tarefas).
     $now = \Carbon\Carbon::now();
     $appointments->transform(function ($app) use ($now) {
         $effective = $app->due_at ?: $app->starts_at;
@@ -72,10 +64,6 @@ public function byDate(Request $request)
     return response()->json($appointments);
 }
 
-/**
- * Resumo quantitativo do dia: totais por tipo, por situação e atrasadas.
- * Usado pelo painel superior da agenda.
- */
 public function summary(Request $request)
 {
     $request->validate([
@@ -87,8 +75,6 @@ public function summary(Request $request)
     $start = \Carbon\Carbon::parse($request->date)->startOfDay();
     $end   = \Carbon\Carbon::parse($request->date)->endOfDay();
 
-    // Sprint 3.2b — mesmo fix do byDate: considerar due_at junto com starts_at
-    // pra tarefas sem starts_at aparecerem nos contadores do dia.
     $query = Appointment::where(function ($q) use ($start, $end) {
             $q->where(function ($q2) use ($start, $end) {
                 $q2->whereBetween('starts_at', [$start, $end]);
@@ -120,8 +106,6 @@ public function summary(Request $request)
     $completed = $list->where('status', 'completed')->count();
     $pending   = $list->where('status', 'pending')->count();
 
-    // Atrasadas globais (todas as datas anteriores ainda pendentes) —
-    // útil pra mostrar o badge persistente no topo da agenda.
     $overdueGlobal = Appointment::where('status', 'pending')
         ->where('starts_at', '<', $now)
         ->when(!in_array($user->role, ['admin','gestor']), function ($q) use ($user) {
@@ -143,9 +127,6 @@ public function summary(Request $request)
     ]);
 }
 
-/**
- * Lista todas as tarefas atrasadas do usuário (status=pending e starts_at passado).
- */
 public function overdueList(Request $request)
 {
     $user = auth()->user();
@@ -184,9 +165,6 @@ public function byMonth(Request $request)
 
     $user = auth()->user();
 
-    // Pega tudo no mês tanto pelo starts_at (visitas/reuniões) quanto pelo
-    // due_at (tasks/follow-ups). Sem essa union, tasks com só due_at nunca
-    // apareciam no calendário, apesar de aparecerem na lista.
     $appointments = Appointment::where(function ($q) use ($request) {
             $q->where(function ($q2) use ($request) {
                 $q2->whereYear('starts_at', $request->year)
@@ -201,9 +179,6 @@ public function byMonth(Request $request)
         })
         ->get(['id','starts_at','due_at','type','status']);
 
-    // Marca itens atrasados pra que o calendário mostre o indicador vermelho.
-    // Considera o prazo efetivo (due_at tem prioridade pra tasks; starts_at
-    // pra visitas).
     $now = \Carbon\Carbon::now();
     $appointments->transform(function ($app) use ($now) {
         $effective = $app->due_at ?: $app->starts_at;
@@ -215,14 +190,7 @@ public function byMonth(Request $request)
 
     return response()->json($appointments);
 }
-    /**
-     * @group Agenda
-     *
-     * Lista os compromissos do corretor logado.
-     * Pode ser usado tanto para lista quanto para calendário.
-     *
-     * @authenticated
-     */
+
 public function reschedule(Request $request, $id)
 {
     $request->validate([
@@ -262,7 +230,6 @@ public function complete($id)
         'status' => 'completed'
     ]);
 
-    
      LeadHistory::create([
     'lead_id' => $id_lead,
     'user_id' => auth()->id(),
@@ -272,7 +239,7 @@ public function complete($id)
 $leadbuscar = \App\Models\Lead::findOrFail($id_lead);
     $leadbuscar->update([
         'status_id' => 2
-    ]);    
+    ]);
 LeadHistory::create([
     'lead_id' => $id_lead,
     'user_id' => auth()->id(),
@@ -303,9 +270,6 @@ LeadHistory::create([
         ]);
     }
 
-
-
-
     public function index(Request $request)
     {
         $user = Auth::user();
@@ -313,12 +277,10 @@ LeadHistory::create([
         $query = Appointment::where('user_id', $user->id)
             ->with('lead:id,name');
 
-        // 📋 Lista por dia
         if ($request->filled('date')) {
             $query->whereDate('starts_at', $request->date);
         }
 
-        // 🗓️ Calendário por intervalo
         if ($request->filled('from') && $request->filled('to')) {
             $query->whereBetween('starts_at', [
                 $request->from,
@@ -326,7 +288,6 @@ LeadHistory::create([
             ]);
         }
 
-        // filtros opcionais
         if ($request->filled('status')) {
             $query->where('status', $request->status);
         }
@@ -340,13 +301,6 @@ LeadHistory::create([
         );
     }
 
-    /**
-     * @group Agenda
-     *
-     * Cria um novo compromisso na agenda do corretor.
-     *
-     * @authenticated
-     */
     public function store(Request $request)
     {
         $data = $request->validate([
@@ -374,16 +328,9 @@ LeadHistory::create([
         return response()->json($appointment, 201);
     }
 
-    /**
-     * @group Agenda
-     *
-     * Atualiza um compromisso da agenda.
-     *
-     * @authenticated
-     */
     public function update(Request $request, Appointment $appointment)
     {
-        // 🔒 segurança: só o dono pode editar
+
         abort_if($appointment->user_id !== Auth::id(), 403);
 
         $data = $request->validate([
@@ -401,16 +348,9 @@ LeadHistory::create([
         return response()->json($appointment);
     }
 
-    /**
-     * @group Agenda
-     *
-     * Remove um compromisso da agenda.
-     *
-     * @authenticated
-     */
     public function destroy(Appointment $appointment)
     {
-        // 🔒 segurança: só o dono pode excluir
+
         abort_if($appointment->user_id !== Auth::id(), 403);
 
         $appointment->delete();
@@ -418,31 +358,6 @@ LeadHistory::create([
         return response()->json(['success' => true]);
     }
 
-    /**
-     * @group Agenda
-     *
-     * Listagem unificada — usada pelo MODO LISTA da página /agenda.php.
-     * Diferente de /tasks (que é específico de type=task), este endpoint
-     * enxerga qualquer tipo de Appointment (task/visit/call/meeting/etc).
-     *
-     * Filtros suportados (todos opcionais):
-     *   filter    = today | overdue | upcoming | done | open
-     *   type      = task | visit | call | meeting | ... (sem valor = todos)
-     *   lead_id   = id do lead
-     *   user_id   = só admin/gestor pode filtrar por outro user
-     *   priority  = low | medium | high
-     *   q         = busca no título
-     *   per_page  = default 50 (máx 200)
-     *
-     * Ordena por COALESCE(due_at, starts_at) — "data efetiva" do item.
-     *
-     * Aplica as MESMAS regras de escopo e privacidade do TaskController:
-     *   - admin/gestor → tudo, MENOS tarefa pessoal de outro corretor
-     *     (scope='private' + sem lead_id + não é dono/criador)
-     *   - corretor    → próprias (user_id/created_by) + scope='company'
-     *
-     * @authenticated
-     */
     public function listUnified(Request $request)
     {
         $user = Auth::user();
@@ -454,7 +369,6 @@ LeadHistory::create([
 
         $this->applyRoleScope($query, $user);
 
-        // ---- filtro por ESTADO (usa COALESCE(due_at, starts_at) como data efetiva) ----
         switch ($request->query('filter')) {
             case 'today':
                 $query->whereNull('completed_at')
@@ -476,15 +390,13 @@ LeadHistory::create([
             case 'open':
                 $query->whereNull('completed_at');
                 break;
-            // sem filter → retorna tudo (respeitando o scope de role)
+
         }
 
-        // ---- tipo (task | visit | call | ... ) ----
         if ($request->filled('type')) {
             $query->where('type', $request->type);
         }
 
-        // ---- lead / user (admin) / prioridade / busca ----
         if ($request->filled('lead_id')) {
             $query->where('lead_id', $request->lead_id);
         }
@@ -501,7 +413,6 @@ LeadHistory::create([
             $query->where('title', 'like', '%' . $request->q . '%');
         }
 
-        // Abertas primeiro (COALESCE data asc); concluídas vão pro fim.
         $query->orderByRaw('completed_at IS NULL DESC')
               ->orderByRaw('COALESCE(due_at, starts_at) ASC')
               ->orderBy('id', 'desc');
@@ -511,26 +422,16 @@ LeadHistory::create([
         return response()->json($query->paginate($perPage));
     }
 
-    /* ==================================================================
-     * HELPERS de permissão — replicados do TaskController pra manter
-     * consistência sem criar dependência cruzada.
-     * ================================================================== */
     private function isManagerUser($user): bool
     {
         $role = strtolower(trim((string) ($user->role ?? '')));
         return in_array($role, ['admin', 'gestor'], true);
     }
 
-    /**
-     * Aplica o scope de papel no query builder. Replica EXATAMENTE a regra
-     * do TaskController::scopeByRole — inclusive a privacidade de manager
-     * sobre tarefa pessoal de corretor (scope=private + sem lead_id + não é
-     * dono/criador).
-     */
     private function applyRoleScope($query, $user): void
     {
         if ($this->isManagerUser($user)) {
-            // Manager vê tudo exceto o "caderninho pessoal" do corretor.
+
             $query->where(function ($q) use ($user) {
                 $q->where('scope', 'company')
                   ->orWhereNotNull('lead_id')

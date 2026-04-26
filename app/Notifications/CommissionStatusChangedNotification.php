@@ -7,44 +7,22 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
-/**
- * Sprint 3.8b — Notifica o corretor quando o status da comissão dele muda.
- *
- * Uma única classe cobre todos os eventos (confirmed/approved/paid/partial/
- * cancelled). O $event determina o copy e o canal — email só pra eventos
- * "importantes" pro corretor (approved e paid), pros demais fica só o
- * database notification pra não virar spam.
- *
- * Não usa ShouldQueue: o insert em `notifications` precisa ser síncrono
- * pra o polling do sininho ver no tick seguinte, mesma lógica do
- * LeadAssignedNotification.
- */
 class CommissionStatusChangedNotification extends Notification
 {
     use Queueable;
 
-    public const EVENT_CONFIRMED = 'confirmed';  // draft → pending
-    public const EVENT_APPROVED  = 'approved';   // pending → approved
-    public const EVENT_PAID      = 'paid';       // → paid
-    public const EVENT_PARTIAL   = 'partial';    // → partial
-    public const EVENT_CANCELLED = 'cancelled';  // → cancelled
+    public const EVENT_CONFIRMED = 'confirmed';
+    public const EVENT_APPROVED  = 'approved';
+    public const EVENT_PAID      = 'paid';
+    public const EVENT_PARTIAL   = 'partial';
+    public const EVENT_CANCELLED = 'cancelled';
 
-    /**
-     * @param  Commission  $commission  comissão impactada (eager load lead p/ UX)
-     * @param  string      $event       um dos EVENT_*
-     * @param  string|null $reason      usado quando event = cancelled
-     */
     public function __construct(
         public Commission $commission,
         public string $event,
         public ?string $reason = null,
     ) {}
 
-    /**
-     * Eventos "importantes" ganham email; demais ficam só no sininho.
-     * Corretor pode receber 3-5 notificações por comissão no ciclo todo —
-     * mandar email em cada uma é demais.
-     */
     public function via($notifiable): array
     {
         $channels = ['database'];
@@ -57,9 +35,6 @@ class CommissionStatusChangedNotification extends Notification
         return $channels;
     }
 
-    /**
-     * Payload salvo em `notifications.data`. Frontend consome via /notifications.
-     */
     public function toDatabase($notifiable): array
     {
         $leadName = $this->commission->lead?->name ?? ('#' . $this->commission->lead_id);
@@ -97,8 +72,6 @@ class CommissionStatusChangedNotification extends Notification
             ->action('Abrir comissões', $commissionsUrl)
             ->salutation('Alpha Domus · AlphaCRM');
     }
-
-    /* ==================== COPY HELPERS ==================== */
 
     private function title(): string
     {

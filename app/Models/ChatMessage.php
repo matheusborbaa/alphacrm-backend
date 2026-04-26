@@ -8,22 +8,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-/**
- * Uma mensagem dentro de uma conversa.
- *
- * body é plain text (o frontend escapa HTML na renderização). Não
- * guardamos HTML renderizado — isso facilita moderação futura e evita
- * classe de XSS.
- *
- * sender_id pode virar null se o usuário for deletado. Frontend mostra
- * "(usuário removido)" nesse caso.
- */
 class ChatMessage extends Model
 {
-    // Sprint 4.6 — SoftDeletes pra preservar a thread quando uma msg
-    // é apagada (frontend renderiza placeholder "Mensagem apagada" no
-    // lugar do body). Listagens normais já filtram via global scope;
-    // pra mostrar a placeholder o controller usa withTrashed().
+
     use HasFactory, SoftDeletes;
 
     protected $fillable = [
@@ -35,17 +22,16 @@ class ChatMessage extends Model
         'is_pinned',
         'pinned_at',
         'pinned_by_user_id',
-        // Sprint 4.6 — quando a msg é editada. Null = nunca editada.
+
         'edited_at',
     ];
 
     protected $casts = [
         'is_pinned' => 'boolean',
         'pinned_at' => 'datetime',
-        // Sprint 3.8c — timestamp exato de leitura por msg (ver migration
-        // add_read_at_to_chat_messages). Null = ainda não foi lida.
+
         'read_at'   => 'datetime',
-        // Sprint 4.6 — última edição. Null = original.
+
         'edited_at' => 'datetime',
     ];
 
@@ -59,29 +45,17 @@ class ChatMessage extends Model
         return $this->belongsTo(User::class, 'sender_id');
     }
 
-    /**
-     * Quem pinou essa mensagem. Nullable quando is_pinned=false ou quando
-     * o user que pinou foi deletado (nullOnDelete).
-     */
     public function pinnedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'pinned_by_user_id');
     }
 
-    /**
-     * Anexos da mensagem (0..N). Carregado sob demanda nos endpoints de
-     * index/store do ChatMessageController.
-     */
     public function attachments(): HasMany
     {
         return $this->hasMany(ChatMessageAttachment::class, 'message_id')
             ->orderBy('id');
     }
 
-    /**
-     * Sprint 4.4 — mensagem-pai citada (quando esta é uma resposta).
-     * Nullable: quando a citada é deletada o FK vai pra null (SET NULL).
-     */
     public function replyTo(): BelongsTo
     {
         return $this->belongsTo(ChatMessage::class, 'reply_to_id');

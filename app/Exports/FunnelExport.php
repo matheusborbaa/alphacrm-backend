@@ -25,7 +25,6 @@ class FunnelExport implements FromArray, WithHeadings, WithTitle
             $rows[] = [$s['name'], $s['order'], $s['count']];
         }
 
-        // linha em branco + resumo
         $rows[] = ['', '', ''];
         $rows[] = ['Total de leads', '', $this->payload['summary']['total_leads'] ?? 0];
         $rows[] = ['Vendidos', '', $this->payload['summary']['leads_sold'] ?? 0];

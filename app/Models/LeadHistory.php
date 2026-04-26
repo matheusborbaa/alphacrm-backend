@@ -23,19 +23,6 @@ class LeadHistory extends Model
         return $this->belongsTo(User::class);
     }
 
-    /**
-     * Cria uma entrada de histórico do tipo field_change a partir de um diff.
-     *
-     * $diffs é um array de ['label' => string, 'from' => mixed, 'to' => mixed].
-     * Usado pelos controllers que salvam campos custom fora do update()
-     * (ex: KanbanController@move e LeadCustomFieldValueController@bulkStore,
-     * acionados pelo wizard RequiredFields quando o usuário preenche um
-     * campo obrigatório no drag entre etapas do kanban).
-     *
-     * Em ambiente CLI (seeders, jobs) $userId pode ser nulo e a entrada
-     * é silenciosamente ignorada — histórico sem autor confunde mais do
-     * que ajuda.
-     */
     public static function logFieldChangeDiffs(Lead $lead, array $diffs, ?int $userId = null): void
     {
         if (empty($diffs)) return;

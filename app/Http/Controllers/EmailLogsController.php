@@ -5,29 +5,9 @@ namespace App\Http\Controllers;
 use App\Models\EmailLog;
 use Illuminate\Http\Request;
 
-/**
- * Histórico de e-mails enviados (ou que tentaram ser enviados) pelo sistema.
- *
- * Alimentado pelo App\Services\EmailLoggerService. Leitura admin-only
- * (segue mesmo padrão do EmailSettingsController).
- *
- * Rotas:
- *   GET /admin/email-logs        paginado com filtros ?type=&status=&search=&page=&per_page=
- *   GET /admin/email-logs/{log}  detalhe (útil pra ver error_message completo)
- */
 class EmailLogsController extends Controller
 {
-    /**
-     * GET /admin/email-logs
-     *
-     * Filtros suportados (todos opcionais):
-     *   - type     : welcome | reset | invite | test | other
-     *   - status   : sent | failed
-     *   - search   : busca em to_email, to_name, subject (LIKE %...%)
-     *   - per_page : default 20, máx 100
-     *
-     * Retorna paginação do Laravel com relacionamentos triggeredBy e relatedUser.
-     */
+
     public function index(Request $request)
     {
         $this->ensureAdmin();
@@ -75,10 +55,6 @@ class EmailLogsController extends Controller
         ]);
     }
 
-    /**
-     * GET /admin/email-logs/{log}
-     * Detalhe completo — inclui error_message integral.
-     */
     public function show(EmailLog $log)
     {
         $this->ensureAdmin();
@@ -94,7 +70,7 @@ class EmailLogsController extends Controller
     private function ensureAdmin(): void
     {
         $u = auth()->user();
-        // Sprint Hierarquia (fix) — usa effectiveRole() (coluna + Spatie).
+
         $role = method_exists($u, 'effectiveRole')
             ? $u->effectiveRole()
             : strtolower(trim((string) ($u->role ?? '')));

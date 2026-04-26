@@ -6,19 +6,6 @@ use App\Models\Empreendimento;
 use App\Services\MediaLibrarySync;
 use Illuminate\Console\Command;
 
-/**
- * Backfill: cria a pasta-espelho na biblioteca pra TODOS os
- * empreendimentos que já existem. Idempotente — pode rodar quantas
- * vezes quiser, só cria o que tá faltando e renomeia o que mudou.
- *
- * Uso:
- *   php artisan media:sync-empreendimentos
- *
- * Quando rodar:
- *   - Primeira vez após subir a feature (cobre empreendimentos legados)
- *   - Depois de qualquer migration/restore de banco
- *   - Se desconfia que o observer falhou em algum momento
- */
 class SyncMediaLibraryEmpreendimentos extends Command
 {
     protected $signature   = 'media:sync-empreendimentos {--dry-run : Mostra o que faria sem gravar}';
@@ -38,7 +25,6 @@ class SyncMediaLibraryEmpreendimentos extends Command
             $this->warn('=== DRY-RUN: nada será gravado ===');
         }
 
-        // Garante a raiz primeiro (sem dry-run pra ela — é cheap)
         if (!$dry) {
             $sync->ensureRootFolder();
         } else {

@@ -8,10 +8,6 @@ use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
-/**
- * CRUD de lead_substatus (etapas detalhadas dentro de um status).
- * Usado pela tela admin de configuração do pipeline.
- */
 class LeadSubstatusController extends Controller
 {
     public function index(Request $request)
@@ -91,7 +87,7 @@ class LeadSubstatusController extends Controller
                     ->ignore($ignoreId),
             ],
             'order'          => 'nullable|integer|min:0',
-            // Hex opcional — se vazio, substatus herda a cor do status pai
+
             'color_hex'      => ['nullable', 'regex:/^#[0-9A-Fa-f]{6}$/'],
         ]);
     }

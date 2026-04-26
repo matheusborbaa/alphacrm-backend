@@ -5,13 +5,6 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-/**
- * Registro de envio de e-mail.
- *
- * Gravado pelo App\Services\EmailLoggerService — cada send (sucesso ou
- * falha) gera uma linha. Usado pela aba "Email → Histórico" em
- * Configurações (admin-only).
- */
 class EmailLog extends Model
 {
     protected $fillable = [

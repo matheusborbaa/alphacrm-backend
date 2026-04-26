@@ -10,10 +10,9 @@ class KanbanController extends Controller
 {
     public function index()
     {
-        // status ordenados
+
         $statuses = LeadStatus::orderBy('order')->get();
 
-        // leads com status
         $leads = Lead::select(
                 'id',
                 'name',

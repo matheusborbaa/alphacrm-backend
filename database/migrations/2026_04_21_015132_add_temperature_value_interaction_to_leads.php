@@ -4,13 +4,6 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-/**
- * Adiciona campos exigidos pela doc funcional:
- *  - temperature         : Quente / Morno / Frio (exibido na listagem e filtro)
- *  - value               : Valor do lead (aparece no card do kanban quando houver)
- *  - last_interaction_at : Última interação (define cor da borda no card: <=5d verde, 5-10d laranja, >10d vermelho)
- *  - status_changed_at   : Quando o lead entrou na etapa atual (tempo de ociosidade no card)
- */
 return new class extends Migration
 {
     public function up(): void

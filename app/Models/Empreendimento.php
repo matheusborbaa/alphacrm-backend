@@ -6,18 +6,16 @@ use Illuminate\Database\Eloquent\Model;
 use App\Models\Lead;
 use App\Models\EmpreendimentoImage;
 
-
-
 class Empreendimento extends Model
 {
    protected $fillable = [
     'name',
     'code',
-    'locationcity',        // coluna real no banco (uma palavra)
+    'locationcity',
     'neighborhood',
-    'tipo',                // tipologia (apartamento/casa/terreno/comercial...)
-    'finalidade',          // residencial/comercial/misto
-    'status',              // status da obra (lancamento/em_obras/pronto_morar/entregue)
+    'tipo',
+    'finalidade',
+    'status',
     'metragem',
     'initial_price',
     'active',
@@ -50,9 +48,9 @@ class Empreendimento extends Model
 {
     return $this->belongsToMany(
         Lead::class,
-        'lead_empreendimentos',   // tabela pivot
-        'empreendimento_id',     // FK do empreendimento na pivot
-        'lead_id'                // FK do lead na pivot
+        'lead_empreendimentos',
+        'empreendimento_id',
+        'lead_id'
     );
 }
     public function images()
@@ -66,13 +64,6 @@ public function fieldValues()
     return $this->hasMany(EmpreendimentoFieldValue::class);
 }
 
-    /**
-     * Sprint Seccionamento — users com permissão "specific" pra esse
-     * empreendimento. Inversa de User::empreendimentos(). Só lista users
-     * com pivot row; users com access_mode='all' NÃO aparecem aqui (eles
-     * não têm registro na pivot — modelo dinâmico). Pra obter TODOS os
-     * users que podem atender, use a query no LeadAssignmentService.
-     */
     public function users()
     {
         return $this->belongsToMany(
@@ -82,7 +73,5 @@ public function fieldValues()
             'user_id'
         )->withTimestamps();
     }
-
-
 
 }

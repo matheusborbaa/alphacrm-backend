@@ -9,18 +9,6 @@ use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
 
-/**
- * Sprint 4.6 — Disparado quando o autor edita uma msg.
- *
- * Diferente do ChatMessageSent, esse só vai pro canal da CONVERSA —
- * não tem fluxo de "user channel" porque editar não gera notificação;
- * é só atualização visual de uma msg que ambos já viram (ou que pelo
- * menos o autor sabe que a outra pessoa pode ver).
- *
- * Payload inclui o body novo (diferente do ChatMessageSent que não
- * inclui body por design): aqui a UI precisa do texto pra atualizar
- * a bolha em tempo real, sem precisar de fetch extra.
- */
 class ChatMessageEdited implements ShouldBroadcastNow
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;

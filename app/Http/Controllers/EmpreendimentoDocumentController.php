@@ -10,15 +10,6 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
-/**
- * Controller dedicado aos 2 slots fixos de documentos do empreendimento:
- *   - book          (Book do Empreendimento)
- *   - price_table   (Tabela de Valores)
- *
- * Armazenados no disk 'public' em empreendimentos/{slug}/docs/. Caminho
- * salvo como "/storage/empreendimentos/.../x.pdf" nas colunas book_path
- * / price_table_path. Só admin/gestor sobe ou remove (rotas protegidas).
- */
 class EmpreendimentoDocumentController extends Controller
 {
     private const ALLOWED_SLOTS = ['book', 'price_table'];
@@ -72,7 +63,6 @@ class EmpreendimentoDocumentController extends Controller
             $pathCol = $slot . '_path';
             $timeCol = $slot . '_uploaded_at';
 
-            // Se já existia um documento no slot, apaga o antigo do disco.
             if ($empreendimento->{$pathCol}) {
                 $oldRel = ltrim(preg_replace('#^/?storage/#', '', (string) $empreendimento->{$pathCol}), '/');
                 if ($oldRel && Storage::disk('public')->exists($oldRel)) {

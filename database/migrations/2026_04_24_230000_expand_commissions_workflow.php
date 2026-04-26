@@ -5,34 +5,11 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
 
-/**
- * Sprint 3.7a — State machine completa de Commission.
- *
- * Fluxo novo (vs. só pending/partial/paid):
- *
- *   draft → pending → approved → paid
- *                                partial → paid
- *       → cancelled (em qualquer ponto antes de paid)
- *
- *   - draft:     criada automaticamente pelo LeadObserver quando lead vira
- *                "Vendido". Não contabiliza ainda. Gestor precisa confirmar.
- *   - pending:   gestor confirmou a venda (gerou a fatura). Aguarda revisão.
- *   - approved:  gestor revisou %/valor finais. Aguarda pagamento.
- *   - partial:   pagamento parcial recebido.
- *   - paid:      quitada.
- *   - cancelled: venda desfeita ou comissão anulada.
- *
- * Campos novos:
- *   - approved_at / approved_by    — quem revisou e quando
- *   - cancelled_at / cancelled_by / cancel_reason
- *   - payment_receipt_path         — comprovante opcional (PDF/imagem)
- *   - notes                        — observações do gestor sobre a comissão
- */
 return new class extends Migration
 {
     public function up(): void
     {
-        // Expande o enum. Comissões antigas (pending/paid) seguem válidas.
+
         if (DB::getDriverName() !== 'sqlite') {
             DB::statement("ALTER TABLE `commissions` MODIFY `status` ENUM('draft', 'pending', 'approved', 'partial', 'paid', 'cancelled') NOT NULL DEFAULT 'draft'");
         }
@@ -66,7 +43,7 @@ return new class extends Migration
         });
 
         if (DB::getDriverName() !== 'sqlite') {
-            // Reverte status "novos" pra pending antes de reduzir o enum.
+
             DB::table('commissions')->whereIn('status', ['draft', 'approved', 'cancelled'])
                 ->update(['status' => 'pending']);
             DB::statement("ALTER TABLE `commissions` MODIFY `status` ENUM('pending', 'partial', 'paid') NOT NULL DEFAULT 'pending'");

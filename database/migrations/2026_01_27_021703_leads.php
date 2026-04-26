@@ -6,9 +6,7 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
+
     public function up(): void
     {
         Schema::create('leads', function (Blueprint $table) {
@@ -22,12 +20,10 @@ return new class extends Migration
     $table->foreignId('status_id')->nullable()->constrained('lead_status');
     $table->foreignId('assigned_user_id')->nullable()->constrained('users');
 
-    // SLA
     $table->timestamp('assigned_at')->nullable();
     $table->timestamp('sla_deadline_at')->nullable();
     $table->enum('sla_status', ['pending', 'met', 'expired'])->default('pending');
 
-    // ManyChat
     $table->string('manychat_id')->nullable();
     $table->string('channel')->nullable();
     $table->string('campaign')->nullable();
@@ -36,11 +32,8 @@ return new class extends Migration
 });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
-        //
+
     }
 };

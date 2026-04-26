@@ -12,63 +12,14 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
-/**
- * Custom fields do tipo `file` — upload, download e remoção.
- *
- * Diferente dos demais tipos (text/number/select/etc), arquivos NÃO podem
- * caber inteiros na coluna `value` (TEXT) — então salvamos o arquivo no
- * disco privado e gravamos só os METADADOS na value:
- *
- *   {
- *     "path":  "lead_custom_files/12/3/1714077600_contrato.pdf",
- *     "name":  "contrato.pdf",          // nome original (mostrado pro user)
- *     "size":  123456,                  // bytes
- *     "mime":  "application/pdf"
- *   }
- *
- * Esse JSON na value:
- *   - mantém compat com tudo que já existe (LeadCustomFieldValue.value
- *     continua sendo string)
- *   - sobrevive ao bulkStore + histórico (que comparam string old vs new)
- *   - permite o `is_filled` continuar funcionando (!empty da string JSON
- *     é true quando há arquivo, falso quando value é null)
- *
- * Storage: disco 'private' → storage/app/private/lead_custom_files/...
- * Mesmo padrão dos LeadDocuments — não acessível via URL pública.
- *
- * Rotas (registradas em routes/api.php):
- *   POST   /leads/{lead}/custom-field-files/{slug}    upload (multipart)
- *   GET    /leads/{lead}/custom-field-files/{slug}    download
- *   DELETE /leads/{lead}/custom-field-files/{slug}    remove
- *
- * Autorização: usa LeadPolicy@update — quem pode editar o lead, pode
- * mexer nos arquivos custom dele.
- */
 class LeadCustomFieldFileController extends Controller
 {
     use AuthorizesRequests;
 
-    /**
-     * Disco onde os arquivos vivem. 'local' = storage/app/ (padrão do
-     * Laravel, mesmo do LeadDocumentController). NÃO é público — não há
-     * URL direta; tudo passa pelo download() que valida o lead+policy.
-     *
-     * Antes tinha 'private' aqui, mas esse disco não existe na config
-     * default — só rolaria se o admin tivesse adicionado em
-     * config/filesystems.php manualmente. Padronizado pra 'local' pra
-     * não exigir setup extra.
-     */
     private const DISK = 'local';
 
-    /** Diretório raiz dentro do disco (storage/app/lead_custom_files/...). */
     private const ROOT = 'lead_custom_files';
 
-    /**
-     * POST /leads/{lead}/custom-field-files/{slug}
-     *
-     * Substitui o arquivo anterior (se houver) — não acumula. Pra histórico
-     * de versões usa a aba Documentos do lead, não custom fields.
-     */
     public function store(Request $request, Lead $lead, string $slug)
     {
         $this->authorize('update', $lead);
@@ -80,13 +31,12 @@ class LeadCustomFieldFileController extends Controller
             'file' => [
                 'required',
                 'file',
-                'max:' . ($config['max_mb'] * 1024), // KB pra Laravel
+                'max:' . ($config['max_mb'] * 1024),
             ],
         ]);
 
         $uploaded = $request->file('file');
 
-        // Valida extensão se admin definiu accept list.
         if (!empty($config['accept'])) {
             $allowed = $this->parseAccept($config['accept']);
             $ext     = strtolower($uploaded->getClientOriginalExtension());
@@ -97,7 +47,6 @@ class LeadCustomFieldFileController extends Controller
             }
         }
 
-        // Apaga arquivo antigo se já existia (substituição).
         $existing = LeadCustomFieldValue::where('lead_id', $lead->id)
             ->where('custom_field_id', $field->id)
             ->first();
@@ -107,7 +56,6 @@ class LeadCustomFieldFileController extends Controller
             Storage::disk(self::DISK)->delete($oldMeta['path']);
         }
 
-        // Salva o novo. Path: lead_custom_files/{lead_id}/{field_id}/{ts}_{name}
         $originalName = $uploaded->getClientOriginalName();
         $safeName     = $this->sanitizeFilename($originalName);
         $storedName   = time() . '_' . Str::random(6) . '_' . $safeName;
@@ -132,7 +80,6 @@ class LeadCustomFieldFileController extends Controller
             ['value'   => $newValue]
         );
 
-        // Histórico: mostra "Anexou contrato.pdf" / "Substituiu X.pdf por Y.pdf"
         $oldName = is_array($oldMeta) ? ($oldMeta['name'] ?? null) : null;
         LeadHistory::logFieldChangeDiffs($lead, [[
             'label' => $field->name ?: $field->slug,
@@ -147,12 +94,6 @@ class LeadCustomFieldFileController extends Controller
         ], 201);
     }
 
-    /**
-     * GET /leads/{lead}/custom-field-files/{slug}
-     *
-     * Devolve o arquivo com nome original. Querystring ?inline=1 troca
-     * Content-Disposition pra inline (preview no navegador).
-     */
     public function download(Request $request, Lead $lead, string $slug): StreamedResponse
     {
         $this->authorize('update', $lead);
@@ -190,12 +131,6 @@ class LeadCustomFieldFileController extends Controller
         ]);
     }
 
-    /**
-     * DELETE /leads/{lead}/custom-field-files/{slug}
-     *
-     * Apaga arquivo do disco e zera a value (deixa o registro pra
-     * preservar o vínculo lead↔field; bulkStore pode reusar depois).
-     */
     public function destroy(Request $request, Lead $lead, string $slug)
     {
         $this->authorize('update', $lead);
@@ -230,14 +165,6 @@ class LeadCustomFieldFileController extends Controller
         return response()->json(['removed' => true]);
     }
 
-    /* ====================================================================
-     * HELPERS
-     * ==================================================================== */
-
-    /**
-     * Resolve slug → CustomField, garantindo que é do tipo 'file' e ativo.
-     * Erros viram 404/422 amigáveis.
-     */
     private function resolveFileField(string $slug): CustomField
     {
         $field = CustomField::where('slug', $slug)->first();
@@ -253,9 +180,6 @@ class LeadCustomFieldFileController extends Controller
         return $field;
     }
 
-    /**
-     * Lê config de upload do customField (max_mb, accept). Aplica defaults.
-     */
     private function fileConfig(CustomField $field): array
     {
         $opts = is_array($field->options) ? $field->options : [];
@@ -267,9 +191,6 @@ class LeadCustomFieldFileController extends Controller
         ];
     }
 
-    /**
-     * "PDF, .jpg, .png " → ['.pdf', '.jpg', '.png']
-     */
     private function parseAccept(string $accept): array
     {
         $parts = preg_split('/[,;\s]+/', strtolower(trim($accept)));
@@ -282,10 +203,6 @@ class LeadCustomFieldFileController extends Controller
         return array_values(array_unique($clean));
     }
 
-    /**
-     * Remove caracteres problemáticos do nome de arquivo. Preserva extensão.
-     * Ex.: "Contrato Final (2024).pdf" → "Contrato_Final_2024.pdf"
-     */
     private function sanitizeFilename(string $name): string
     {
         $info = pathinfo($name);

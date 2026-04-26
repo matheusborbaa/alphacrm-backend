@@ -7,21 +7,6 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
-/**
- * Notifica admins quando um lead chega no sistema mas não pôde ser
- * atribuído automaticamente porque nenhum corretor está 'disponivel'.
- *
- * O lead fica sem assigned_user_id até:
- *   (a) um corretor voltar pra 'disponivel' -> tryClaimNextOrphan() pega;
- *   (b) um admin atribuir manualmente pela UI.
- *
- * Canais: database (popup no CRM) + email (pra admin que não tá com o CRM aberto).
- *
- * NÃO implementa ShouldQueue de propósito (ver comentário em
- * LeadAssignedNotification): precisamos que o insert em `notifications`
- * seja síncrono, senão o frontend nunca enxerga a notificação sem um
- * `php artisan queue:work` ativo.
- */
 class OrphanLeadNotification extends Notification
 {
     use Queueable;

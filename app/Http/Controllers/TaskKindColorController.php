@@ -7,24 +7,14 @@ use App\Models\TaskKindColor;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
-/**
- * Sprint 3.6a — Cores customizáveis por tipo de tarefa.
- *
- * GET  /task-kind-colors          — qualquer autenticado (pra renderizar
- *                                   os badges coloridos no feed de tarefas)
- * PUT  /task-kind-colors/{kind}   — só admin, valida kind na whitelist
- *                                   Appointment::KINDS e color_hex no
- *                                   formato #RRGGBB.
- */
 class TaskKindColorController extends Controller
 {
-    /** Retorna o mapa completo {kind: color_hex}. */
+
     public function index()
     {
         return response()->json(TaskKindColor::asMap());
     }
 
-    /** Atualiza a cor de um kind. Admin-only. */
     public function update(Request $request, string $kind)
     {
         if (($request->user()?->role) !== 'admin') {
@@ -36,7 +26,7 @@ class TaskKindColorController extends Controller
         }
 
         $data = $request->validate([
-            // Aceita tanto #abc quanto #aabbcc; backend normaliza pro formato longo.
+
             'color_hex' => ['required', 'string', 'regex:/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/'],
         ], [
             'color_hex.regex' => 'Cor deve estar no formato #RRGGBB (ex.: #ef4444).',
@@ -57,15 +47,11 @@ class TaskKindColorController extends Controller
         ]);
     }
 
-    /**
-     * Normaliza "#abc" → "#aabbcc" e força lowercase pro storage ser
-     * comparável sem case-sensitivity boba ("#FF0000" == "#ff0000").
-     */
     private function normalizeHex(string $hex): string
     {
         $hex = strtolower($hex);
         if (strlen($hex) === 4) {
-            // #abc → #aabbcc
+
             $hex = '#' . $hex[1] . $hex[1] . $hex[2] . $hex[2] . $hex[3] . $hex[3];
         }
         return $hex;

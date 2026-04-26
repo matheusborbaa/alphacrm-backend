@@ -9,51 +9,20 @@ use App\Services\HostingerService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
-/**
- * Vigilância de capacidade do servidor. Roda no scheduler (routes/console.php)
- * e notifica todos os admins quando disco ou RAM cruza o threshold.
- *
- * Executável (manual):
- *   php artisan servidor:check-capacity
- *   php artisan servidor:check-capacity --force  (ignora dedup — útil pra testar)
- *
- * Thresholds fixos: 75% pra disco, 90% pra RAM. Monitoramento sempre
- * ativo — sem toggle na UI. Valores ajustados com base no uso esperado
- * do CRM (disco cresce lento → margem pra agendar upgrade; RAM satura
- * rápido → limiar mais apertado, pra antecipar swap/OOM).
- *
- * Dedup (pra não spammar o admin a cada hora que o problema persiste):
- *   - Se estava abaixo do threshold e agora passou → notifica imediatamente.
- *   - Se já estava acima e continua acima → notifica de novo só depois de 24h
- *     desde o último alerta daquela métrica. Isso dá 1 lembrete por dia
- *     enquanto o problema não for resolvido.
- *   - Se desceu de volta pra abaixo do threshold → reseta o state, próximo
- *     cruzamento dispara de novo imediatamente.
- *
- * Estado persistido em Setting porque é mais robusto que Cache (sobrevive
- * a redis flush e deploy). As chaves de estado começam com underscore pra
- * diferenciar de settings editáveis pelo admin (`_server_alert_state_*`).
- */
 class CheckServerCapacity extends Command
 {
     protected $signature = 'servidor:check-capacity {--force : Ignora dedup e força notificação se em crítico}';
     protected $description = 'Verifica uso de disco/RAM do servidor e notifica admins quando ultrapassa o threshold.';
 
-    // Intervalo mínimo entre alertas da MESMA métrica quando em estado crítico
-    // sustentado. 24h = 86400s. Em segundos pra usar direto em timestamps.
     private const REMINDER_INTERVAL_SECONDS = 86_400;
 
-    // Thresholds fixos. Se no futuro precisar reconfigurar, trocar aqui
-    // e publicar — não há UI pra editar por decisão de produto.
     private const DISK_THRESHOLD_PERCENT = 75.0;
     private const RAM_THRESHOLD_PERCENT  = 90.0;
 
     public function handle(HostingerService $hostinger): int
     {
         if (!$hostinger->isConfigured()) {
-            // Sem API key/VPS ID não dá pra checar. Não é erro — é config
-            // incompleta. Log pra dev saber, return success pra scheduler
-            // não ficar reportando falha todo tick.
+
             Log::info('CheckServerCapacity: monitoramento não configurado, pulando.');
             $this->warn('Monitoramento do servidor não configurado. Pulando.');
             return self::SUCCESS;
@@ -61,9 +30,7 @@ class CheckServerCapacity extends Command
 
         $status = $hostinger->getStatus();
         if (!($status['ok'] ?? false)) {
-            // Não foi possível obter métricas — NÃO notifica (seria falso
-            // positivo). Só loga. O cache de status por 60s garante que
-            // se a API cair a gente não entope o log.
+
             Log::warning('CheckServerCapacity: falha ao obter status do servidor', [
                 'reason' => $status['reason'] ?? null,
             ]);
@@ -94,16 +61,6 @@ class CheckServerCapacity extends Command
         return self::SUCCESS;
     }
 
-    /**
-     * Avalia uma métrica (disk/ram) e dispara notificação se necessário.
-     *
-     * Fluxo decisório:
-     *   1. percent < threshold → limpa estado crítico (se havia) e retorna.
-     *   2. percent ≥ threshold + estado anterior era OK → notifica AGORA.
-     *   3. percent ≥ threshold + já em crítico há < 24h → não faz nada (dedup).
-     *   4. percent ≥ threshold + já em crítico há ≥ 24h → re-notifica (lembrete).
-     *   5. --force ignora (2-4) e sempre notifica se está em crítico.
-     */
     private function evaluateMetric(
         string $metric,
         float  $percent,
@@ -112,13 +69,12 @@ class CheckServerCapacity extends Command
         int    $totalBytes,
         bool   $force,
     ): void {
-        $stateKey      = "_server_alert_state_{$metric}";       // 'ok' | 'critical'
-        $lastNotifyKey = "_server_alert_last_notify_{$metric}"; // unix timestamp
+        $stateKey      = "_server_alert_state_{$metric}";
+        $lastNotifyKey = "_server_alert_last_notify_{$metric}";
 
         $prevState  = Setting::get($stateKey, 'ok');
         $lastNotify = (int) Setting::get($lastNotifyKey, 0);
 
-        // Caso 1: abaixo do threshold → tudo OK, reseta se antes estava crítico.
         if ($percent < $threshold) {
             if ($prevState !== 'ok') {
                 Setting::set($stateKey, 'ok');
@@ -135,11 +91,10 @@ class CheckServerCapacity extends Command
             return;
         }
 
-        // Daqui pra baixo: percent >= threshold (estado crítico).
         $now = time();
         $shouldNotify = $force
-            || $prevState === 'ok'                                     // transição OK → crítico
-            || ($now - $lastNotify) >= self::REMINDER_INTERVAL_SECONDS; // lembrete 24h
+            || $prevState === 'ok'
+            || ($now - $lastNotify) >= self::REMINDER_INTERVAL_SECONDS;
 
         if (!$shouldNotify) {
             $this->warn(sprintf(
@@ -167,11 +122,7 @@ class CheckServerCapacity extends Command
         );
 
         foreach ($admins as $admin) {
-            // notify() é síncrono — o insert em `notifications` acontece
-            // aqui mesmo, garantido pro polling do frontend. Canal único
-            // (database) por decisão do produto: alerta de capacidade
-            // vive só dentro do CRM (sino + banner na home do admin),
-            // sem envio de e-mail.
+
             $admin->notify($notification);
         }
 
@@ -184,7 +135,6 @@ class CheckServerCapacity extends Command
         ));
     }
 
-    /** "2h atrás", "35m atrás" — só pro output do console, não é crítico. */
     private function humanAgo(int $seconds): string
     {
         if ($seconds < 60)   return $seconds . 's';

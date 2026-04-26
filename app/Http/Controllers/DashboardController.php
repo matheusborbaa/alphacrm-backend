@@ -8,41 +8,9 @@ use Illuminate\Http\Request;
 use App\Models\LeadStatus;
 use Carbon\Carbon;
 
-
-/**
- * @group Dashboard
- *
- * Métricas gerais do CRM.
- * Usado na Home do gestor para acompanhamento de leads e performance.
- */
 class DashboardController extends Controller
 {
-    /**
-     * Métricas do dashboard
-     *
-     * Retorna indicadores principais do CRM:
-     * - Leads de hoje
-     * - Leads sem contato
-     * - SLA expirado
-     * - Leads atendidos
-     * - Performance dos corretores
-     *
-     * @response 200 {
-     *   "leads_today": 25,
-     *   "pending_contact": 8,
-     *   "sla_expired": 3,
-     *   "sla_met": 14,
-     *   "by_corretor": [
-     *     {
-     *       "id": 2,
-     *       "name": "Corretor A",
-     *       "leads_total": 12,
-     *       "sla_met": 9,
-     *       "sla_expired": 1
-     *     }
-     *   ]
-     * }
-     */
+
     public function index(Request $request)
     {
         return response()->json([
@@ -68,57 +36,13 @@ class DashboardController extends Controller
         ]);
     }
 
-        /**
-     * Funil de vendas
-     *
-     * Retorna os dados do funil de vendas por etapa,
-     * com base no status do lead.
-     * Usado na Home para exibição do funil visual.
-     *
-     * @queryParam month string Mês no formato YYYY-MM. Example: 2026-01
-     *
-     * @response 200 [
-     *   {
-     *     "id": 1,
-     *     "name": "Leads cadastrados",
-     *     "total": 230
-     *   },
-     *   {
-     *     "id": 2,
-     *     "name": "Em atendimento",
-     *     "total": 180
-     *   },
-     *   {
-     *     "id": 3,
-     *     "name": "Agendado",
-     *     "total": 50
-     *   },
-     *   {
-     *     "id": 4,
-     *     "name": "Visitou",
-     *     "total": 42
-     *   },
-     *   {
-     *     "id": 5,
-     *     "name": "Em negociação",
-     *     "total": 18
-     *   },
-     *   {
-     *     "id": 6,
-     *     "name": "Vendido",
-     *     "total": 4
-     *   }
-     * ]
-     */
     public function funnel(Request $request)
 {
-    // Sprint 3.5a — resolve period via helper central (diario/semanal/mensal
-    // OU range custom from/to). Antes o switch inline ignorava from/to.
+
     [$start, $end] = \App\Support\DashboardPeriod::resolve($request);
 
     $funnel = LeadStatus::withCount([
-        // Conta leads criados no período. Se o filtro for range custom,
-        // aqui que ele de fato reduz os números do funil.
+
         'leads as total' => function ($q) use ($start, $end) {
             $q->whereBetween('created_at', [$start, $end]);
         },
@@ -131,10 +55,9 @@ class DashboardController extends Controller
 
 public function resumo(Request $request)
 {
-    // Sprint 3.5a — idem funnel(): range custom via DashboardPeriod.
+
     [$start, $end] = \App\Support\DashboardPeriod::resolve($request);
 
-    // ⚠️ AJUSTA AQUI COM SEUS IDS REAIS
     $STATUS_VENDIDO = 6;
     $STATUS_DESCARTADO = 99;
 
@@ -154,20 +77,17 @@ public function resumo(Request $request)
         ->whereNotIn('status_id', [$STATUS_DESCARTADO])
         ->count();
 
-    // 💰 VGV (se tiver campo valor)
   $vgv = Lead::where('status_id', $STATUS_VENDIDO)
-    ->whereBetween('leads.updated_at', [$start, $end]) // 👈 AQUI
+    ->whereBetween('leads.updated_at', [$start, $end])
     ->join('empreendimentos', 'leads.empreendimento_id', '=', 'empreendimentos.id')
     ->sum('empreendimentos.average_sale_value');
 
-    // 📈 métricas
     $conversao = $total > 0 ? ($vendas / $total) * 100 : 0;
 
     $aproveitamento = $total > 0
         ? (($total - $descartados) / $total) * 100
         : 0;
 
-    // ⏱️ tempo médio
     $tempoMedio = Lead::where('status_id', $STATUS_VENDIDO)
         ->whereBetween('created_at', [$start, $end])
         ->selectRaw('AVG(TIMESTAMPDIFF(DAY, created_at, updated_at)) as media')
@@ -184,6 +104,5 @@ public function resumo(Request $request)
         'tempo_medio' => round($tempoMedio ?? 0),
     ]);
 }
-
 
 }

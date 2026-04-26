@@ -4,17 +4,6 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-/**
- * Sprint 3.7a — Commission ampliada com state machine.
- *
- * Estados:
- *   draft     → criada automaticamente ao marcar lead como "Vendido"
- *   pending   → gestor confirmou a venda (fatura gerada, registra entrada)
- *   approved  → gestor revisou %/valor e aprovou
- *   partial   → pagamento parcial recebido
- *   paid      → quitada (registra saída pro financeiro)
- *   cancelled → venda desfeita / comissão anulada
- */
 class Commission extends Model
 {
     public const STATUS_DRAFT     = 'draft';
@@ -61,10 +50,6 @@ class Commission extends Model
         'commission_percentage' => 'decimal:2',
     ];
 
-    /* ------------------------------------------------------------------
-     * RELATIONS
-     * ------------------------------------------------------------------ */
-
     public function corretor()
     {
         return $this->belongsTo(User::class, 'user_id');
@@ -90,15 +75,6 @@ class Commission extends Model
         return $this->hasMany(CommissionComment::class)->orderBy('created_at');
     }
 
-    /* ------------------------------------------------------------------
-     * HELPERS
-     * ------------------------------------------------------------------ */
-
-    /**
-     * Indica se a comissão já saiu do rascunho e deve aparecer nos
-     * relatórios/financeiro. Comissão `draft` existe mas é "provisória"
-     * enquanto o gestor não confirmou.
-     */
     public function isLive(): bool
     {
         return !in_array($this->status, [
@@ -107,12 +83,6 @@ class Commission extends Model
         ], true);
     }
 
-    /**
-     * Valor ainda a receber. Diferente de `commission_value` quando a
-     * comissão foi pagamento parcial. Hoje o schema não guarda "quanto
-     * foi pago" — a gente guarda direto o novo commission_value ao parciar.
-     * Aqui só valida contra status.
-     */
     public function outstandingValue(): float
     {
         if (in_array($this->status, [self::STATUS_PAID, self::STATUS_CANCELLED], true)) {

@@ -7,24 +7,9 @@ use App\Models\TaskComment;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
-/**
- * TaskCommentController — CRUD leve de comentários em tarefas.
- *
- * Regras:
- *   - LEITURA / CRIAÇÃO: quem pode VER a tarefa pode comentar.
- *     Ou seja: admin/gestor (sempre), dono (user_id=self), e qualquer
- *     corretor se scope='company'.
- *   - EXCLUSÃO: só o AUTOR do comentário ou admin/gestor.
- *
- * Nota: reaproveitamos a lógica de "quem vê a tarefa" inline pra
- * evitar depender de Policy; o projeto segue esse padrão nos demais
- * controllers de tarefa (ver TaskController).
- */
 class TaskCommentController extends Controller
 {
-    /* ==================================================================
-     * INDEX — lista comentários da tarefa
-     * ================================================================== */
+
     public function index(int $taskId)
     {
         $task = Appointment::tasks()->findOrFail($taskId);
@@ -35,9 +20,6 @@ class TaskCommentController extends Controller
         );
     }
 
-    /* ==================================================================
-     * STORE — novo comentário
-     * ================================================================== */
     public function store(Request $request, int $taskId)
     {
         $task = Appointment::tasks()->findOrFail($taskId);
@@ -59,9 +41,6 @@ class TaskCommentController extends Controller
         );
     }
 
-    /* ==================================================================
-     * DESTROY — remove o comentário
-     * ================================================================== */
     public function destroy(int $taskId, int $commentId)
     {
         $comment = TaskComment::where('task_id', $taskId)
@@ -85,12 +64,6 @@ class TaskCommentController extends Controller
         return response()->json(['success' => true]);
     }
 
-    /* ==================================================================
-     * HELPER — autoriza visualização da tarefa (mesma regra de leitura
-     * usada no TaskController), INCLUINDO a regra de privacidade:
-     * manager NÃO acessa tarefa pessoal (scope='private' sem lead) de
-     * outro corretor — é a "lista do caderninho" dele pra se organizar.
-     * ================================================================== */
     private function authorizeView(Appointment $task): void
     {
         $user = Auth::user();

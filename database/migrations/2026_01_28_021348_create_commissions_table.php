@@ -6,9 +6,7 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
+
     public function up(): void
     {
 
@@ -16,7 +14,7 @@ return new class extends Migration
     $table->id();
 
     $table->unsignedBigInteger('lead_id');
-    $table->unsignedBigInteger('user_id'); // corretor
+    $table->unsignedBigInteger('user_id');
     $table->decimal('sale_value', 12, 2);
     $table->decimal('commission_percentage', 5, 2);
     $table->decimal('commission_value', 12, 2);
@@ -31,9 +29,6 @@ return new class extends Migration
 });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::dropIfExists('commissions');

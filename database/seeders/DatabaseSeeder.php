@@ -10,14 +10,9 @@ class DatabaseSeeder extends Seeder
 {
     use WithoutModelEvents;
 
-    /**
-     * Seed the application's database.
-     */
     public function run(): void
     {
-        // User::factory(10)->create();
 
-        // Ordem importa: status precisa existir antes dos substatus
         $this->call([
             LeadStatusSeeder::class,
             LeadSubstatusSeeder::class,

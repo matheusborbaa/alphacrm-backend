@@ -6,13 +6,6 @@ use Illuminate\Database\Seeder;
 use App\Models\LeadStatus;
 use App\Models\LeadSubstatus;
 
-/**
- * Popula os substatus do funil (lead_substatus).
- * Depende de LeadStatusSeeder ter rodado antes (pra os status existirem).
- *
- * Idempotente: usa updateOrCreate por (lead_status_id, name).
- * Busca o status pai pelo NOME — assim não depende do ID físico na tabela.
- */
 class LeadSubstatusSeeder extends Seeder
 {
     public function run(): void
@@ -64,7 +57,7 @@ class LeadSubstatusSeeder extends Seeder
                 'Entrega de Chaves',
                 'Distrato',
             ],
-            // "Lead Descartado" não tem substatus — fica vazio de propósito.
+
         ];
 
         foreach ($pipeline as $statusName => $subs) {

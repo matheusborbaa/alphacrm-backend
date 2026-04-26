@@ -15,42 +15,9 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
-/**
- * Listagem unificada de TODOS os arquivos uploadados pro servidor.
- *
- * Agrega 7 fontes (visão completa do que ocupa disco):
- *
- *   1. lead_documents              — aba Documentos do lead
- *   2. lead_custom_field_values    — custom fields tipo 'file' (JSON em value)
- *   3. chat_message_attachments    — anexos do chat (só 'upload' diretos —
- *                                    references a lead_document já contam na fonte 1)
- *   4. empreendimentos.book_path / price_table_path — 2 slots fixos por empreendimento
- *   5. empreendimento_images       — galeria (imagens/plantas/decorado)
- *   6. users.avatar                — fotos de perfil dos corretores
- *   7. commissions.payment_receipt_path — comprovantes de pagamento de comissão
- *
- * Painel mostra também TOTAL OCUPADO no servidor (sem filtro), pra o
- * admin saber quanto disk está em uso global, mesmo navegando filtros.
- *
- * Uso típico: admin acompanha o que está consumindo disco e identifica
- * arquivos órfãos. Cada item retorna `download_url` que aponta pro
- * endpoint nativo da fonte (LeadDocumentController, etc) — assim o
- * controle de auditoria/log de download continua centralizado lá.
- *
- * Permissão: admin-only (settings.system).
- */
 class AdminFilesController extends Controller
 {
-    /**
-     * GET /admin/files
-     *
-     * Query:
-     *   q          — string busca (matches em original_name)
-     *   type       — filtro origem: lead_document | custom_field | chat | empreendimento | empreendimento_image
-     *   from / to  — range de data ISO (filtra created_at)
-     *   page       — paginação (default 1)
-     *   per_page   — itens por página (default 30, max 100)
-     */
+
     public function index(Request $request)
     {
         $q       = trim((string) $request->input('q', ''));
@@ -60,19 +27,6 @@ class AdminFilesController extends Controller
         $page    = max(1, (int) $request->input('page', 1));
         $perPage = min(100, max(10, (int) $request->input('per_page', 30)));
 
-        // Coleta TUDO em memória (cada fonte vira Collection unificada).
-        // Pra catálogos pequenos/médios isso é O(N) aceitável; se algum
-        // dia escalar pra 100k+ arquivos, migrar pra view materializada
-        // ou índice consolidado.
-        //
-        // Coletamos sempre TODAS as fontes pra o cálculo do total global
-        // ser preciso (independente do filtro). O filtro de tipo apenas
-        // remove do conjunto pós-coleta.
-        //
-        // Cada fonte é envolvida num try/catch pra isolar falhas — se um
-        // model/relação tiver problema (ex: relacionamento errado, coluna
-        // renomeada), só aquela fonte fica vazia, o resto continua. Sem
-        // isso, um erro em qualquer uma quebra a página inteira com 500.
         $allRows = collect()
             ->merge($this->safeCollect('lead_documents',        fn () => $this->fromLeadDocuments()))
             ->merge($this->safeCollect('custom_field_files',    fn () => $this->fromCustomFieldFiles()))
@@ -82,13 +36,9 @@ class AdminFilesController extends Controller
             ->merge($this->safeCollect('user_avatars',          fn () => $this->fromUserAvatars()))
             ->merge($this->safeCollect('commission_receipts',   fn () => $this->fromCommissionReceipts()));
 
-        // Total GLOBAL — sempre o tudo no servidor, sem filtro.
-        // Útil pro admin saber o disk total ocupado mesmo enquanto navega
-        // filtros específicos.
         $globalCount = $allRows->count();
         $globalBytes = $allRows->sum(fn ($r) => (int) ($r['size_bytes'] ?? 0));
 
-        // Aplica filtros (type primeiro pra reduzir o set)
         $rows = $allRows;
         if ($type) {
             $rows = $rows->filter(fn ($r) => $r['type'] === $type);
@@ -107,15 +57,11 @@ class AdminFilesController extends Controller
             $rows = $rows->filter(fn ($r) => $r['created_at'] && $r['created_at'] <= $to);
         }
 
-        // Total de bytes (sobre o conjunto FILTRADO — útil pro user ver
-        // quanto a pesquisa atual ocupa em disco).
         $totalBytes = $rows->sum(fn ($r) => (int) ($r['size_bytes'] ?? 0));
         $totalCount = $rows->count();
 
-        // Ordena mais novos primeiro
         $rows = $rows->sortByDesc('created_at')->values();
 
-        // Pagina manualmente
         $sliced = $rows->forPage($page, $perPage)->values();
 
         return response()->json([
@@ -130,19 +76,11 @@ class AdminFilesController extends Controller
         ]);
     }
 
-    /* ====================================================================
-     * FONTES — cada método retorna Collection de items normalizados:
-     *   {
-     *     id, type, original_name, size_bytes, mime_type, created_at,
-     *     uploader, context_label, context_url, download_url
-     *   }
-     * ==================================================================== */
-
     private function fromLeadDocuments(): Collection
     {
         return LeadDocument::query()
             ->with(['lead:id,name', 'uploader:id,name'])
-            ->whereNull('deleted_at')         // ignora lixeira
+            ->whereNull('deleted_at')
             ->orderByDesc('created_at')
             ->get()
             ->map(fn ($d) => [
@@ -162,8 +100,7 @@ class AdminFilesController extends Controller
 
     private function fromCustomFieldFiles(): Collection
     {
-        // Custom fields type=file têm value = JSON {path,name,size,mime}.
-        // Pegamos apenas registros com value não-null e custom_field do tipo 'file'.
+
         return LeadCustomFieldValue::query()
             ->with(['lead:id,name', 'customField:id,name,slug,type'])
             ->whereHas('customField', fn ($q) => $q->where('type', 'file'))
@@ -194,10 +131,7 @@ class AdminFilesController extends Controller
 
     private function fromChatAttachments(): Collection
     {
-        // Anexos diretos do chat (uploads). type='upload' = arquivo
-        // próprio do chat. Outros tipos ('lead_document', 'lead',
-        // 'empreendimento') são REFERÊNCIAS a entidades já listadas
-        // pelas outras fontes — não duplicar.
+
         return ChatMessageAttachment::query()
             ->with(['uploader:id,name'])
             ->where('type', 'upload')
@@ -282,14 +216,10 @@ class AdminFilesController extends Controller
                 'uploader'       => null,
                 'context_label'  => 'Empreendimento: ' . ($i->empreendimento?->name ?? '#' . $i->empreendimento_id),
                 'context_url'    => $i->empreendimento_id ? "empreendimento.html?id={$i->empreendimento_id}" : null,
-                'download_url'   => null,   // imagens são servidas via static URL pública (não passa por endpoint)
+                'download_url'   => null,
             ]);
     }
 
-    /**
-     * Fotos de perfil dos usuários (users.avatar). Servidas via URL pública
-     * — não há endpoint dedicado de download (browser pode abrir direto).
-     */
     private function fromUserAvatars(): Collection
     {
         return User::query()
@@ -312,13 +242,6 @@ class AdminFilesController extends Controller
             ]);
     }
 
-    /**
-     * Comprovantes de pagamento de comissão (commissions.payment_receipt_path).
-     * Upload feito pelo financeiro/admin ao confirmar pagamento.
-     *
-     * Cuidado com relacionamentos: Commission tem `corretor()` (não `user()`)
-     * e `lead()`. Usar nomes errados quebra com 500.
-     */
     private function fromCommissionReceipts(): Collection
     {
         return Commission::query()
@@ -341,16 +264,6 @@ class AdminFilesController extends Controller
             ]);
     }
 
-    /* ====================================================================
-     * HELPERS
-     * ==================================================================== */
-
-    /**
-     * Wrapper defensivo pra cada fonte. Se a fonte explode (model
-     * mudou de nome, coluna não existe, relação errada, etc), loga e
-     * devolve coleção vazia — assim a página inteira não quebra com
-     * 500 por causa de UMA fonte com problema.
-     */
     private function safeCollect(string $sourceName, callable $fn): Collection
     {
         try {
@@ -361,11 +274,6 @@ class AdminFilesController extends Controller
         }
     }
 
-    /**
-     * Tenta descobrir tamanho do arquivo no disco. Como cada fonte
-     * pode usar disco diferente (private/local vs. public), tentamos
-     * em ordem. Devolve 0 se não achar — não rompe a listagem.
-     */
     private function fileSize(?string $path): int
     {
         if (!$path) return 0;
@@ -375,7 +283,7 @@ class AdminFilesController extends Controller
                     return (int) Storage::disk($disk)->size($path);
                 }
             } catch (\Throwable $e) {
-                // disco não configurado, ignora
+
             }
         }
         return 0;

@@ -6,41 +6,12 @@ use App\Models\Lead;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
 
-/**
- * @group Relatórios de Marketing
- *
- * Indicadores de performance por origem e campanha.
- * Usado para análise de ROI e eficiência de marketing.
- */
 class MarketingReportController extends Controller
 {
-    /**
-     * Relatório de marketing
-     *
-     * Retorna métricas agrupadas por origem e campanha:
-     * - Total de leads
-     * - Leads atendidos
-     * - Leads convertidos (vendas)
-     *
-     * @queryParam start_date date Data inicial (YYYY-MM-DD). Example: 2026-01-01
-     * @queryParam end_date date Data final (YYYY-MM-DD). Example: 2026-01-31
-     * @queryParam source string Filtrar por origem do lead. Example: ManyChat
-     * @queryParam campaign string Filtrar por campanha. Example: Lançamento Alpha
-     *
-     * @response 200 [
-     *   {
-     *     "source": "ManyChat",
-     *     "campaign": "Lançamento Alpha",
-     *     "leads_total": 230,
-     *     "leads_attended": 180,
-     *     "sales": 4,
-     *     "conversion_rate": 1.74
-     *   }
-     * ]
-     */
+
     public function index(Request $request)
     {
-        // 📅 Período
+
         $start = $request->filled('start_date')
             ? Carbon::parse($request->start_date)->startOfDay()
             : now()->startOfMonth();
@@ -51,7 +22,6 @@ class MarketingReportController extends Controller
 
         $query = Lead::whereBetween('created_at', [$start, $end]);
 
-        // 🎯 Filtros
         if ($request->filled('source')) {
             $query->whereHas('source', function ($q) use ($request) {
                 $q->where('name', $request->source);

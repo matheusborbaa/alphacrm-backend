@@ -5,22 +5,6 @@ namespace App\Console\Commands;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
 
-/**
- * Dumpa o JSON bruto dos endpoints da Hostinger pra um único VPS —
- * `/virtual-machines/{id}` e `/virtual-machines/{id}/metrics`. Usado
- * exclusivamente pra debugar o shape real da resposta quando a aba
- * "Sistema" do CRM mostra métricas zeradas (caso em que os nomes dos
- * campos na resposta não batem com o que o HostingerService espera).
- *
- * Executável:
- *   php artisan hostinger:dump-vps                # usa HOSTINGER_VPS_ID do .env
- *   php artisan hostinger:dump-vps 12345          # passa ID manualmente
- *   php artisan hostinger:dump-vps --minutes=60   # janela maior de métricas
- *
- * Faz HTTP direto (fora do HostingerService) de propósito: a ideia é ver
- * exatamente o que o provedor devolve, sem passar por nossa
- * normalização. Com esse JSON na mão a gente alinha o buildPayload().
- */
 class DumpHostingerVps extends Command
 {
     protected $signature = 'hostinger:dump-vps
@@ -46,8 +30,6 @@ class DumpHostingerVps extends Command
             return self::FAILURE;
         }
 
-        // Dump 1: info da VM. É o que o HostingerService consome em
-        // buildPayload() pra montar status/plan/ram_total/disk_total.
         $this->info("=== GET /api/vps/v1/virtual-machines/{$vpsId} ===");
         $vm = Http::withToken($apiKey)
             ->acceptJson()
@@ -58,9 +40,6 @@ class DumpHostingerVps extends Command
 
         $this->newLine();
 
-        // Dump 2: métricas. Aqui é onde estão os nomes de série (cpu_usage,
-        // ram_usage, disk_usage, etc.) que podem variar por plano. Se isso
-        // vier vazio ou com outros nomes, conseguimos ver aqui.
         $this->info("=== GET /api/vps/v1/virtual-machines/{$vpsId}/metrics (últimos {$minutes}min) ===");
         $metrics = Http::withToken($apiKey)
             ->acceptJson()
@@ -73,17 +52,13 @@ class DumpHostingerVps extends Command
         $body = $metrics->json();
         $this->line(json_encode($body, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
-        // Resumo útil: pra cada métrica imprime a unit declarada pela
-        // Hostinger e a quantidade de pontos na série. Isso casa com o
-        // shape oficial {metric: {unit: "...", usage: {ts: val, ...}}} e
-        // é o que o HostingerService consome pra popular a aba Sistema.
         $this->newLine();
         $this->info('=== Chaves de métricas detectadas ===');
         $data = is_array($body) ? ($body['data'] ?? $body) : [];
         if (is_array($data) && $data) {
             foreach ($data as $metric => $block) {
                 if (is_array($block) && isset($block['unit'], $block['usage']) && is_array($block['usage'])) {
-                    // Shape oficial: {unit, usage: {ts: val}}
+
                     $pts  = count($block['usage']);
                     $unit = (string) $block['unit'];
                     $last = $pts > 0 ? end($block['usage']) : null;

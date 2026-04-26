@@ -7,18 +7,6 @@ use App\Models\MediaFolder;
 use App\Services\MediaLibrarySync;
 use Illuminate\Console\Command;
 
-/**
- * Backfill: cria pasta-espelho na biblioteca pra leads que já existiam
- * antes da feature subir. Idempotente — pode rodar quantas vezes quiser,
- * só cria o que tá faltando e renomeia o que mudou.
- *
- * Uso:
- *   php artisan media:sync-leads
- *   php artisan media:sync-leads --dry-run
- *
- * IMPORTANTE: bases com muitos leads (10k+) podem demorar. Roda em chunks
- * de 200 pra não estourar memória.
- */
 class SyncMediaLibraryLeads extends Command
 {
     protected $signature   = 'media:sync-leads {--dry-run : Mostra o que faria sem gravar}';

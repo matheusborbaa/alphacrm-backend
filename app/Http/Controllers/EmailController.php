@@ -20,8 +20,7 @@ class EmailController extends Controller
             $request->domain,
             $request->password
         );
-        
-        // tratamento simples de erro
+
         if (isset($result['cpanelresult']['error'])) {
             return response()->json([
                 'success' => false,

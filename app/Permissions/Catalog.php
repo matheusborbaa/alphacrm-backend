@@ -2,43 +2,13 @@
 
 namespace App\Permissions;
 
-/**
- * Sprint Cargos — Catálogo central de permissions.
- * ---------------------------------------------------------------
- * Single source of truth — UI lê pra montar a matriz de checkboxes
- * agrupada, e o seeder usa pra sincronizar a tabela `permissions` do
- * Spatie. Adicionou permission nova? Adiciona aqui, roda o seeder.
- *
- * Estrutura: array de grupos. Cada grupo tem:
- *   - key:        slug do grupo (usado em IDs HTML, comparações)
- *   - label:      título visível em PT-BR
- *   - icon:       ícone Lucide pra listar na UI (opcional)
- *   - sensitive:  true se o grupo lida com dados sensíveis (badge ⚠
- *                 destaca pra admin pensar 2x antes de marcar)
- *   - permissions: lista de permissions, cada uma com:
- *      - name:     o slug usado no Spatie (ex: 'leads.view_all')
- *      - label:    texto visível
- *      - hint:     descrição opcional (tooltip)
- *
- * Convenção de nomes:
- *   - {modulo}.view_all   → vê tudo (independente de hierarquia)
- *   - {modulo}.view_team  → vê só do time (subordinados via parent_user_id)
- *   - {modulo}.view_own   → vê só os próprios
- *   - {modulo}.create / .update / .delete → CRUD básico
- *   - {modulo}.{acao_sensivel} → ações específicas (approve, pay, etc)
- */
 class Catalog
 {
-    /**
-     * Retorna o catálogo completo agrupado.
-     * @return array<int, array{key:string,label:string,icon?:string,sensitive?:bool,permissions:array<int, array{name:string,label:string,hint?:string}>}>
-     */
+
     public static function groups(): array
     {
         return [
-            // ============================================================
-            // LEADS — fluxo principal do CRM
-            // ============================================================
+
             [
                 'key'   => 'leads',
                 'label' => 'Leads',
@@ -57,9 +27,6 @@ class Catalog
                 ],
             ],
 
-            // ============================================================
-            // LEAD — ABA DOCUMENTOS (sensível)
-            // ============================================================
             [
                 'key'       => 'lead_documents',
                 'label'     => 'Lead — Aba Documentos',
@@ -73,9 +40,6 @@ class Catalog
                 ],
             ],
 
-            // ============================================================
-            // LEAD — ABA FINANCEIRO (sensível)
-            // ============================================================
             [
                 'key'       => 'lead_financial',
                 'label'     => 'Lead — Aba Financeiro',
@@ -87,9 +51,6 @@ class Catalog
                 ],
             ],
 
-            // ============================================================
-            // PII / Privacidade (sensível)
-            // ============================================================
             [
                 'key'       => 'pii',
                 'label'     => 'Dados Sensíveis (PII)',
@@ -101,9 +62,6 @@ class Catalog
                 ],
             ],
 
-            // ============================================================
-            // EMPREENDIMENTOS
-            // ============================================================
             [
                 'key'   => 'empreendimentos',
                 'label' => 'Empreendimentos',
@@ -117,9 +75,6 @@ class Catalog
                 ],
             ],
 
-            // ============================================================
-            // KANBAN
-            // ============================================================
             [
                 'key'   => 'kanban',
                 'label' => 'Kanban',
@@ -131,9 +86,6 @@ class Catalog
                 ],
             ],
 
-            // ============================================================
-            // AGENDA / TAREFAS
-            // ============================================================
             [
                 'key'   => 'agenda',
                 'label' => 'Agenda & Tarefas',
@@ -149,9 +101,6 @@ class Catalog
                 ],
             ],
 
-            // ============================================================
-            // COMISSÕES
-            // ============================================================
             [
                 'key'   => 'commissions',
                 'label' => 'Comissões',
@@ -167,9 +116,6 @@ class Catalog
                 ],
             ],
 
-            // ============================================================
-            // RELATÓRIOS
-            // ============================================================
             [
                 'key'   => 'reports',
                 'label' => 'Relatórios',
@@ -181,9 +127,6 @@ class Catalog
                 ],
             ],
 
-            // ============================================================
-            // CHAT
-            // ============================================================
             [
                 'key'   => 'chat',
                 'label' => 'Chat Interno',
@@ -194,9 +137,6 @@ class Catalog
                 ],
             ],
 
-            // ============================================================
-            // USUÁRIOS / CORRETORES
-            // ============================================================
             [
                 'key'   => 'users',
                 'label' => 'Usuários',
@@ -210,9 +150,6 @@ class Catalog
                 ],
             ],
 
-            // ============================================================
-            // CONFIGURAÇÕES (admin-only por convenção)
-            // ============================================================
             [
                 'key'   => 'settings',
                 'label' => 'Configurações',
@@ -230,9 +167,6 @@ class Catalog
                 ],
             ],
 
-            // ============================================================
-            // NOTIFICAÇÕES
-            // ============================================================
             [
                 'key'   => 'notifications',
                 'label' => 'Notificações',
@@ -242,15 +176,6 @@ class Catalog
                 ],
             ],
 
-            // ============================================================
-            // BIBLIOTECA DE MÍDIA — Área do Corretor → aba Biblioteca
-            // ============================================================
-            // Materiais institucionais (PDFs, fotos, vídeos, contratos
-            // modelo) organizados em pastas hierárquicas. Corretor baixa
-            // pra usar em redes sociais / divulgação. Admin/gestor sobe
-            // e organiza. Permissions granulares pra que clientes
-            // diferentes possam ter políticas distintas (ex: gestor sobe
-            // mas só admin apaga).
             [
                 'key'   => 'media',
                 'label' => 'Biblioteca de Mídia',
@@ -265,11 +190,6 @@ class Catalog
         ];
     }
 
-    /**
-     * Lista flat de TODAS as permission names — usado pelo seeder pra
-     * popular a tabela permissions do Spatie.
-     * @return list<string>
-     */
     public static function allNames(): array
     {
         $names = [];
@@ -281,20 +201,6 @@ class Catalog
         return $names;
     }
 
-    /**
-     * Sprint Cargos — Permissions LEGADAS que ainda são checadas em
-     * vários pontos do backend (middlewares `can:status_required_fields.manage`,
-     * policies, etc.) mas que não estão no novo catálogo agrupado.
-     *
-     * Mantemos elas vivas pra não quebrar nada (admin precisa continuar
-     * podendo abrir tela de Etapas, criar usuário, etc.). Não aparecem
-     * na UI de Cargos — o admin lida com as equivalentes novas
-     * (settings.pipeline, users.create, etc.) e o seeder anexa estas
-     * automaticamente baseado no type do cargo.
-     *
-     * Cleanup futuro: refatorar os 37 pontos do backend pra checar as
-     * novas, e remover deste array.
-     */
     public static function legacyAll(): array
     {
         return [
@@ -319,16 +225,10 @@ class Catalog
         ];
     }
 
-    /**
-     * Mapeamento de quais legacy permissions cada type system recebe.
-     * Espelha o comportamento ANTERIOR pra preservar compat.
-     * @return array<string, list<string>>
-     */
     public static function legacyDefaultsByType(): array
     {
         $all = self::legacyAll();
 
-        // Corretor antigo só tinha permissions próprias
         $corretor = [
             'leads.view_own',
             'leads.update_own',
@@ -338,7 +238,6 @@ class Catalog
             'dashboard.view',
         ];
 
-        // Gestor = tudo das legacy EXCETO users.assign_admin (que não está nas legacy mesmo)
         $gestor = $all;
 
         return [
@@ -348,29 +247,15 @@ class Catalog
         ];
     }
 
-    /**
-     * Permissions atribuídas por type (admin/gestor/corretor) — define
-     * o "kit de fábrica" dos cargos system. Usado pelo seeder.
-     *
-     * Filosofia:
-     *   - admin    → tudo
-     *   - gestor   → tudo do admin EXCETO settings.* sensíveis,
-     *                users.assign_admin, chat.audit_mode, pii.export_unmasked
-     *   - corretor → só os próprios + ver empreendimentos + chat
-     *
-     * @return array<string, list<string>>  type => permission names
-     */
     public static function defaultsByType(): array
     {
         $all = self::allNames();
 
-        // Permissions que o gestor NÃO recebe por padrão (sensíveis ou
-        // exclusivas de admin). Pode ser ajustado via UI depois.
         $gestorBlocked = [
             'users.assign_admin',
             'chat.audit_mode',
             'pii.export_unmasked',
-            // Configurações são todas admin-only por padrão
+
             'settings.general',
             'settings.email',
             'settings.pipeline',
@@ -402,9 +287,7 @@ class Catalog
             'reports.productivity',
             'chat.use',
             'notifications.view',
-            // Biblioteca de Mídia: corretor lê+baixa material institucional.
-            // Upload/criar pasta/apagar são de gestor/admin (já incluídos
-            // nos defaults dos respectivos types via $all e $gestor).
+
             'media.view',
         ];
 

@@ -6,30 +6,15 @@ use App\Models\Commission;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
 
-/**
- * @group Relatórios de Comissões
- *
- * Relatórios financeiros de comissões por corretor.
- * Usado por gestores e administradores.
- */
 class CommissionReportController extends Controller
 {
-// CommissionReportController.php
 
-/**
- * @group Comissões
- *
- * Retorna as comissões do corretor logado
- *
- * @authenticated
- */
 public function myCommissions(Request $request)
 {
     $user = $request->user();
 
     $query = \App\Models\Commission::with('lead');
 
-    // Se NÃO for admin nem gestor → filtra pelo próprio usuário
     if (!in_array($user->role, ['admin', 'gestor'])) {
         $query->where('user_id', $user->id);
     }
@@ -39,31 +24,6 @@ public function myCommissions(Request $request)
     );
 }
 
-
-    /**
-     * Relatório de comissões
-     *
-     * Retorna comissões por período e corretor,
-     * incluindo valores totais e status de pagamento.
-     *
-     * @queryParam start_date date Data inicial (YYYY-MM-DD). Example: 2026-01-01
-     * @queryParam end_date date Data final (YYYY-MM-DD). Example: 2026-01-31
-     * @queryParam user_id int Filtrar por corretor. Example: 5
-     * @queryParam status string Filtrar por status (pending, paid). Example: pending
-     *
-     * @response 200 {
-     *   "total_sales": 1200000,
-     *   "total_commissions": 60000,
-     *   "items": [
-     *     {
-     *       "corretor": "João Silva",
-     *       "sale_value": 300000,
-     *       "commission_value": 15000,
-     *       "status": "pending"
-     *     }
-     *   ]
-     * }
-     */
     public function index(Request $request)
     {
         $start = $request->filled('start_date')

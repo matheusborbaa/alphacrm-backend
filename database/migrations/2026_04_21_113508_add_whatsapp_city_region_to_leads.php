@@ -4,12 +4,6 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-/**
- * Doc funcional — Informações pessoais do lead:
- *   - WhatsApp (número válido, separado de telefone)
- *   - Cidade de Interesse
- *   - Região de Interesse
- */
 return new class extends Migration
 {
     public function up(): void

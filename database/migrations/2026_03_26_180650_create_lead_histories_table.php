@@ -6,9 +6,7 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
+
     public function up(): void
     {
         Schema::create('lead_histories', function (Blueprint $table) {
@@ -18,7 +16,7 @@ return new class extends Migration
 
     $table->foreignId('user_id')->nullable()->constrained()->nullOnDelete();
 
-    $table->string('type'); // status_change, note, assign, etc
+    $table->string('type');
 
     $table->string('from')->nullable();
     $table->string('to')->nullable();
@@ -29,9 +27,6 @@ return new class extends Migration
 });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::dropIfExists('lead_histories');

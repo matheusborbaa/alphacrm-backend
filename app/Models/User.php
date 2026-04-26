@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -14,14 +13,9 @@ use Spatie\Permission\Traits\HasRoles;
 
 class User extends Authenticatable
 {
-    /** @use HasFactory<\Database\Factories\UserFactory> */
+
     use HasFactory, Notifiable, HasApiTokens, HasRoles;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var list<string>
-     */
     protected $fillable = [
         'name',
         'email',
@@ -30,40 +24,22 @@ class User extends Authenticatable
         'active',
         'last_lead_assigned_at',
         'avatar',
-        // Usado pelo rodízio: UserController@updateStatus grava aqui via
-        // $user->update(['status_corretor' => ...]). Sem estar em $fillable,
-        // Mass Assignment Protection do Eloquent IGNORA SILENCIOSAMENTE e
-        // o DB nunca persiste a mudança (bug: select do corretor "voltava"
-        // pra offline sempre que a home recarregava).
+
         'status_corretor',
-        // Cooldown pós-lead: timestamp até quando o corretor fica "travado"
-        // sem receber novos leads, mesmo que esteja 'disponivel'.
+
         'cooldown_until',
-        // Sprint 3.8d — preferência pessoal de confirmação de leitura no chat.
-        // true (default) = usuário expõe quando leu e vê quando foram lidas as dele.
-        // false = desliga em AMBAS as direções (reciprocidade).
+
         'chat_read_receipts',
-        // Sprint Seccionamento — hierarquia gestor→corretor + permissão por empreendimento.
+
         'parent_user_id',
-        'empreendimento_access_mode', // 'all' | 'specific'
+        'empreendimento_access_mode',
     ];
 
-   
-    /**
-     * The attributes that should be hidden for serialization.
-     *
-     * @var list<string>
-     */
     protected $hidden = [
         'password',
         'remember_token',
     ];
 
-    /**
-     * Get the attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
     protected function casts(): array
     {
         return [
@@ -74,8 +50,7 @@ class User extends Authenticatable
             'chat_read_receipts' => 'boolean',
         ];
     }
-	
-	
+
 	 public function leads(): HasMany
     {
         return $this->hasMany(Lead::class, 'assigned_user_id');
@@ -86,32 +61,16 @@ class User extends Authenticatable
         return $this->hasMany(LeadInteraction::class);
     }
 
-    /* ================================================================
-     * Sprint Seccionamento — hierarquia + permissão por empreendimento
-     * ================================================================ */
-
-    /**
-     * Gestor responsável (corretor → gestor). Null pra admin/gestor "raiz".
-     */
     public function manager(): BelongsTo
     {
         return $this->belongsTo(User::class, 'parent_user_id');
     }
 
-    /**
-     * Subordinados diretos (gestor → corretores). Inverso de manager().
-     */
     public function subordinates(): HasMany
     {
         return $this->hasMany(User::class, 'parent_user_id');
     }
 
-    /**
-     * Empreendimentos que o user pode atender. Lê do pivot user_empreendimentos.
-     * NOTA: essa relação só é "verdadeira" quando empreendimento_access_mode='specific'.
-     * Quando ='all', o user vê TODOS os empreendimentos (a relation não é
-     * consultada). Use `accessibleEmpreendimentoIds()` pra abstrair isso.
-     */
     public function empreendimentos(): BelongsToMany
     {
         return $this->belongsToMany(
@@ -122,48 +81,24 @@ class User extends Authenticatable
         )->withTimestamps();
     }
 
-    /**
-     * Sprint Hierarquia (fix) — devolve o role "efetivo" considerando AMBAS
-     * as fontes (coluna users.role + Spatie roles), de forma PERMISSIVA na
-     * promoção: se QUALQUER uma das duas disser 'admin', tratamos como
-     * admin. Isso evita inconsistência entre lugares que olhavam só coluna
-     * (SettingController::ensureAdmin, que continua olhando só coluna pra
-     * manter compat) e lugares que olhavam só Spatie.
-     *
-     * Ordem de retorno (alta→baixa autoridade): admin > gestor > corretor.
-     * Se nenhuma das duas tiver nada, retorna string vazia.
-     *
-     * Histórico do bug: a versão anterior usava Spatie como fonte primária
-     * e coluna como fallback. Em contas onde a coluna estava 'admin' mas o
-     * Spatie tinha outra role atribuída por engano (ou vice-versa), o
-     * usuário era rebaixado e perdia visibilidade no dropdown de corretor
-     * + bloqueio em /settings, /lead-status etc.
-     */
     public function effectiveRole(): string
     {
         $col = strtolower(trim((string) ($this->role ?? '')));
         $spatieName = '';
         $spatieType = '';
         try {
-            $first = $this->roles()->first();   // Role|null
+            $first = $this->roles()->first();
             if ($first) {
                 $spatieName = strtolower(trim((string) $first->name));
-                // Sprint Cargos — cargos custom têm `type` (admin/gestor/corretor)
-                // que define a "personalidade base". Se a role do user tem type,
-                // usamos ele direto. A coluna só existe depois da migration
-                // 2026_04_25_140000 — protege com isset/property_exists.
+
                 if (isset($first->type) && $first->type) {
                     $spatieType = strtolower(trim((string) $first->type));
                 }
             }
         } catch (\Throwable $e) {
-            // Tabela Spatie indisponível ou relação não carregável — segue
-            // só com a coluna.
+
         }
 
-        // Prioridade: type da role custom (Spatie) → coluna → name da role
-        // que bate com um type base. Promoção permissiva: se QUALQUER fonte
-        // disser admin/gestor/corretor, vale.
         foreach (['admin', 'gestor', 'corretor'] as $candidate) {
             if ($spatieType === $candidate
                 || $col === $candidate
@@ -174,17 +109,6 @@ class User extends Authenticatable
         return $col ?: $spatieName;
     }
 
-    /**
-     * Decide se este user pode atender o empreendimento $id.
-     *
-     * Regras (em ordem):
-     *   1. Admin → sempre true (full access, sem filtro)
-     *   2. access_mode='all' → true (modelo dinâmico — pega tudo)
-     *   3. access_mode='specific' → checa se id está na pivot
-     *
-     * Usado no LeadAssignmentService pra filtrar pool de candidatos e
-     * em validações de UI (esconder ações em empreendimentos sem acesso).
-     */
     public function canAccessEmpreendimento(int $empreendimentoId): bool
     {
         if ($this->effectiveRole() === 'admin') {
@@ -198,17 +122,6 @@ class User extends Authenticatable
             ->exists();
     }
 
-    /**
-     * Lista de empreendimento_ids que este user pode atender. Retorna
-     * collection de IDs (int) pra usar em whereIn() em queries.
-     *
-     * Quando admin ou access_mode='all' → retorna TODOS os ids da tabela
-     * empreendimentos (resolução dinâmica do "todos").
-     * Quando access_mode='specific' → retorna só os do pivot.
-     *
-     * Cuidado: pode ficar pesado em bases com muitos empreendimentos.
-     * Pra checar UM empreendimento específico, prefira canAccessEmpreendimento().
-     */
     public function accessibleEmpreendimentoIds(): \Illuminate\Support\Collection
     {
         if ($this->effectiveRole() === 'admin' || $this->empreendimento_access_mode === 'all') {
@@ -217,18 +130,6 @@ class User extends Authenticatable
         return $this->empreendimentos()->pluck('empreendimentos.id');
     }
 
-    /**
-     * Sprint Hierarquia — IDs de TODOS os usuários "abaixo" deste user na
-     * árvore de subordinação (parent_user_id), incluindo ele mesmo.
-     *
-     * Usado pra escopar filtros (financeiro, relatórios, etc) onde gestor
-     * só pode ver dados de quem responde a ele.
-     *
-     * Algoritmo BFS limitado a 10 níveis pra evitar loop em árvore mal
-     * configurada (apesar do anti-ciclo no UserController, defesa extra).
-     *
-     * Retorna array de int (não collection) pra usar direto em whereIn.
-     */
     public function descendantIds(int $maxDepth = 10): array
     {
         $ids = [$this->id];
@@ -241,7 +142,6 @@ class User extends Authenticatable
                 ->pluck('id')
                 ->all();
 
-            // Filtra fora ids já visitados (proteção anti-ciclo)
             $next = array_values(array_diff($next, $ids));
             if (empty($next)) break;
 
@@ -253,18 +153,6 @@ class User extends Authenticatable
         return $ids;
     }
 
-    /**
-     * Sprint Hierarquia — IDs dos users que ESTE user pode "ver" em filtros
-     * que exigem hierarquia (ex: dropdown de corretor no financeiro).
-     *
-     *   - Admin → retorna null (caller deve interpretar como "sem filtro,
-     *     vê todos"). Retornar todos os IDs seria caro e desnecessário.
-     *   - Gestor → self + descendentes recursivos.
-     *   - Corretor → só ele mesmo (não vê outros — esses dropdowns nem
-     *     deveriam estar visíveis pra ele, mas defesa em profundidade).
-     *
-     * @return array<int>|null  null = sem filtro (admin)
-     */
     public function accessibleUserIds(): ?array
     {
         $role = $this->effectiveRole();

@@ -5,12 +5,6 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-/**
- * Registro de "até onde o usuário leu essa conversa".
- *
- * Um row por par (user_id, conversation_id). Manipulado via upsert
- * (updateOrCreate) — nunca criado manualmente sem atualizar.
- */
 class ChatConversationRead extends Model
 {
     protected $table = 'chat_conversation_reads';

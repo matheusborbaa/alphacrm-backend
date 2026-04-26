@@ -8,11 +8,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 class BasicAuthDocs
 {
-    /**
-     * Handle an incoming request.
-     *
-     * @param  \Closure(\Illuminate\Http\Request): (\Symfony\Component\HttpFoundation\Response)  $next
-     */
+
     public function handle($request, Closure $next)
     {
         $user = env('DOCS_USER');

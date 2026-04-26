@@ -10,32 +10,9 @@ use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\ValidationException;
 
-/**
- * Dada uma descrição "quero anexar X do tipo Y", resolve a fonte, valida
- * permissões/existência e retorna o snapshot JSON pra persistir.
- *
- * Importante: o snapshot é IMUTÁVEL depois de salvo. Se um lead for renomeado
- * amanhã, o anexo continua mostrando o nome de quando foi enviado. Isso é
- * feature (histórico de chat auditável), não bug.
- *
- * Permissões: por enquanto tolerante — qualquer corretor logado pode anexar
- * qualquer lead/empreendimento/doc. Se virar necessidade (ex: corretor não
- * ver leads de outros), adiciona check aqui.
- */
 class ChatAttachmentResolver
 {
-    /**
-     * Resolve um item "não-upload" (referência). Retorna array com:
-     *   - attachable_id
-     *   - snapshot (dados pro card)
-     *   - type (o mesmo recebido, pra conveniência)
-     *
-     * $peerUser é o OUTRO participante da conversa — usado pra validar
-     * ACL conjunto no caso de lead e lead_document (ambos precisam
-     * enxergar o recurso). Se null, só valida o sender.
-     *
-     * Lança ValidationException se o recurso não existir ou a ACL falhar.
-     */
+
     public function resolveReference(string $type, int $id, ?User $peerUser = null): array
     {
         return match ($type) {
@@ -57,10 +34,6 @@ class ChatAttachmentResolver
             ]);
         }
 
-        // ACL conjunto: ambos sender e peer precisam enxergar o lead.
-        // Sender: re-checa (mesmo que o frontend já filtre, nunca confiar em cliente).
-        // Peer: evita enviar lead pra colega que não tem acesso — vaza PII.
-        /** @var \App\Models\User|null $me */
         $me = Auth::user();
         if ($me && !$lead->isVisibleTo($me)) {
             throw ValidationException::withMessages([
@@ -119,17 +92,15 @@ class ChatAttachmentResolver
                 'attachments' => "Documento #{$id} não encontrado.",
             ]);
         }
-        // Não permitimos anexar doc já soft-deletado (pending purge).
+
         if ($doc->deleted_at !== null) {
             throw ValidationException::withMessages([
                 'attachments' => "Documento #{$id} foi removido e não pode ser anexado.",
             ]);
         }
 
-        // ACL conjunto: acesso ao documento segue o acesso ao lead dono.
-        // Se o corretor-peer não vê o lead, também não deve receber o doc.
         if ($doc->lead) {
-            /** @var \App\Models\User|null $me */
+
             $me = Auth::user();
             if ($me && !$doc->lead->isVisibleTo($me)) {
                 throw ValidationException::withMessages([

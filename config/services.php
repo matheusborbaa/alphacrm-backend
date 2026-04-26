@@ -2,18 +2,6 @@
 
 return [
 
-    /*
-    |--------------------------------------------------------------------------
-    | Third Party Services
-    |--------------------------------------------------------------------------
-    |
-    | This file is for storing the credentials for third party services such
-    | as Mailgun, Postmark, AWS and more. This file provides the de facto
-    | location for this type of information, allowing packages to have
-    | a conventional file to locate the various service credentials.
-    |
-    */
-
     'postmark' => [
         'key' => env('POSTMARK_API_KEY'),
     ],
@@ -40,25 +28,12 @@ return [
     'user' => env('WHM_USER'),
 ],
 
-    // Hostinger API — usado pela aba Configurações → Sistema pra exibir
-    // status/RAM/disco/CPU do VPS onde o CRM está hospedado. Docs:
-    // https://developers.hostinger.com. O token é gerado no painel
-    // Hostinger (Conta → API), é um Bearer com escopo de VPS ou global.
-    // HOSTINGER_VPS_ID é o numérico de cada VM, visível na URL do painel
-    // ao abrir o VPS.
     'hostinger' => [
         'api_base' => env('HOSTINGER_API_BASE', 'https://developers.hostinger.com'),
         'api_key'  => env('HOSTINGER_API_KEY'),
         'vps_id'   => env('HOSTINGER_VPS_ID'),
     ],
 
-    // Quota fictícia de disco do AlphaCRM (aba Sistema + alertas).
-    // O VPS é compartilhado com outros sistemas. Em vez de exibir o disco
-    // total bruto do provedor, usamos essa quota como denominador na aba
-    // Sistema ("5,6 GB de 30 GB"). O numerador continua sendo o USED real
-    // da Hostinger — só mudamos o total pra ficar uma referência honesta
-    // pro admin sem precisar auditar o que não é do CRM. 75% dessa quota
-    // dispara o alerta de capacidade de disco.
     'alphacrm_disk' => [
         'quota_gb' => (int) env('ALPHACRM_DISK_QUOTA_GB', 30),
     ],

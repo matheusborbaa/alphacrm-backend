@@ -7,28 +7,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
-/**
- * @group Admin - Campos Personalizados (Empreendimento)
- *
- * Endpoints para gerenciar os campos personalizados dos empreendimentos.
- * Apenas usuários administradores podem acessar.
- *
- * Tipos suportados:
- *   - counter  (contador ±, inteiro não-negativo — ex: quartos, banheiros, vagas)
- *   - boolean  (toggle sim/não — ex: piscina, academia, pet friendly)
- *   - text     (texto livre — ex: observações, endereço)
- *   - number   (número livre — ex: área em m², andar, condomínio)
- *   - select   (dropdown com options fixas — ex: orientação solar)
- *
- * @authenticated
- */
 class EmpreendimentoFieldDefinitionController extends Controller
 {
-    /**
-     * Lista fechada de tipos permitidos. Mantida em um só lugar pra evitar
-     * desvio entre controller/model/frontend. Se precisar adicionar novo tipo,
-     * atualiza aqui + no CFG do configuracoes.js + em empreendimentoCadastro.js.
-     */
+
     private const ALLOWED_TYPES = ['counter', 'boolean', 'text', 'number', 'select'];
 
     public function index()
@@ -44,12 +25,10 @@ class EmpreendimentoFieldDefinitionController extends Controller
         $data = $this->validatePayload($request);
         $data = $this->normalize($data);
 
-        // Gera slug automaticamente se não foi enviado.
         if (empty($data['slug'])) {
             $data['slug'] = $this->generateUniqueSlug($data['name']);
         }
 
-        // Garante unicidade (redundância com o rule, mas útil pro autogerado).
         $data['slug'] = $this->ensureUniqueSlug($data['slug']);
 
         return EmpreendimentoFieldDefinition::create($data);
@@ -67,9 +46,6 @@ class EmpreendimentoFieldDefinitionController extends Controller
         $data = $this->validatePayload($request, $empreendimentoFieldDefinition->id);
         $data = $this->normalize($data);
 
-        // Não permitimos mudar o slug depois de criado — valores já podem estar
-        // vinculados e frontends podem referenciar pelo slug. Se precisar
-        // renomear, deleta e cria de novo.
         unset($data['slug']);
 
         $empreendimentoFieldDefinition->update($data);
@@ -83,10 +59,6 @@ class EmpreendimentoFieldDefinitionController extends Controller
 
         return response()->json(['success' => true]);
     }
-
-    /* ==============================================================
-     * HELPERS
-     * ============================================================== */
 
     private function validatePayload(Request $request, ?int $ignoreId = null): array
     {
@@ -110,15 +82,9 @@ class EmpreendimentoFieldDefinitionController extends Controller
         ]);
     }
 
-    /**
-     * Normaliza o payload de entrada:
-     *  - `options` só faz sentido pra type=select; em outros tipos, força null.
-     *  - Remove opções vazias do array.
-     *  - Defaults explícitos pra booleans/order.
-     */
     private function normalize(array $data): array
     {
-        // options só pra select; limpa opções vazias.
+
         if (($data['type'] ?? null) === 'select') {
             $opts = array_values(array_filter(
                 array_map(fn($o) => trim((string) $o), $data['options'] ?? []),

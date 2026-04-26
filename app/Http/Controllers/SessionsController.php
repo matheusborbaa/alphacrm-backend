@@ -4,16 +4,9 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 
-/**
- * Sprint 3.0a — Tela "Meus dispositivos".
- *
- * O user lista os próprios tokens Sanctum e pode revogar qualquer um
- * (ex.: esqueci logado no PC da imobiliária, encerrar de casa).
- * Nunca expõe tokens de outros users.
- */
 class SessionsController extends Controller
 {
-    /** GET /auth/sessions — lista sessões ativas do user autenticado. */
+
     public function index(Request $request)
     {
         $user    = $request->user();
@@ -37,12 +30,6 @@ class SessionsController extends Controller
         return response()->json($sessions);
     }
 
-    /**
-     * DELETE /auth/sessions/{token} — revoga um token do próprio user.
-     * Devolve 403 se tentar apagar token de outro user. Se o user quiser
-     * encerrar a sessão atual, usa /auth/logout — aqui o caso principal
-     * é revogar uma sessão remota.
-     */
     public function destroy(Request $request, int $token)
     {
         $user = $request->user();

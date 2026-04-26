@@ -4,16 +4,6 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-/**
- * Sprint 2.8d — documentos fixos no empreendimento.
- *
- * 2 slots fixos (por simplicidade; se crescer a demanda depois a gente
- * migra pra uma tabela empreendimento_documents com tipo):
- *   - book_path         : PDF do "Book do Empreendimento"
- *   - price_table_path  : PDF da "Tabela de Valores"
- *
- * Os timestamps permitem mostrar "Atualizado há X dias" nos cards.
- */
 return new class extends Migration
 {
     public function up(): void

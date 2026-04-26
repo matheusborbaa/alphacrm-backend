@@ -16,15 +16,12 @@ class LeadResource extends JsonResource
             'whatsapp' => $this->whatsapp,
             'email'    => $this->email,
 
-            // Campos novos da doc
             'temperature'         => $this->temperature,
             'value'               => $this->value,
             'last_interaction_at' => $this->last_interaction_at,
             'status_changed_at'   => $this->status_changed_at,
             'sla_status'          => $this->sla_status,
-            // Prazo do SLA de primeira resposta (ISO datetime ou null).
-            // Usado pelo banner de primeiro contato no lead.php pra exibir
-            // countdown MM:SS. Null quando SLA está desabilitado em /configuracoes.
+
             'sla_deadline_at'     => $this->sla_deadline_at,
             'channel'             => $this->channel,
             'campaign'            => $this->campaign,
@@ -33,21 +30,18 @@ class LeadResource extends JsonResource
             'created_at'          => $this->created_at,
             'updated_at'          => $this->updated_at,
 
-            // IDs (para formulários)
             'status_id'         => $this->status_id,
             'lead_substatus_id' => $this->lead_substatus_id,
             'source_id'         => $this->source_id,
             'empreendimento_id' => $this->empreendimento_id,
             'assigned_user_id'  => $this->assigned_user_id,
 
-            // Relacionamentos
             'status'         => $this->status?->only(['id','name','color_hex']),
             'substatus'      => $this->whenLoaded('substatus', fn() => $this->substatus?->only(['id','name','color_hex','lead_status_id'])),
             'corretor'       => $this->corretor?->only(['id','name']),
             'source'         => $this->whenLoaded('source', fn() => $this->source?->only(['id','name'])),
             'empreendimento' => $this->empreendimento?->only(['id','name']),
 
-            // Custom field values (slug => value)
             'custom_values' => $this->whenLoaded('customFieldValues', fn() =>
                 $this->customFieldValues->mapWithKeys(function ($cv) {
                     $slug = $cv->customField?->slug;
@@ -55,7 +49,6 @@ class LeadResource extends JsonResource
                 })
             ),
 
-            // Interações
             'histories' => $this->whenLoaded('histories', fn() =>
                 $this->histories->map(function ($h) {
                     return [

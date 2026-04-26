@@ -7,31 +7,7 @@ use App\Models\Commission;
 
 class MyCommissionController extends Controller
 {
-    /**
-     * @group Corretor - Comissões
-     *
-     * Lista as próximas comissões do corretor logado.
-     *
-     * Retorna apenas comissões vinculadas ao usuário autenticado.
-     *
-     * @authenticated
-     *
-     * @response 200 {
-     *   "total": 3500,
-     *   "items": [
-     *     {
-     *       "id": 1,
-     *       "lead_id": 12,
-     *       "status": "prevista",
-     *       "sale_value": 450000,
-     *       "commission_percentage": 5,
-     *       "commission_value": 22500,
-     *       "paid_at": null,
-     *       "created_at": "2026-02-07 10:00:00"
-     *     }
-     *   ]
-     * }
-     */
+
     public function upcoming(Request $request)
     {
         $user = $request->user();

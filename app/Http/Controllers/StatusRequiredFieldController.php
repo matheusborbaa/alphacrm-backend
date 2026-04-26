@@ -15,12 +15,6 @@ use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
-/**
- * CRUD das regras "quando status X, campo Y é obrigatório".
- *
- * Também expõe o endpoint que o frontend usa pra perguntar:
- *   "dado este status/substatus, quais campos preciso pedir pro usuário?"
- */
 class StatusRequiredFieldController extends Controller
 {
     public function index(Request $request)
@@ -65,19 +59,6 @@ class StatusRequiredFieldController extends Controller
         return response()->json(['deleted' => true]);
     }
 
-    /**
-     * Endpoint chamado pelo frontend pra saber o que pedir ao usuário
-     * quando ele tenta mudar o status de um lead.
-     *
-     * Retorna todas as regras que se aplicam a um status ou substatus,
-     * incluindo regras do pai (status) quando filtrado por substatus.
-     *
-     * Query params:
-     *   - status_id (opcional)
-     *   - substatus_id (opcional)
-     *   - lead_id (opcional) — se passar, já devolve quais campos estão
-     *     faltando, pra UI só mostrar o que falta.
-     */
     public function forTarget(Request $request, LeadStatusRequirementValidator $validator)
     {
         $request->validate([
@@ -89,7 +70,6 @@ class StatusRequiredFieldController extends Controller
         $targetStatusId    = $request->input('status_id');
         $targetSubstatusId = $request->input('substatus_id');
 
-        // Se veio só substatus, deriva o status pai
         if (!$targetStatusId && $targetSubstatusId) {
             $targetStatusId = LeadSubstatus::where('id', $targetSubstatusId)->value('lead_status_id');
         }
@@ -98,30 +78,24 @@ class StatusRequiredFieldController extends Controller
             return response()->json([]);
         }
 
-        // Lead atual (pra saber status de origem + quais campos já estão preenchidos)
         $lead = $request->filled('lead_id')
             ? Lead::with('customFieldValues.customField')->find($request->lead_id)
             : null;
 
         $currentStatusId = $lead?->status_id;
 
-        // Delega pro service que já sabe percorrer as intermediárias
         $rules = $validator->collectRulesForTransition(
             $currentStatusId,
             $targetStatusId,
             $targetSubstatusId
         );
 
-        // Dedup por (lead_column | custom_field_id), mantendo a primeira etapa
         $seen   = [];
         $result = [];
 
         foreach ($rules as $rule) {
             if (!$rule->required) continue;
 
-            // Regra-tarefa: não tem campo, checa se o lead tem pelo menos 1
-            // tarefa que bate com o kind/completed exigidos. Dedup por stage
-            // + kind + completed pra não duplicar entre etapas com mesma regra.
             if ($rule->isTaskRequirement()) {
                 $kind     = $rule->require_task_kind ?: 'any';
                 $needDone = (bool) $rule->require_task_completed;
@@ -200,18 +174,6 @@ class StatusRequiredFieldController extends Controller
         return response()->json($result);
     }
 
-    /**
-     * Máscara sugerida por coluna padrão do lead.
-     * Telefone já vem mascarado no cadastro, mas aqui cobrimos o caso
-     * de campo obrigatório aparecer no modal de mudança de status.
-     *
-     * 'value' (preço/valor da venda) PRECISA de mask 'moeda' aqui —
-     * sem ela, o frontend renderiza input texto cru, o user digita
-     * "R$ 250.000,00" formatado e o backend rejeita ('numeric'
-     * validation falha). Com mask, o requiredFields.js aplica máscara
-     * visual + chama AlphaMasks.unformat() antes do PUT, devolvendo
-     * o número puro ("250000") que passa na validação.
-     */
     private function defaultMaskForColumn(string $column): ?string
     {
         return match ($column) {
@@ -221,10 +183,6 @@ class StatusRequiredFieldController extends Controller
         };
     }
 
-    /**
-     * Tipo de input sugerido por coluna do lead. Pra FKs (empreendimento,
-     * source, corretor) o modal deve renderizar como <select>, não texto.
-     */
     private function fieldTypeForColumn(string $column): string
     {
         return match ($column) {
@@ -233,14 +191,6 @@ class StatusRequiredFieldController extends Controller
         };
     }
 
-    /**
-     * Options pra colunas que são FK. Devolve array de
-     * [{value, label}] — o frontend aceita ambos (array de string e
-     * array de objeto com value/label).
-     *
-     * Evita quebrar o modal quando a tabela está vazia: devolve array
-     * vazio e o select fica com só "Selecione".
-     */
     private function optionsForColumn(string $column): ?array
     {
         return match ($column) {
@@ -272,10 +222,6 @@ class StatusRequiredFieldController extends Controller
         };
     }
 
-    /**
-     * Transforma 'source_id' em 'Source' pra exibir na UI.
-     * Reescreva aqui se quiser nomes mais amigáveis.
-     */
     private function humanizeColumn(string $column): string
     {
         $labels = [
@@ -292,10 +238,6 @@ class StatusRequiredFieldController extends Controller
         return $labels[$column] ?? ucfirst(str_replace('_', ' ', $column));
     }
 
-    /**
-     * Rótulo legível pra regra de tarefa, combinando kind + completed.
-     * Ex.: "Registrar ligação concluída", "Registrar visita", "Registrar tarefa".
-     */
     private function humanizeTaskRule(StatusRequiredField $rule): string
     {
         $kinds = [
@@ -316,15 +258,6 @@ class StatusRequiredFieldController extends Controller
         return 'Registrar ' . $noun . $suffix;
     }
 
-    /**
-     * Validação compartilhada entre store e update.
-     *
-     * Regras de integridade:
-     *   - Deve informar EXATAMENTE UM de (lead_status_id, lead_substatus_id)
-     *   - Se require_task=true: nao informa lead_column nem custom_field_id
-     *   - Se require_task=false: EXATAMENTE UM de (lead_column, custom_field_id)
-     *   - Se lead_column, tem que estar na whitelist
-     */
     private function validateData(Request $request): array
     {
         $data = $request->validate([
@@ -350,7 +283,6 @@ class StatusRequiredFieldController extends Controller
             ]);
         }
 
-        // Regra-tarefa é mutuamente exclusiva com regra-campo.
         if ($hasTaskRule) {
             if ($hasColumn || $hasCustom) {
                 throw ValidationException::withMessages([

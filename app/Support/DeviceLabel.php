@@ -2,20 +2,9 @@
 
 namespace App\Support;
 
-/**
- * Sprint 3.0a — helper pra extrair um label amigável do User-Agent
- * (ex.: "Chrome / Windows 11", "Safari / iPhone"). Usado nos tokens
- * do Sanctum pra mostrar dispositivo na tela "Meus dispositivos".
- *
- * A lógica é um parser simples por regex — não queremos importar uma
- * lib pesada de UA parsing só pra isso. Se o UA for desconhecido,
- * devolve "Navegador" ou "Desconhecido" como fallback.
- */
 class DeviceLabel
 {
-    /**
-     * Retorna algo como "Chrome / Windows 11" a partir do User-Agent.
-     */
+
     public static function fromUserAgent(?string $ua): string
     {
         $ua = trim((string) $ua);
@@ -35,7 +24,7 @@ class DeviceLabel
 
     private static function detectBrowser(string $ua): ?string
     {
-        // Ordem importa: Edge e Opera contêm "Chrome" no UA, então checam antes.
+
         if (preg_match('/Edg\//i', $ua))      return 'Edge';
         if (preg_match('/OPR\//i', $ua))      return 'Opera';
         if (preg_match('/Firefox/i', $ua))    return 'Firefox';
@@ -48,7 +37,7 @@ class DeviceLabel
 
     private static function detectOs(string $ua): ?string
     {
-        // Mobile primeiro pra não confundir "iPhone" com "Mac".
+
         if (preg_match('/iPhone/i', $ua))        return 'iPhone';
         if (preg_match('/iPad/i', $ua))          return 'iPad';
         if (preg_match('/Android/i', $ua))       return 'Android';

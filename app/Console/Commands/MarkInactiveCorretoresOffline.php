@@ -6,20 +6,6 @@ use App\Models\Setting;
 use App\Models\User;
 use Illuminate\Console\Command;
 
-/**
- * Sprint Auto-Offline — força offline corretores "fantasma" que ficaram
- * com status='disponivel' mas pararam de mandar heartbeat (provavelmente
- * fecharam o navegador esquecidos no status disponível).
- *
- * Sem isso, esses users ficam recebendo lead da fila de rodízio
- * indefinidamente — exatamente o problema reportado em produção
- * ("tem gente disponível há dias mesmo com o sistema fechado").
- *
- * Threshold é configurável em Configurações → Geral
- * (corretor_auto_offline_minutes, default 60). Setar 0 desliga o feature.
- *
- * Scheduled em routes/console.php pra rodar a cada 5 minutos.
- */
 class MarkInactiveCorretoresOffline extends Command
 {
     protected $signature   = 'corretores:mark-offline-inactive {--dry-run : Mostra quem seria marcado sem alterar}';
@@ -35,9 +21,6 @@ class MarkInactiveCorretoresOffline extends Command
 
         $threshold = now()->subMinutes($minutes);
 
-        // Pega quem tá disponível e:
-        //   - last_seen_at NULO (nunca bateu — fechou logo após login) OU
-        //   - last_seen_at antes do threshold
         $stale = User::query()
             ->where('status_corretor', 'disponivel')
             ->where(function ($q) use ($threshold) {
@@ -63,7 +46,6 @@ class MarkInactiveCorretoresOffline extends Command
             return self::SUCCESS;
         }
 
-        // forceFill pra atualizar status_corretor mesmo se não estiver em fillable
         User::whereIn('id', $stale->pluck('id'))->update([
             'status_corretor' => 'offline',
         ]);

@@ -8,13 +8,6 @@ use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
-/**
- * CRUD de lead_status usado pela tela admin de configuração.
- *
- * A leitura (index) continua disponível em /lead-status pra autenticados;
- * aqui expomos operações de escrita pra quem tem custom_fields.manage
- * (ou status_required_fields.manage — usamos a mesma permission "configurar pipeline").
- */
 class LeadStatusController extends Controller
 {
     public function index()
@@ -29,7 +22,6 @@ class LeadStatusController extends Controller
     {
         $data = $this->validateData($request);
 
-        // order default = último + 1
         if (!array_key_exists('order', $data) || is_null($data['order'])) {
             $data['order'] = (int) (LeadStatus::max('order') ?? 0) + 1;
         }
@@ -47,10 +39,6 @@ class LeadStatusController extends Controller
         return $leadStatus;
     }
 
-    /**
-     * Só deleta status que não tem nenhum lead vinculado
-     * e nenhum substatus (que por sua vez protege seus próprios leads).
-     */
     public function destroy(LeadStatus $leadStatus)
     {
         $leadsCount = Lead::where('status_id', $leadStatus->id)->count();
@@ -70,10 +58,6 @@ class LeadStatusController extends Controller
         return response()->json(['deleted' => true]);
     }
 
-    /**
-     * POST /admin/lead-status/reorder
-     * Body: { items: [{id, order}, ...] }
-     */
     public function reorder(Request $request)
     {
         $data = $request->validate([
@@ -94,13 +78,11 @@ class LeadStatusController extends Controller
         return $request->validate([
             'name'      => ['required', 'string', 'max:255', Rule::unique('lead_status', 'name')->ignore($ignoreId)],
             'order'     => 'nullable|integer|min:0',
-            // Hex colorido: exige 7 chars começando com # (ex: #3B82F6)
+
             'color_hex' => ['nullable', 'regex:/^#[0-9A-Fa-f]{6}$/'],
-            // Sprint H1.4 — esconder do funil (etapa terminal: vendido/perdido)
+
             'is_terminal' => 'sometimes|boolean',
-            // Etapa de descarte (Perdido/Descartado/Cancelado): pula a
-            // cobrança em cascata de obrigatórios das etapas anteriores.
-            // Ver LeadStatusRequirementValidator::intermediateAndTargetStatusIds().
+
             'is_discard'  => 'sometimes|boolean',
         ]);
     }

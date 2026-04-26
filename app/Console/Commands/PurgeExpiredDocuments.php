@@ -8,19 +8,6 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
-/**
- * Varre lead_documents buscando registros cuja janela de retenção expirou
- * (purge_at <= now() e deleted_at já setado) e faz o hard-delete:
- *   - apaga o arquivo físico do disco
- *   - remove a row do banco
- *   - grava uma LeadHistory 'document_purged' pra rastro
- *
- * Agendado no routes/console.php pra rodar diariamente (de madrugada).
- * Executável manualmente via:  php artisan docs:purge-expired
- *
- * Idempotente: roda várias vezes sem causar dano (só atua em registros
- * que ainda existem e estão com purge_at vencido).
- */
 class PurgeExpiredDocuments extends Command
 {
     protected $signature = 'docs:purge-expired {--dry-run : Só lista o que seria apagado}';
@@ -49,7 +36,6 @@ class PurgeExpiredDocuments extends Command
         $okCount  = 0;
         $errCount = 0;
 
-        // Chunk pra não carregar tudo em memória quando houver muita coisa.
         $query->chunkById(200, function ($docs) use (&$okCount, &$errCount, $disk, $dryRun) {
             foreach ($docs as $doc) {
                 try {
@@ -63,18 +49,14 @@ class PurgeExpiredDocuments extends Command
 
                     if ($dryRun) { $okCount++; continue; }
 
-                    // Tenta apagar o arquivo; se não encontrar, não é fatal
-                    // (pode ter sido removido fora de banda). Usa o mesmo
-                    // resolver que o controller pra compat com paths antigos.
                     $path = $this->resolveStoragePath($disk, $doc->storage_path);
                     if ($path !== null) {
                         $disk->delete($path);
                     }
 
-                    // História antes do delete pra manter a FK de lead_id.
                     LeadHistory::create([
                         'lead_id'     => $doc->lead_id,
-                        'user_id'     => null, // ação do sistema
+                        'user_id'     => null,
                         'type'        => 'document_purged',
                         'description' => mb_substr(
                             $doc->original_name . ' (expurgo automático após retenção)',
@@ -100,7 +82,6 @@ class PurgeExpiredDocuments extends Command
         return $errCount === 0 ? Command::SUCCESS : Command::FAILURE;
     }
 
-    /** Espelha o resolveStoragePath do controller pra compat com paths 'private/' antigos. */
     private function resolveStoragePath($disk, string $stored): ?string
     {
         if ($disk->exists($stored)) return $stored;

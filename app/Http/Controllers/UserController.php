@@ -16,21 +16,10 @@ use App\Services\LeadAssignmentService;
 use App\Mail\WelcomeUserMail;
 use App\Mail\ResetPasswordMail;
 
-/**
- * CRUD de usuários (corretores, gestores, admins).
- *
- * Os endpoints de listagem e mutação ficam atrás da UserPolicy
- * (users.manage / users.assign_admin). A `update()` legada (self-service
- * de perfil) foi renomeada pra `updateProfile()` pra não confundir.
- */
 class UserController extends Controller
 {
     use AuthorizesRequests;
 
-    /**
-     * GET /users/admin — lista de usuários com role e contagem de leads.
-     * Aceita search=, role=, active=0|1.
-     */
     public function index(Request $request)
     {
         $this->authorize('viewAny', User::class);
@@ -67,9 +56,6 @@ class UserController extends Controller
             $query->where('active', (bool) $request->get('active'));
         }
 
-        // Sprint Hierarquia — gestor só vê quem responde a ele (recursivo).
-        // Admin sempre vê todos. Corretor não chega aqui (policy bloqueia
-        // viewAny acima), mas defesa em profundidade não dói.
         $allowedIds = $request->user()->accessibleUserIds();
         if ($allowedIds !== null) {
             $query->whereIn('id', $allowedIds);
@@ -77,7 +63,6 @@ class UserController extends Controller
 
         $users = $query->orderBy('name')->get();
 
-        // injeta role_name + lead count na saída (evita N+1 explícito)
         $leadCounts = Lead::selectRaw('assigned_user_id, COUNT(*) as total')
             ->whereIn('assigned_user_id', $users->pluck('id'))
             ->groupBy('assigned_user_id')
@@ -102,19 +87,6 @@ class UserController extends Controller
         return response()->json($result);
     }
 
-    /**
-     * GET /users/check-email?email=x&exclude=y
-     *
-     * Pré-validação leve pra UI não liberar o botão "Salvar" com email
-     * duplicado. Devolve qual usuário já tem esse email (id/name/role/active)
-     * pra o front mostrar uma mensagem útil ("Já usado por <Fulano>, Corretor").
-     *
-     * `exclude` (opcional) é o ID do próprio usuário em edição — impede que
-     * o form ache conflito consigo mesmo quando o admin não alterou o email.
-     *
-     * A validação definitiva continua no store()/update() (rule `unique`),
-     * este endpoint é só UX.
-     */
     public function checkEmail(Request $request)
     {
         $this->authorize('viewAny', User::class);
@@ -155,21 +127,13 @@ class UserController extends Controller
             'active'          => (bool) $user->active,
             'status_corretor' => $user->status_corretor,
             'role'            => $user->getRoleNames()->first() ?? $user->role,
-            // Sprint Seccionamento — hierarquia + permissão por empreendimento.
-            // empreendimento_ids: lista do pivot (apenas relevante quando
-            // access_mode='specific'; quando 'all', UI ignora a lista).
+
             'parent_user_id'              => $user->parent_user_id,
             'empreendimento_access_mode'  => $user->empreendimento_access_mode ?? 'all',
             'empreendimento_ids'          => $user->empreendimentos()->pluck('empreendimentos.id')->all(),
         ]);
     }
 
-    /**
-     * POST /users — cria um novo usuário.
-     *
-     * Se senha não for informada, gera uma temporária aleatória
-     * (o invite opcional usa password-reset link do Laravel).
-     */
     public function store(Request $request)
     {
         $this->authorize('create', User::class);
@@ -181,7 +145,7 @@ class UserController extends Controller
             'password' => 'nullable|string|min:6',
             'role'     => ['required', Rule::in(['admin', 'gestor', 'corretor'])],
             'active'   => 'boolean',
-            // Sprint Seccionamento — hierarquia + permissão por empreendimento.
+
             'parent_user_id'              => ['nullable', 'integer', 'exists:users,id'],
             'empreendimento_access_mode'  => ['nullable', Rule::in(['all', 'specific'])],
             'empreendimento_ids'          => ['nullable', 'array'],
@@ -194,10 +158,6 @@ class UserController extends Controller
             ]);
         }
 
-        // Se o admin não informou senha, gera uma provisória de 12 chars.
-        // A flag $passwordWasGenerated controla se deve disparar o
-        // WelcomeUserMail (só enviamos quando a senha é provisória; se o
-        // admin digitou, assume que vai repassar por fora).
         $passwordWasGenerated = empty($data['password']);
         $plainPassword = $passwordWasGenerated ? Str::random(12) : $data['password'];
 
@@ -212,10 +172,6 @@ class UserController extends Controller
 
         $user->assignRole($data['role']);
 
-        // Sprint Seccionamento — aplica gestor + permissão de empreendimentos.
-        // Faz validação de cascata: gestor só pode dar pro subordinado o
-        // que ele mesmo tem (admin pode tudo). Se falhar, reverte o user
-        // recém-criado pra não deixar inconsistente.
         try {
             $this->applySeccionamentoFields($user, $data, $request->user());
         } catch (ValidationException $e) {
@@ -223,11 +179,6 @@ class UserController extends Controller
             throw $e;
         }
 
-        // Email de boas-vindas com senha provisória. Só dispara se a senha
-        // foi gerada pelo sistema (admin que escolheu senha manualmente
-        // provavelmente tem um canal próprio pra repassar). Failure é
-        // logado sem bloquear o cadastro — um admin que perder o email
-        // ainda consegue ver a senha na resposta HTTP abaixo.
         if ($passwordWasGenerated) {
             \App\Services\EmailLoggerService::send(
                 to: $user->email,
@@ -246,16 +197,11 @@ class UserController extends Controller
                 'email' => $user->email,
                 'role'  => $data['role'],
             ],
-            // Devolve a senha temporária pro admin repassar (ou usar invite).
+
             'temporary_password' => $passwordWasGenerated ? $plainPassword : null,
         ], 201);
     }
 
-    /**
-     * PUT /users/{user} — atualiza dados básicos do usuário (admin).
-     *
-     * Role e status ativo passam por validação extra da policy.
-     */
     public function update(Request $request, User $user)
     {
         $this->authorize('update', $user);
@@ -267,15 +213,13 @@ class UserController extends Controller
             'password' => 'nullable|string|min:6',
             'active'   => 'nullable|boolean',
             'role'     => ['nullable', Rule::in(['admin', 'gestor', 'corretor'])],
-            // Sprint Seccionamento — opcionais. Se omitidos, mantém valores atuais.
+
             'parent_user_id'              => ['nullable', 'integer', 'exists:users,id'],
             'empreendimento_access_mode'  => ['nullable', Rule::in(['all', 'specific'])],
             'empreendimento_ids'          => ['nullable', 'array'],
             'empreendimento_ids.*'        => ['integer', 'exists:empreendimentos,id'],
         ]);
 
-        // Se mudando a role, valida autorização adicional.
-        // Sprint Cargos — aceita users.manage (legacy) OU users.update (novo).
         if (!empty($data['role']) && $data['role'] !== ($user->getRoleNames()->first() ?? $user->role)) {
             $caller = $request->user();
             $canChangeRole = $caller->can('users.manage') || $caller->can('users.update');
@@ -296,12 +240,8 @@ class UserController extends Controller
             unset($data['password']);
         }
 
-        // role já foi tratado via syncRoles; remove do fill pra não duplicar
         unset($data['role']);
 
-        // Sprint Seccionamento — campos de hierarquia/permissão são processados
-        // pelo helper (validação de cascata + sync no pivot). Removemos do
-        // $data antes do fill pra não duplicar gravação.
         $seccionamentoFields = [
             'parent_user_id'             => $data['parent_user_id']             ?? null,
             'empreendimento_access_mode' => $data['empreendimento_access_mode'] ?? null,
@@ -312,8 +252,6 @@ class UserController extends Controller
         $user->fill(array_filter($data, fn($v) => !is_null($v)));
         $user->save();
 
-        // Aplica seccionamento APÓS o save dos campos básicos pra ter um
-        // user "completo" no banco antes de tocar pivot/parent.
         $this->applySeccionamentoFields($user, $seccionamentoFields, $request->user());
 
         return response()->json([
@@ -329,10 +267,6 @@ class UserController extends Controller
         ]);
     }
 
-    /**
-     * DELETE /users/{user} — desativa o usuário (soft-deactivate).
-     * Não deleta fisicamente pra não quebrar foreign keys de leads/comissões.
-     */
     public function destroy(Request $request, User $user)
     {
         $this->authorize('delete', $user);
@@ -343,9 +277,6 @@ class UserController extends Controller
         return response()->json(['deleted' => true]);
     }
 
-    /**
-     * POST /users/{user}/reactivate — reativa um usuário desativado.
-     */
     public function reactivate(Request $request, User $user)
     {
         $this->authorize('update', $user);
@@ -356,29 +287,10 @@ class UserController extends Controller
         return response()->json(['success' => true]);
     }
 
-    /**
-     * POST /users/{user}/send-invite
-     *
-     * Reenvio do convite / link de redefinição de senha. Mesmo fluxo do
-     * "Esqueci minha senha": gera token no `password_reset_tokens` via
-     * broker e dispara o ResetPasswordMail (que aponta pro frontend em
-     * /reset-password.html?token=...&email=...).
-     *
-     * Por que NÃO usar `Password::sendResetLink()`?
-     *   - Ela dispara a notificação default do Laravel, que tenta resolver
-     *     `route('password.reset', ...)` pra montar o URL. Essa rota só
-     *     existe se o projeto usa o Auth UI do Laravel — não é o nosso
-     *     caso (reset vive no frontend estático). Resultado: 500 no send.
-     *
-     * Se o envio falhar (SMTP off, credenciais erradas), devolve 500 com
-     * mensagem clara em vez de deixar propagar um stack trace pro front.
-     */
     public function sendInvite(Request $request, User $user)
     {
         $this->authorize('update', $user);
 
-        // Gera um token fresco (substitui qualquer um que esteja ativo pra esse
-        // email) na mesma tabela usada pelo fluxo /auth/forgot-password.
         $token = Password::broker()->createToken($user);
 
         $ok = \App\Services\EmailLoggerService::send(
@@ -402,10 +314,6 @@ class UserController extends Controller
         ]);
     }
 
-    /**
-     * POST /me — self-service: usuário logado edita próprio perfil.
-     * (Mantido o comportamento original da rota /me.)
-     */
     public function updateProfile(Request $request)
     {
         $user = $request->user();
@@ -437,21 +345,6 @@ class UserController extends Controller
         ]);
     }
 
-    /**
-     * Sprint 3.8d — POST /users/me/preferences
-     *
-     * Endpoint self-service pras preferências PESSOAIS do usuário logado
-     * (diferentes das configurações globais do sistema em /settings/*).
-     * Valida cada chave contra uma whitelist — qualquer coisa fora é 422.
-     *
-     * Preferências suportadas:
-     *  - chat_read_receipts (bool): expor confirmação de leitura no chat.
-     *    Regra recíproca no ChatMessageController — se `false`, user não
-     *    envia nem recebe ✓✓.
-     *
-     * Body aceito: qualquer subset das chaves acima. Retorna o user fresh
-     * pra o frontend atualizar o cache local do /me.
-     */
     public function updatePreferences(Request $request)
     {
         $data = $request->validate([
@@ -473,11 +366,6 @@ class UserController extends Controller
         ]);
     }
 
-    /**
-     * POST /users/{user}/photo — admin/gestor troca a foto de qualquer corretor.
-     * Roteada só com middleware role:admin,gestor (rotas protegidas em api.php).
-     * Aceita o mesmo input 'avatar' do self-service pra reaproveitar o FormData.
-     */
     public function uploadPhoto(Request $request, User $user)
     {
         $request->validate([
@@ -493,22 +381,6 @@ class UserController extends Controller
         ]);
     }
 
-    /**
-     * POST /users/me/status — o próprio corretor muda o status atual.
-     *
-     * Valores aceitos: 'disponivel' | 'ocupado' | 'offline'.
-     *
-     * Cooldown (defense-in-depth — frontend já desabilita o select):
-     *   - Se o corretor tem `cooldown_until` no futuro, bloqueamos mudança
-     *     pra 'disponivel' ou 'ocupado'. Só permitimos 'offline' (se ele
-     *     quiser sair antes de terminar o turno, ok — zeramos o cooldown).
-     *
-     * Efeitos colaterais:
-     *   - Se virou 'disponivel', tentamos auto-atribuir o lead órfão mais
-     *     antigo pra esse corretor via LeadAssignmentService::tryClaimNextOrphan().
-     *     Isso evita que leads fiquem parados na fila só porque ninguém
-     *     abriu o dashboard pra ver a fila.
-     */
     public function updateStatus(Request $request, LeadAssignmentService $assigner)
     {
         $user = $request->user();
@@ -520,8 +392,6 @@ class UserController extends Controller
         $before = strtolower((string) ($user->status_corretor ?? ''));
         $after  = $data['status'];
 
-        // ---- COOLDOWN GUARD -----------------------------------------
-        // Se tem cooldown_until no futuro, só aceita ir pra 'offline'.
         $inCooldown = $user->cooldown_until && $user->cooldown_until->isFuture();
         if ($inCooldown && $after !== 'offline') {
             return response()->json([
@@ -533,8 +403,6 @@ class UserController extends Controller
 
         $payload = ['status_corretor' => $after];
 
-        // Indo pra 'offline' durante cooldown: zera o cooldown pra não
-        // deixar lixo no banco (quando ele voltar, vai vir limpo).
         if ($inCooldown && $after === 'offline') {
             $payload['cooldown_until'] = null;
         }
@@ -543,13 +411,10 @@ class UserController extends Controller
 
         $claimed = null;
         if ($after === 'disponivel' && $before !== 'disponivel') {
-            // Corretor acabou de ficar disponível — tenta pegar órfão.
+
             $claimed = $assigner->tryClaimNextOrphan($user->fresh());
         }
 
-        // Quando o user fica 'disponivel', considera presente — registra
-        // last_seen_at imediatamente pra evitar ser considerado "ocioso"
-        // pelo MarkInactiveCorretoresOffline assim que voltar.
         if ($after === 'disponivel') {
             $user->forceFill(['last_seen_at' => now()])->save();
         }
@@ -564,65 +429,29 @@ class UserController extends Controller
         ]);
     }
 
-    /**
-     * POST /users/me/heartbeat
-     *
-     * Sprint Auto-Offline — frontend envia a cada ~60s (visibility-aware:
-     * só com aba em foco). Atualiza last_seen_at pra "provar" que o user
-     * tá efetivamente usando o sistema.
-     *
-     * Comando MarkInactiveCorretoresOffline percorre users com
-     * status='disponivel' AND last_seen_at < now() - corretor_auto_offline_minutes
-     * e força offline — pra evitar fila distribuir lead pra quem fechou
-     * o navegador esquecido.
-     *
-     * Endpoint barato: 1 UPDATE em users por chamada.
-     */
     public function heartbeat(Request $request)
     {
         $user = $request->user();
         if ($user) {
-            // forceFill + save evita validação de mass-assignment
-            // (last_seen_at não precisa estar em $fillable).
+
             $user->forceFill(['last_seen_at' => now()])->save();
         }
         return response()->json(['ok' => true, 'at' => now()->toIso8601String()]);
     }
 
-    /**
-     * Sprint Seccionamento — aplica os campos de hierarquia + permissão
-     * por empreendimento, com validação de cascata.
-     *
-     * Regras:
-     *   - parent_user_id: deve apontar pra um user com role 'gestor' ou
-     *     'admin'. Não pode ser auto-referência. Não pode criar ciclo.
-     *   - empreendimento_access_mode + empreendimento_ids:
-     *       - 'all'      → ignora pivot, libera todos os empreendimentos
-     *       - 'specific' → exige lista; sync no pivot
-     *   - Cascata: se quem tá criando/editando NÃO é admin, só pode dar
-     *     pro target empreendimentos que o ACTOR mesmo tem. Admin pode tudo.
-     *
-     * Aceita campos null no array — significa "não atualizar esse campo".
-     * Vazia ou ausente NÃO zera a config existente (só se mandar 'all'
-     * ou 'specific' explicitamente).
-     */
     private function applySeccionamentoFields(User $target, array $fields, User $actor): void
     {
         $isAdmin = strtolower((string) ($actor->role ?? '')) === 'admin';
 
-        // ===== parent_user_id =====
         if (array_key_exists('parent_user_id', $fields) && $fields['parent_user_id'] !== null) {
             $parentId = (int) $fields['parent_user_id'];
 
-            // Auto-referência proibida (X é gestor de X mesmo).
             if ($parentId === $target->id) {
                 throw ValidationException::withMessages([
                     'parent_user_id' => 'Usuário não pode ser gestor de si mesmo.',
                 ]);
             }
 
-            // Parent precisa existir + ser admin/gestor (não faz sentido
-            // corretor "gerenciar" outro corretor).
             $parent = User::find($parentId);
             if (!$parent) {
                 throw ValidationException::withMessages([
@@ -636,8 +465,6 @@ class UserController extends Controller
                 ]);
             }
 
-            // Anti-ciclo simples: target não pode ser ancestral do parent.
-            // Isso evita A→B→A (parent.parent.parent.... bate em target).
             $cursor = $parent;
             $depth  = 0;
             while ($cursor && $depth < 10) {
@@ -653,20 +480,18 @@ class UserController extends Controller
             $target->parent_user_id = $parentId;
         }
 
-        // ===== access_mode + empreendimento_ids =====
         $newMode = $fields['empreendimento_access_mode'] ?? null;
         $ids     = $fields['empreendimento_ids'] ?? null;
 
         if ($newMode !== null) {
             if ($newMode === 'all') {
-                // Libera tudo dinâmico — não precisa pivot, esvazia.
+
                 $target->empreendimento_access_mode = 'all';
                 $target->save();
                 $target->empreendimentos()->sync([]);
                 return;
             }
 
-            // 'specific' — precisa de lista (mesmo vazia, mas explícita).
             if (!is_array($ids)) {
                 throw ValidationException::withMessages([
                     'empreendimento_ids' => 'Informe a lista de empreendimentos quando o modo é "específico".',
@@ -675,7 +500,6 @@ class UserController extends Controller
 
             $ids = array_values(array_unique(array_map('intval', $ids)));
 
-            // Cascata: se actor não é admin, só pode liberar o que ele tem.
             if (!$isAdmin) {
                 $actorIds = $actor->accessibleEmpreendimentoIds()->all();
                 $forbidden = array_diff($ids, $actorIds);
@@ -691,8 +515,7 @@ class UserController extends Controller
             $target->save();
             $target->empreendimentos()->sync($ids);
         } else {
-            // Mode não foi enviado mas parent_user_id pode ter mudado;
-            // garante que parent_user_id seja persistido.
+
             if ($target->isDirty('parent_user_id')) {
                 $target->save();
             }

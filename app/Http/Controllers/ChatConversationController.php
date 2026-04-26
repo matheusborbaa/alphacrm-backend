@@ -11,40 +11,18 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
-/**
- * Controller de conversas (DM 1-a-1) do chat interno.
- *
- * Endpoints expostos em routes/api.php sob prefixo /chat/conversations.
- *
- * Autorização: todo usuário autenticado pode abrir DM com qualquer outro
- * usuário ATIVO do sistema. Não há restrição por role — parte do produto
- * é justamente corretor falar direto com gestor.
- */
 class ChatConversationController extends Controller
 {
-    /**
-     * Lista as conversas do usuário logado, ordenadas pela última mensagem
-     * (mais recente em cima). Traz:
-     *  - other_user: {id, name, email, photo_url} do outro participante
-     *  - last_message: {body, sender_id, created_at} ou null
-     *  - last_message_at (pra ordenação no cliente, reforço)
-     *  - unread_count: número de msgs do outro participante ainda não lidas
-     *
-     * Paginação não é necessária aqui — usuário típico tem <100 conversas.
-     * Se virar problema, trocar por cursor().
-     */
+
     public function index(Request $request): JsonResponse
     {
         $me = (int) Auth::id();
 
-        // Sprint 3.9a — Modo auditoria: admin com ?audit=1 recebe TODAS
-        // as conversas do sistema (leitura somente na UI). Pros demais
-        // users o parâmetro é ignorado silenciosamente — defense in depth.
         $auditMode = $this->isAuditRequest($request);
 
         $conversations = ChatConversation::query()
             ->when(!$auditMode, function ($q) use ($me) {
-                // Modo normal: só as minhas.
+
                 $q->where(function ($qq) use ($me) {
                     $qq->where('user_a_id', $me)->orWhere('user_b_id', $me);
                 });
@@ -52,20 +30,15 @@ class ChatConversationController extends Controller
             ->with([
                 'userA:id,name,email,avatar',
                 'userB:id,name,email,avatar',
-                // carregamos só a última mensagem de cada conversa via
-                // lastMessage() (latest), mas Eager load com hasMany
-                // traz todas. Alternativa: subquery. Pra MVP, limitamos
-                // manualmente depois no map().
+
                 'lastMessage:id,conversation_id,sender_id,body,created_at',
-                // Sprint 2: carrega anexos da última msg pra gerar preview
-                // "📎 Anexo" quando o body vem vazio.
+
                 'lastMessage.attachments:id,message_id,type,original_name,snapshot',
             ])
             ->orderByDesc('last_message_at')
-            ->orderByDesc('id') // tiebreaker pra conversas sem mensagem
+            ->orderByDesc('id')
             ->get();
 
-        // Carrega registros de leitura do user em UMA query, indexa por conv_id.
         $convIds = $conversations->pluck('id')->all();
         $reads   = ChatConversationRead::where('user_id', $me)
             ->whereIn('conversation_id', $convIds)
@@ -75,12 +48,8 @@ class ChatConversationController extends Controller
         $result = $conversations->map(function (ChatConversation $c) use ($me, $reads, $auditMode) {
             $other = $c->otherParticipant($me);
 
-            // lastMessage() retorna a coleção ordenada desc; pega o primeiro.
             $last = $c->lastMessage->first();
 
-            // Em auditoria não faz sentido contar não-lidas (admin não
-            // é participante). Em modo normal conta msgs do OUTRO com
-            // id > last_read_message_id do user.
             $unreadCount = 0;
             if (!$auditMode) {
                 $read = $reads->get($c->id);
@@ -102,9 +71,7 @@ class ChatConversationController extends Controller
                 ] : null,
                 'last_message'    => $last ? [
                     'id'         => $last->id,
-                    // Preview: se body vazio mas tem anexo, mostra label curto
-                    // tipo "📎 Arquivo (contrato.pdf)" ou "📎 Lead: Fulano".
-                    // Evita linha vazia na sidebar.
+
                     'body'       => $this->buildLastMessagePreview($last),
                     'sender_id'  => $last->sender_id,
                     'is_mine'    => $last->sender_id === $me,
@@ -113,9 +80,6 @@ class ChatConversationController extends Controller
                 'unread_count'    => $unreadCount,
             ];
 
-            // Em auditoria, devolvemos AMBOS os participantes (a UI usa
-            // pra montar "Fulano ↔ Beltrano"). Em modo normal `other_user`
-            // já cobre o único outro lado.
             if ($auditMode) {
                 $payload['participants'] = [
                     $c->userA ? ['id' => $c->userA->id, 'name' => $c->userA->name, 'email' => $c->userA->email, 'avatar' => $c->userA->avatar] : null,
@@ -130,12 +94,6 @@ class ChatConversationController extends Controller
         return response()->json($result);
     }
 
-    /**
-     * Sprint 3.9a — decide se o request é em modo auditoria. Só admin
-     * pode entrar; qualquer outro role que mandar ?audit=1 é ignorado
-     * silenciosamente (defense in depth — a UI desses papéis não tem
-     * botão de auditoria).
-     */
     private function isAuditRequest(Request $request): bool
     {
         if (!$request->boolean('audit')) return false;
@@ -143,13 +101,6 @@ class ChatConversationController extends Controller
         return $user && strtolower(trim((string) ($user->role ?? ''))) === 'admin';
     }
 
-    /**
-     * Abre (ou recupera) uma conversa 1-a-1 com o user_id informado.
-     *
-     * Usa ordenação canônica (menor id, maior id) + firstOrCreate, então
-     * é idempotente mesmo se duas abas do mesmo usuário chamarem ao mesmo
-     * tempo (unique index no DB é o guardrail final).
-     */
     public function store(Request $request): JsonResponse
     {
         $me = (int) Auth::id();
@@ -166,9 +117,6 @@ class ChatConversationController extends Controller
             ], 422);
         }
 
-        // Bloqueia DM com usuário inativo — símbolo claro que a pessoa saiu
-        // da empresa. Conversas antigas continuam visíveis na index(), mas
-        // não dá pra iniciar nova.
         $otherUser = User::find($other);
         if (!$otherUser || ($otherUser->status ?? null) === 'inactive') {
             return response()->json([
@@ -178,7 +126,6 @@ class ChatConversationController extends Controller
 
         [$aId, $bId] = ChatConversation::canonicalPair($me, $other);
 
-        // firstOrCreate atômico + unique index cobre race entre duas requests.
         $conversation = ChatConversation::firstOrCreate(
             ['user_a_id' => $aId, 'user_b_id' => $bId],
             ['last_message_at' => null]
@@ -197,11 +144,6 @@ class ChatConversationController extends Controller
         ], $conversation->wasRecentlyCreated ? 201 : 200);
     }
 
-    /**
-     * Monta preview textual da última mensagem pra sidebar. Quando body
-     * é vazio (msg só com anexo), compõe label curto a partir do primeiro
-     * anexo. Múltiplos anexos: mostra o primeiro + "+N".
-     */
     private function buildLastMessagePreview(ChatMessage $msg): string
     {
         $body = trim($msg->body ?? '');
@@ -228,22 +170,10 @@ class ChatConversationController extends Controller
         }
     }
 
-    /**
-     * Total consolidado de mensagens não-lidas do usuário logado, somando
-     * todas as conversas. Consumido pelo badge global na sidebar
-     * (polling curto, todas as páginas).
-     *
-     * Resposta: {"total": N}
-     *
-     * Implementação: soma por conversa de (msgs do outro com id > last_read_id).
-     * Usa uma única query agregada com join — não faz N+1.
-     */
     public function unreadCount(Request $request): JsonResponse
     {
         $me = (int) Auth::id();
 
-        // Conversas onde o user participa + reads dele (LEFT JOIN — conversa
-        // sem registro de leitura conta TODAS as msgs como não-lidas).
         $total = DB::table('chat_conversations as c')
             ->join('chat_messages as m', 'm.conversation_id', '=', 'c.id')
             ->leftJoin('chat_conversation_reads as r', function ($join) use ($me) {
@@ -255,7 +185,7 @@ class ChatConversationController extends Controller
             })
             ->where('m.sender_id', '!=', $me)
             ->where(function ($q) {
-                // msg.id > last_read_message_id (ou last_read_message_id IS NULL)
+
                 $q->whereColumn('m.id', '>', 'r.last_read_message_id')
                   ->orWhereNull('r.last_read_message_id');
             })

@@ -5,11 +5,6 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-/**
- * Log de acesso (download/preview) a um LeadDocument.
- *
- * Uma row por download. O registro é imutável: só INSERT.
- */
 class LeadDocumentAccess extends Model
 {
     public $timestamps = false;

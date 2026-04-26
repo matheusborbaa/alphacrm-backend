@@ -5,26 +5,11 @@ namespace App\Http\Controllers;
 use App\Models\Setting;
 use Illuminate\Http\Request;
 
-/**
- * Configurações globais do sistema (chave/valor).
- *
- * Leitura: qualquer usuário autenticado. Páginas da UI leem flags como
- * `watermark_enabled` pra decidir se ligam/desligam recursos.
- *
- * Escrita: só admin (verificado aqui com role check — não via middleware
- * pra manter consistência com o padrão do LeadDocumentController).
- *
- * Whitelist: `ALLOWED_KEYS` limita o que pode ser gravado — evita que
- * alguém crie chaves arbitrárias pela API.
- */
 class SettingController extends Controller
 {
-    /**
-     * Chaves conhecidas pelo sistema. Não aceita nada fora disso no set().
-     * Cada entrada diz o tipo esperado (pra validação simples) e o default.
-     */
+
     private const ALLOWED_KEYS = [
-        // Privacidade
+
         'watermark_enabled'    => ['type' => 'bool', 'default' => true],
         'watermark_intensity'  => [
             'type'    => 'enum',
@@ -32,25 +17,18 @@ class SettingController extends Controller
             'options' => ['sutil', 'medio', 'forte'],
         ],
 
-        // Retenção de documentos
-        // Janela em dias entre soft-delete e hard-delete pelo job PurgeExpiredDocuments.
         'doc_retention_days'   => [
             'type'    => 'int',
             'default' => 7,
             'min'     => 1,
             'max'     => 365,
         ],
-        // Se false, corretor clica em 'excluir' e o doc já vai pra lixeira
-        // sem passar pela aprovação do admin (pula o fluxo request-deletion).
+
         'doc_deletion_requires_approval' => [
             'type'    => 'bool',
             'default' => true,
         ],
 
-        // =================== COOLDOWN PÓS-LEAD ==========================
-        // Quando o rodízio entrega um lead pra um corretor, se esse toggle
-        // estiver ligado, o corretor vira 'ocupado' automaticamente por
-        // lead_cooldown_minutes. Durante esse período não recebe leads.
         'lead_cooldown_enabled' => [
             'type'    => 'bool',
             'default' => false,
@@ -62,9 +40,6 @@ class SettingController extends Controller
             'max'     => 120,
         ],
 
-        // =================== SLA DE ATENDIMENTO =========================
-        // Prazo em minutos pra corretor fazer primeira interação após
-        // receber o lead. 0 ou disabled = não grava sla_deadline_at.
         'lead_sla_enabled' => [
             'type'    => 'bool',
             'default' => true,
@@ -76,34 +51,21 @@ class SettingController extends Controller
             'max'     => 1440,
         ],
 
-        // Quando SLA expira, se ligado o job reatribui o lead (tira do
-        // corretor atual e joga na fila pro próximo disponível). Se
-        // desligado, o lead só é marcado 'expired' e continua com o
-        // corretor — o gestor decide o que fazer. Default: true.
         'lead_sla_reassign_on_breach' => [
             'type'    => 'bool',
             'default' => true,
         ],
 
-        // =================== STATUS INICIAL DO RODÍZIO ==================
-        // Quando o lead cai no rodízio, muda pra essa etapa (ex:
-        // "Aguardando atendimento"). null = não mexe no status atual.
         'lead_first_status_id' => [
             'type'    => 'int_or_null',
             'default' => null,
         ],
-        // Subetapa opcional pra acompanhar lead_first_status_id.
-        // null = não seta subetapa (ou a etapa escolhida não tem subetapa).
+
         'lead_first_substatus_id' => [
             'type'    => 'int_or_null',
             'default' => null,
         ],
 
-        // =================== PÓS PRIMEIRO CONTATO =======================
-        // Quando o corretor clica em "Registrar primeiro contato" no lead,
-        // o lead muda pra essa etapa + subetapa. null em qualquer das duas
-        // = não mexe naquele campo. Útil pra fluxo tipo:
-        //   Aguardando atendimento → Em atendimento / Qualificação
         'lead_after_first_contact_status_id' => [
             'type'    => 'int_or_null',
             'default' => null,
@@ -113,16 +75,6 @@ class SettingController extends Controller
             'default' => null,
         ],
 
-        // =================== GATILHO DE COMISSÃO (Sprint 3.7e) ==========
-        // Quais status e/ou substatus disparam a criação automática da
-        // comissão (draft) via LeadObserver. Arrays de IDs — a comissão é
-        // criada quando o lead ENTRA em qualquer um dos status listados
-        // OU quando entra em qualquer um dos substatus listados.
-        //
-        // Default vazio: mantém o comportamento legado (nome do status ==
-        // "Vendido"). Assim instalações já rodando não precisam migrar
-        // nada — e admin pode desligar a regra "Vendido" escolhendo outros
-        // gatilhos aqui sem mexer na tabela de status.
         'commission_trigger_status_ids' => [
             'type'    => 'int_array',
             'default' => [],
@@ -132,41 +84,21 @@ class SettingController extends Controller
             'default' => [],
         ],
 
-        // =================== APARÊNCIA GLOBAL (Sprint 3.10) =============
-        // Toggle visual aplicado em TODAS as páginas. Quando false, um
-        // helper JS adiciona `body.ui-square` e o CSS global força
-        // border-radius:0 em todos os descendentes com !important.
-        // Default true — mantém o visual atual.
         'ui_rounded_corners' => [
             'type'    => 'bool',
             'default' => true,
         ],
 
-        // =================== MÓDULO DE CHAT =============================
-        // Liga/desliga o chat interno globalmente. Quando OFF: sidebar esconde
-        // o item, deep-link /chat.php redireciona pro dashboard e os
-        // endpoints /conversations e /messages* retornam 403. Default true
-        // pra manter o comportamento existente.
         'chat_enabled' => [
             'type'    => 'bool',
             'default' => true,
         ],
 
-        // =================== MÓDULO ÁREA DO CORRETOR ====================
-        // Liga/desliga a Área do Corretor (perfil social + biblioteca de mídia).
-        // Quando OFF: sidebar esconde o item "Área do Corretor", deep-link
-        // /corretor.php redireciona pro dashboard e os endpoints /media/*
-        // retornam 403. Default true pra manter o comportamento existente.
         'corretor_area_enabled' => [
             'type'    => 'bool',
             'default' => true,
         ],
 
-        // =================== AUTO-OFFLINE POR INATIVIDADE ===============
-        // Minutos sem heartbeat antes do MarkInactiveCorretoresOffline
-        // forçar status_corretor='offline'. Frontend bate em
-        // /users/me/heartbeat a cada ~60s enquanto a aba está visível e o
-        // user está disponível. 0 desliga o auto-offline (legacy).
         'corretor_auto_offline_minutes' => [
             'type'    => 'int',
             'default' => 60,
@@ -174,10 +106,6 @@ class SettingController extends Controller
             'max'     => 1440,
         ],
 
-        // =================== SESSÕES SIMULTÂNEAS (Sprint 3.0a) ==========
-        // Quantidade máxima de tokens Sanctum vivos por user. No login,
-        // AuthController conta os tokens; se atingiu, devolve 409 com a
-        // lista pra o user escolher qual encerrar.
         'max_concurrent_sessions' => [
             'type'    => 'int',
             'default' => 2,
@@ -185,10 +113,6 @@ class SettingController extends Controller
             'max'     => 10,
         ],
 
-        // Minutos de ociosidade antes da próxima ação sensível pedir senha
-        // de novo. 0 desliga. Checado pelo middleware fresh-auth — se passou
-        // do threshold, devolve 423 e o frontend abre modal preservando o
-        // estado atual da página (formulários, uploads etc).
         'password_confirm_idle_minutes' => [
             'type'    => 'int',
             'default' => 30,
@@ -196,22 +120,6 @@ class SettingController extends Controller
             'max'     => 1440,
         ],
 
-        // =================== ALERTAS DE CAPACIDADE DO SERVIDOR ==========
-        // Thresholds fixos e sempre-ativos (75% disco, 90% RAM) — a UI
-        // não expõe configuração pra manter a operação previsível. Ver
-        // CheckServerCapacity e VpsStatusController::capacityAlerts, que
-        // carregam os limites direto como constantes. Dedup interno de
-        // 24h continua usando as chaves `_server_alert_state_*` e
-        // `_server_alert_last_notify_*`, que ficam fora desse whitelist
-        // porque são estado interno (prefixadas com "_") e não passam
-        // pelo endpoint de escrita.
-
-        // =================== HOME — LEADS QUE PRECISAM DE ATENÇÃO =======
-        // Threshold (em dias) pra um lead ser considerado "sem contato" e
-        // entrar no card "Leads que precisam de atenção" da Home. Lê em
-        // /dashboard/leads-atencao. Default 5 (mantém comportamento legado).
-        // Range 1..30 — fora disso clampa, tanto na escrita quanto na
-        // leitura (defesa em profundidade contra valores absurdos).
         'leads_atencao_dias_sem_contato' => [
             'type'    => 'int',
             'default' => 5,
@@ -219,16 +127,6 @@ class SettingController extends Controller
             'max'     => 30,
         ],
 
-        // =================== SECCIONAMENTO — LEAD ÓRFÃO =================
-        // Quando um lead vira órfão (nenhum corretor habilitado disponível
-        // pro empreendimento dele), espera X minutos antes de cair pro
-        // primeiro corretor disponível IGNORANDO permissão. Lógica:
-        //   - 0   = nunca cai pra alguém sem permissão (lead fica órfão até
-        //           admin atribuir manual ou alguém habilitar empreendimento)
-        //   - >0  = job CheckOrphanLeadsJob roda no schedule e reatribui
-        //           pro primeiro disponível qualquer após X min de orfandade
-        // Default 30 — meia hora de espera é razoável pra dar chance do
-        // corretor habilitado voltar de offline antes de "queimar" o lead.
         'lead_orphan_reassign_after_minutes' => [
             'type'    => 'int',
             'default' => 30,
@@ -236,19 +134,12 @@ class SettingController extends Controller
             'max'     => 1440,
         ],
 
-        // Etapa MÍNIMA pra um lead permanecer com o corretor depois que
-        // ele perde acesso ao empreendimento. Se o lead está em etapa
-        // ABAIXO (order menor) dessa, volta pra fila pra outro corretor
-        // habilitado pegar. Se está nessa etapa OU acima, fica com o
-        // corretor original (não puxa o tapete em negociação avançada).
-        // null/0 = desliga essa regra (lead sempre fica com corretor).
         'lead_persistence_min_status_id' => [
             'type'    => 'int_or_null',
             'default' => null,
         ],
     ];
 
-    /** Lista TODAS as configurações (chave => valor). Só chaves conhecidas. */
     public function index()
     {
         $out = [];
@@ -258,7 +149,6 @@ class SettingController extends Controller
         return response()->json($out);
     }
 
-    /** Lê UMA configuração pelo nome. */
     public function show(string $key)
     {
         if (!isset(self::ALLOWED_KEYS[$key])) {
@@ -269,10 +159,6 @@ class SettingController extends Controller
         return response()->json(['key' => $key, 'value' => $value]);
     }
 
-    /**
-     * Grava UMA configuração. Body: { "value": <...> }.
-     * Só admin. Valor é validado contra o tipo esperado.
-     */
     public function update(Request $request, string $key)
     {
         $this->ensureAdmin();
@@ -286,8 +172,6 @@ class SettingController extends Controller
 
         $value = $this->coerce($raw, $meta['type'], $meta);
 
-        // int_or_null aceita null explicitamente ("desligado"), então não
-        // falha quando $value === null — nos demais tipos, null = erro.
         $allowNull = in_array($meta['type'], ['int_or_null', 'mixed'], true);
         if ($value === null && $raw !== null && !$allowNull) {
             return response()->json([
@@ -295,7 +179,6 @@ class SettingController extends Controller
             ], 422);
         }
 
-        // Clamp pra tipos com range (int com min/max)
         if (in_array($meta['type'], ['int', 'int_or_null'], true) && $value !== null) {
             if (isset($meta['min']) && $value < $meta['min']) {
                 return response()->json([
@@ -309,7 +192,6 @@ class SettingController extends Controller
             }
         }
 
-        // Enum: garante que o valor caiu numa das opções permitidas
         if ($meta['type'] === 'enum') {
             if (!in_array($value, $meta['options'], true)) {
                 return response()->json([
@@ -323,11 +205,6 @@ class SettingController extends Controller
         return response()->json(['key' => $key, 'value' => $value]);
     }
 
-    /* ==============================================================
-     * HELPERS
-     * ============================================================== */
-
-    /** Converte entrada crua pro tipo da chave. Null = erro. */
     private function coerce(mixed $raw, string $type, array $meta = []): mixed
     {
         return match ($type) {
@@ -336,32 +213,22 @@ class SettingController extends Controller
                         : (in_array($raw, [0, '0', 'false', 'off', 'no', '', null], true) ? false
                         : null)),
             'int'    => is_numeric($raw) ? (int) $raw : null,
-            // int_or_null: '', null, 'null' e 0/negativo não-numérico viram null ("desligado");
-            // números válidos (incluindo "0") viram int. Usado por lead_first_status_id.
+
             'int_or_null' => ($raw === null || $raw === '' || $raw === 'null')
                 ? null
                 : (is_numeric($raw) ? (int) $raw : null),
-            // int_array: aceita array de ints OU string CSV ("1,2,3").
-            // null/'' viram []. Ids inválidos/duplicados são descartados
-            // silenciosamente — o resultado final é sempre um array de
-            // ints distintos e positivos, reindexado.
+
             'int_array' => $this->coerceIntArray($raw),
             'string' => is_string($raw) ? $raw : null,
             'enum'   => is_string($raw) ? $raw : null,
-            default  => $raw, // 'mixed' — aceita tudo
+            default  => $raw,
         };
     }
 
-    /**
-     * Helper do coerce('int_array'). Normaliza qualquer entrada em um
-     * array de ints únicos e positivos. Nunca devolve null — o pior caso
-     * é um array vazio (igual ao default da whitelist).
-     */
     private function coerceIntArray(mixed $raw): array
     {
         if ($raw === null || $raw === '') return [];
 
-        // CSV vindo de input text: "1, 2, 3"
         if (is_string($raw)) {
             $raw = array_map('trim', explode(',', $raw));
         }
@@ -373,7 +240,7 @@ class SettingController extends Controller
             if (!is_numeric($v)) continue;
             $i = (int) $v;
             if ($i <= 0) continue;
-            $out[$i] = true; // dedup via chave
+            $out[$i] = true;
         }
         return array_values(array_map('intval', array_keys($out)));
     }
@@ -381,10 +248,7 @@ class SettingController extends Controller
     private function ensureAdmin(): void
     {
         $u = auth()->user();
-        // Sprint Hierarquia (fix) — usa effectiveRole() pra olhar coluna +
-        // Spatie roles juntos. Antes só lia $u->role (coluna), bloqueando
-        // admin que tinha role só no Spatie. Resultado: salvar setting
-        // dava 403 silencioso — UI parecia que "nada acontecia ao alterar".
+
         $role = method_exists($u, 'effectiveRole')
             ? $u->effectiveRole()
             : strtolower(trim((string) ($u->role ?? '')));

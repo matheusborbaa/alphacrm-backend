@@ -9,33 +9,9 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Throwable;
 
-/**
- * Wrapper around Mail::to()->send() that records every attempt (success or
- * failure) into the email_logs table for admin visibility.
- *
- * Uso básico:
- *   EmailLoggerService::send(
- *       to: $user->email,
- *       mailable: new WelcomeUserMail($user, $pwd),
- *       type: EmailLog::TYPE_WELCOME,
- *       relatedUserId: $user->id,
- *       toName: $user->name
- *   );
- *
- * Retorna bool indicando sucesso. Exceções são capturadas e gravadas.
- */
 class EmailLoggerService
 {
-    /**
-     * @param  string        $to              e-mail do destinatário
-     * @param  Mailable      $mailable        instância do Mailable a enviar
-     * @param  string        $type            constante EmailLog::TYPE_*
-     * @param  int|null      $relatedUserId   id do usuário alvo (quando aplicável)
-     * @param  string|null   $toName          nome do destinatário (opcional)
-     * @param  int|null      $triggeredBy     força o triggered_by (default: Auth::id())
-     * @param  bool          $rethrow         relança a exception após logar (default: true)
-     * @return bool                           true se enviou, false se falhou
-     */
+
     public static function send(
         string $to,
         Mailable $mailable,
@@ -50,7 +26,6 @@ class EmailLoggerService
             ? (optional($mailable->envelope())->subject ?? null)
             : null;
 
-        // fallback: tenta pegar $subject público do Mailable
         if ($subject === null && property_exists($mailable, 'subject')) {
             $subject = $mailable->subject ?? null;
         }
@@ -72,15 +47,7 @@ class EmailLoggerService
         ];
 
         try {
-            // sendNow() ignora `implements ShouldQueue` e entrega SÍNCRONO.
-            // Motivo: queremos que o status gravado em email_logs reflita o
-            // resultado real do SMTP — se usássemos send() + queue, o log
-            // diria "sent" só porque o job foi enfileirado, mesmo que o
-            // worker nunca processe (ou o SMTP rejeite depois).
-            // Trade-off: o POST HTTP bloqueia até o SMTP responder. Pros
-            // e-mails transacionais que temos hoje (welcome/reset/invite)
-            // isso é aceitável; se virar problema, voltamos pro queue com
-            // um listener de MessageSent/MessageFailed pra atualizar o log.
+
             Mail::to($to)->sendNow($mailable);
 
             EmailLog::create($base + [
@@ -103,7 +70,7 @@ class EmailLoggerService
                     'error_message' => mb_substr($e->getMessage(), 0, 2000),
                 ]);
             } catch (Throwable $ignored) {
-                // nunca deixa o logger quebrar o fluxo principal
+
             }
 
             if ($rethrow) {

@@ -5,13 +5,6 @@ namespace App\Http\Controllers;
 use App\Models\UserMeta;
 use Illuminate\Http\Request;
 
-/**
- * @group Metas dos Corretores
- *
- * CRUD de metas mensais por corretor.
- * - Admin/gestor: cria, edita, lista todas.
- * - Corretor: só vê a própria (escopo aplicado em index).
- */
 class UserMetaController extends Controller
 {
     public function index(Request $request)
@@ -54,7 +47,6 @@ class UserMetaController extends Controller
             'meta_vendas'       => 'nullable|integer|min:0',
         ]);
 
-        // upsert: se já existe pra aquele user/mes/ano, atualiza
         $meta = UserMeta::updateOrCreate(
             [
                 'user_id' => $data['user_id'],

@@ -5,18 +5,6 @@ namespace App\Console\Commands;
 use App\Services\HostingerService;
 use Illuminate\Console\Command;
 
-/**
- * Lista as VPSes associadas à API key da Hostinger configurada em
- * HOSTINGER_API_KEY. Usado pra descobrir o HOSTINGER_VPS_ID que deve
- * ir no .env — roda uma vez, copia o ID do VPS certo, coloca no .env
- * e não precisa rodar de novo.
- *
- * Executável:  php artisan hostinger:list-vps
- *
- * Saída em caso de sucesso: tabela com id/hostname/plano/estado/IPv4.
- * Saída em caso de erro: mensagem humana explicando (API key vazia,
- * token inválido, Hostinger fora do ar, etc).
- */
 class ListHostingerVps extends Command
 {
     protected $signature   = 'hostinger:list-vps {--raw : Imprime o JSON bruto da resposta (útil pra debug de schema)}';
@@ -34,9 +22,6 @@ class ListHostingerVps extends Command
             return self::FAILURE;
         }
 
-        // --raw imprime o JSON bruto retornado pelo provedor. Usado pra
-        // entender o shape real quando a API evolui e quebra nossa
-        // normalização (ex.: campos virarem objetos aninhados).
         if ($this->option('raw')) {
             $this->line(json_encode($res['raw'] ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
             return self::SUCCESS;
@@ -49,8 +34,6 @@ class ListHostingerVps extends Command
             return self::SUCCESS;
         }
 
-        // Tabela enxuta — só os campos que importam pra identificar qual VPS é
-        // o do CRM. Memória/disco são convertidos de MB pra GB pra leitura humana.
         $rows = [];
         foreach ($vms as $vm) {
             $rows[] = [

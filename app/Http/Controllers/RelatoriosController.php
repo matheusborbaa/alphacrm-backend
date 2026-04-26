@@ -11,23 +11,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 
-/**
- * @group Relatórios
- *
- * Endpoints dos relatórios do CRM (corretor + gerente).
- * Escopo automático: quando o user autenticado é corretor, só vê dados dele.
- * Admin/gestor vê tudo, podendo filtrar por corretor via query param.
- */
 class RelatoriosController extends Controller
 {
-    /* =========================================================
-     | HELPERS
-     |========================================================= */
 
-    /**
-     * Resolve o range de datas (start/end) a partir da request.
-     * Default: mês corrente.
-     */
     private function resolvePeriod(Request $request): array
     {
         $start = $request->filled('start_date')
@@ -41,10 +27,6 @@ class RelatoriosController extends Controller
         return [$start, $end];
     }
 
-    /**
-     * Aplica o escopo do usuário autenticado: corretor só vê dados dele.
-     * Admin/gestor pode filtrar por corretor_id opcional.
-     */
     private function applyScope($query, Request $request, string $column = 'assigned_user_id')
     {
         $user = auth()->user();
@@ -61,9 +43,6 @@ class RelatoriosController extends Controller
         return $query;
     }
 
-    /**
-     * Aplica filtros secundários de empreendimento/canal/origem se presentes.
-     */
     private function applyFilters($query, Request $request)
     {
         if ($request->filled('empreendimento_id')) {
@@ -81,17 +60,6 @@ class RelatoriosController extends Controller
         return $query;
     }
 
-    /* =========================================================
-     | FUNIL DE CONVERSÃO
-     |=========================================================
-     | GET /reports/funnel
-     | Query: start_date, end_date, corretor_id, empreendimento_id, channel, source_id
-     |
-     | Retorna:
-     |   total_leads, por status (com order), taxa de conversão geral,
-     |   leads_convertidos (status "Vendido"), leads_perdidos (status "Perdido"),
-     |   leads_ativos (demais).
-     */
     public function funnel(Request $request)
     {
         [$start, $end] = $this->resolvePeriod($request);
@@ -133,20 +101,11 @@ class RelatoriosController extends Controller
         ]);
     }
 
-    /* =========================================================
-     | PRODUTIVIDADE
-     |=========================================================
-     | GET /reports/productivity
-     | Retorna: appointments realizados por tipo (call/visit/meeting/task),
-     | tempo médio de resposta (first interaction), leads vencidos (sla expired),
-     | leads sem interação nos últimos N dias.
-     */
     public function productivity(Request $request)
     {
         [$start, $end] = $this->resolvePeriod($request);
         $user = auth()->user();
 
-        // Appointments no período
         $apptQuery = Appointment::whereBetween('starts_at', [$start, $end]);
 
         if ($user && $user->role === 'corretor') {
@@ -164,7 +123,6 @@ class RelatoriosController extends Controller
         $totalAppts     = (clone $apptQuery)->count();
         $completedAppts = (clone $apptQuery)->where('status', 'completed')->count();
 
-        // Leads vencidos (SLA) e leads do período
         $leadsQuery = Lead::whereBetween('created_at', [$start, $end]);
         $this->applyScope($leadsQuery, $request);
         $this->applyFilters($leadsQuery, $request);
@@ -172,7 +130,6 @@ class RelatoriosController extends Controller
         $slaExpired = (clone $leadsQuery)->where('sla_status', 'expired')->count();
         $slaMet     = (clone $leadsQuery)->where('sla_status', 'met')->count();
 
-        // Leads sem interação há mais de 5 dias (no escopo)
         $staleCutoff = now()->subDays(5);
         $staleQuery = Lead::query();
         $this->applyScope($staleQuery, $request);
@@ -183,7 +140,6 @@ class RelatoriosController extends Controller
             })
             ->count();
 
-        // Tempo médio de resposta (em minutos) = assigned_at -> last_interaction_at
         $avgResponseMin = (clone $leadsQuery)
             ->whereNotNull('assigned_at')
             ->whereNotNull('last_interaction_at')
@@ -210,12 +166,6 @@ class RelatoriosController extends Controller
         ]);
     }
 
-    /* =========================================================
-     | ORIGEM / CAMPANHA
-     |=========================================================
-     | GET /reports/origin-campaign
-     | Retorna leads agrupados por source, channel, campaign e cidade.
-     */
     public function originCampaign(Request $request)
     {
         [$start, $end] = $this->resolvePeriod($request);
@@ -227,7 +177,6 @@ class RelatoriosController extends Controller
 
         $leads = (clone $query)->get();
 
-        // por origem (source)
         $bySource = $leads->groupBy(fn($l) => optional($l->source)->name ?? 'Indefinido')
             ->map(function ($items, $name) {
                 $total = $items->count();
@@ -240,7 +189,6 @@ class RelatoriosController extends Controller
                 ];
             })->sortByDesc('total')->values();
 
-        // por canal
         $byChannel = $leads->groupBy(fn($l) => $l->channel ?: 'Indefinido')
             ->map(function ($items, $name) {
                 $total = $items->count();
@@ -253,7 +201,6 @@ class RelatoriosController extends Controller
                 ];
             })->sortByDesc('total')->values();
 
-        // por campanha
         $byCampaign = $leads->groupBy(fn($l) => $l->campaign ?: 'Sem campanha')
             ->map(function ($items, $name) {
                 $total = $items->count();
@@ -266,7 +213,6 @@ class RelatoriosController extends Controller
                 ];
             })->sortByDesc('total')->values();
 
-        // por cidade
         $byCity = $leads->groupBy(fn($l) => $l->city_of_interest ?: 'Indefinido')
             ->map(function ($items, $name) {
                 return [
@@ -288,18 +234,6 @@ class RelatoriosController extends Controller
         ]);
     }
 
-    /* =========================================================
-     | RANKING / GAMIFICAÇÃO
-     |=========================================================
-     | GET /reports/ranking
-     | Retorna ranking de corretores no período com:
-     | - leads recebidos, atendidos, convertidos
-     | - appointments realizados
-     | - % da meta atingida (se tiver user_meta cadastrada no mês)
-     |
-     | Quando o user autenticado é corretor, ele ainda vê o ranking geral
-     | (transparência da gamificação).
-     */
     public function ranking(Request $request)
     {
         [$start, $end] = $this->resolvePeriod($request);
@@ -350,7 +284,7 @@ class RelatoriosController extends Controller
                 'leads_total'   => $total,
                 'leads_sold'    => $sold,
                 'appointments'  => $appts,
-                'score'         => ($sold * 10) + ($appts * 2) + $total, // simple weighted score
+                'score'         => ($sold * 10) + ($appts * 2) + $total,
                 'meta'          => $meta,
             ];
         })->sortByDesc('score')->values();
@@ -366,13 +300,6 @@ class RelatoriosController extends Controller
         ]);
     }
 
-    /* =========================================================
-     | EVOLUÇÃO MENSAL (últimos 6 meses)
-     |=========================================================
-     | GET /reports/evolution
-     | Retorna série temporal por mês dos últimos 6 meses:
-     | leads criados, leads vendidos.
-     */
     public function evolution(Request $request)
     {
         $months = (int) $request->get('months', 6);

@@ -4,19 +4,6 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-/**
- * Sprint 2.8c — imagens categorizadas + capa.
- *
- *   category : 'imagens' (default) | 'plantas' | 'decorado'
- *              determina qual aba da galeria mostra a imagem.
- *   is_cover : exatamente UMA por empreendimento deveria ter true.
- *              O controller garante a exclusividade ao setar.
- *
- * A cover_image (coluna string na tabela empreendimentos) continua
- * funcionando como fallback — quando is_cover é marcado, o controller
- * também atualiza empreendimentos.cover_image pra manter compat com
- * listagens/cards antigos que leem direto do empreendimento.
- */
 return new class extends Migration
 {
     public function up(): void

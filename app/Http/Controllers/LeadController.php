@@ -10,19 +10,14 @@ use Illuminate\Http\Request;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
     use App\Http\Resources\LeadResource;
 use App\Models\LeadHistory;
-/**
- * @group Leads
- *
- * APIs para listagem e visualização de leads do CRM.
- * Usado pela Home, Lista de Leads e Card do Lead.
- */
+
 class LeadController extends Controller
 {
 
         use AuthorizesRequests;
 public function update(Request $request, Lead $lead, LeadStatusRequirementValidator $validator)
 {
-    // Bloqueia corretor de editar lead alheio (LeadPolicy@update)
+
     $this->authorize('update', $lead);
 
     $data = $request->validate([
@@ -42,34 +37,11 @@ public function update(Request $request, Lead $lead, LeadStatusRequirementValida
         'city_of_interest'   => 'sometimes|nullable|string|max:120',
         'region_of_interest' => 'sometimes|nullable|string|max:120',
 
-        // Valores de campos customizados que vêm junto (opcional).
-        // Formato: [{ slug: "motivo_descarte", value: "Preço" }, ...]
         'custom_field_values'         => 'sometimes|array',
         'custom_field_values.*.slug'  => 'required_with:custom_field_values|string|exists:custom_fields,slug',
         'custom_field_values.*.value' => 'nullable',
     ]);
 
-    /* ------------------------------------------------------------------
-     * 🔒 GATE DE PERMISSÃO — campos gestor-only
-     *
-     * Alguns campos só gestor/admin pode alterar. O corretor NÃO passa
-     * o lead pra outro corretor sozinho, nem "maquia" origem/campanha
-     * pra poluir relatório de marketing.
-     *
-     * REGRA REVISADA (catch-22 fix):
-     *   - assigned_user_id  → SEMPRE bloqueado pra corretor (nunca rouba lead)
-     *   - source_id / channel / campaign → corretor pode PREENCHER quando
-     *     estão vazios (primeira vez), mas NÃO pode TROCAR valor já existente.
-     *
-     * Por que essa flexibilidade: o modal de obrigatoriedade pode forçar
-     * o corretor a preencher Origem (ou outros) pra mudar etapa do lead.
-     * Se o admin esqueceu de cadastrar, o corretor ficava preso — tinha
-     * que preencher mas o save dava 403. Agora a primeira preenchida é
-     * permitida; trocar valor existente continua sendo só do gestor.
-     *
-     * Se enviou o MESMO valor (noop), removemos silenciosamente do payload
-     * pra evitar histórico falso.
-     * ------------------------------------------------------------------ */
     $authUser  = auth()->user();
     $isManager = $authUser && in_array(
         strtolower(trim((string) ($authUser->role ?? ''))),
@@ -77,10 +49,9 @@ public function update(Request $request, Lead $lead, LeadStatusRequirementValida
         true
     );
     if (!$isManager) {
-        // Reatribuição: SEMPRE proibida pra corretor (mesmo se atual = null)
+
         $strictManagerOnly = ['assigned_user_id'];
 
-        // Marketing: corretor pode preencher quando vazio, não pode trocar
         $fillableWhenEmpty = ['source_id', 'channel', 'campaign'];
 
         foreach ($strictManagerOnly as $f) {
@@ -101,27 +72,23 @@ public function update(Request $request, Lead $lead, LeadStatusRequirementValida
             $attempted = $data[$f];
             $a = $current   === null ? '' : (string) $current;
             $b = $attempted === null ? '' : (string) $attempted;
-            // noop → silencioso
+
             if ($a === $b) {
                 unset($data[$f]);
                 continue;
             }
-            // Atual está VAZIO e corretor está preenchendo pela primeira
-            // vez → permitido (a obrigatoriedade da etapa pode estar
-            // forçando isso).
+
             if ($a === '') {
                 continue;
             }
-            // Atual JÁ tem valor e corretor tentou trocar → bloqueado.
+
             abort(403, 'Só gestor/admin pode alterar este campo.');
         }
     }
 
-    // Separa custom_field_values do resto
     $customValues = $data['custom_field_values'] ?? [];
     unset($data['custom_field_values']);
 
-    // Se está mudando status ou substatus, valida obrigatórios ANTES de salvar
     $validator->validate(
         $lead,
         array_key_exists('status_id', $data)         ? $data['status_id']         : null,
@@ -130,7 +97,6 @@ public function update(Request $request, Lead $lead, LeadStatusRequirementValida
         $customValues
     );
 
-    // Detecta reatribuição de corretor (antes de atualizar) pra notificar depois.
     $previousAssignedUserId = $lead->assigned_user_id;
     $newAssignedUserId      = array_key_exists('assigned_user_id', $data)
         ? $data['assigned_user_id']
@@ -139,16 +105,12 @@ public function update(Request $request, Lead $lead, LeadStatusRequirementValida
         && $newAssignedUserId
         && $newAssignedUserId != $previousAssignedUserId;
 
-    /* 📸 Snapshot dos atributos ANTES do update — usado pra gerar o
-     * histórico granular (1 LeadHistory por campo alterado). */
     $originalAttrs = $lead->getAttributes();
 
-    // Atualiza o lead (campos fixos)
     if (!empty($data)) {
         $lead->update($data);
     }
 
-    // 🔔 Notifica novo corretor em caso de reatribuição (database + e-mail)
     if ($reassigned) {
         $target = \App\Models\User::find($newAssignedUserId);
         if ($target && $target->id !== auth()->id()) {
@@ -164,40 +126,20 @@ public function update(Request $request, Lead $lead, LeadStatusRequirementValida
         }
     }
 
-    // Salva os custom values se vieram e coleta diffs (slug => old/new)
     $customDiffs = [];
     if (!empty($customValues)) {
         $customDiffs = $this->saveCustomValues($lead, $customValues);
     }
 
-    /* 📝 HISTÓRICO GRANULAR — uma entrada por campo alterado.
-     *
-     * Substitui o bloco antigo que gravava uma única linha "atualizou
-     * A, B, C". Agora temos rastreabilidade de valor antigo → novo,
-     * e IDs são resolvidos pra nomes humanos (ex.: "Corretor
-     * responsável: João → Maria").
-     *
-     * ATENÇÃO: status_id e lead_substatus_id já são gravados pelo
-     * LeadObserver com type='status_change' / 'substatus_change' — não
-     * duplicamos aqui. */
     $this->logFieldChanges($lead, $originalAttrs, $customDiffs);
 
     return response()->json(['success' => true]);
 }
 
-/**
- * Compara snapshot antigo vs valores atuais do lead e grava uma
- * entrada em lead_histories por campo alterado.
- *
- * Campos com FK (assigned_user_id, source_id, empreendimento_id) são
- * resolvidos pro nome humano antes de virar string. Custom fields
- * chegam já calculados via $customDiffs (saveCustomValues devolve).
- */
 private function logFieldChanges(Lead $lead, array $originalAttrs, array $customDiffs): void
 {
     if (!auth()->check()) return;
 
-    // Map de campo → label humano (em pt-BR)
     $labels = [
         'name'               => 'Nome',
         'email'              => 'E-mail',
@@ -214,7 +156,6 @@ private function logFieldChanges(Lead $lead, array $originalAttrs, array $custom
         'region_of_interest' => 'Região de interesse',
     ];
 
-    // Resolvers de ID → nome (só pros FKs). Nulos passam como null.
     $resolvers = [
         'assigned_user_id' => fn($id) => $id ? optional(\App\Models\User::find($id))->name : null,
         'source_id'        => fn($id) => $id ? optional(\App\Models\LeadSource::find($id))->name : null,
@@ -227,7 +168,6 @@ private function logFieldChanges(Lead $lead, array $originalAttrs, array $custom
         $before = $originalAttrs[$field];
         $after  = $lead->{$field};
 
-        // Normaliza (null e '' são equivalentes pra fim de diff)
         $a = $before === null ? '' : (string) $before;
         $b = $after  === null ? '' : (string) $after;
         if ($a === $b) continue;
@@ -245,27 +185,15 @@ private function logFieldChanges(Lead $lead, array $originalAttrs, array $custom
         ]);
     }
 
-    // Custom fields — já vêm com label resolvido.
-    // Delega pro helper central (mesmo usado pelo KanbanController@move
-    // e LeadCustomFieldValueController@bulkStore).
     LeadHistory::logFieldChangeDiffs($lead, $customDiffs, auth()->id());
 }
 
-/**
- * Upsert em bulk dos valores de custom fields de um lead.
- * Usado pelo update() quando o request traz custom_field_values.
- *
- * Retorna um array de diffs dos campos que mudaram, no formato:
- *   [ ['label' => 'CPF', 'from' => '...', 'to' => '...'], ... ]
- * O controller usa pra gravar histórico granular.
- */
 private function saveCustomValues(Lead $lead, array $values): array
 {
     $diffs  = [];
     $slugs  = collect($values)->pluck('slug')->unique();
     $fields = CustomField::whereIn('slug', $slugs)->get()->keyBy('slug');
 
-    // Carrega valores ANTIGOS (só dos custom_field_id afetados) pra diff
     $oldByFieldId = LeadCustomFieldValue::where('lead_id', $lead->id)
         ->whereIn('custom_field_id', $fields->pluck('id'))
         ->get()
@@ -289,7 +217,6 @@ private function saveCustomValues(Lead $lead, array $values): array
             ['value'   => $value]
         );
 
-        // Diff (null e '' são equivalentes pra fins de histórico)
         $a = $old   === null ? '' : (string) $old;
         $b = $value === null ? '' : (string) $value;
         if ($a !== $b) {
@@ -304,56 +231,10 @@ private function saveCustomValues(Lead $lead, array $values): array
     return $diffs;
 }
 
-    /**
-     * Listar leads
-     *
-     * Retorna uma lista paginada de leads com filtros opcionais.
-     * Inclui corretor responsável, status, empreendimentos,
-     * último contato e status do SLA.
-     *
-     * @queryParam status_id int Filtrar pelo status do funil. Example: 1
-     * @queryParam assigned_user_id int Filtrar por corretor responsável. Example: 5
-     * @queryParam sla_status string Filtrar pelo status do SLA (pending, met, expired). Example: pending
-     * @queryParam search string Buscar por nome ou telefone do lead. Example: João
-     *
-     * @response 200 {
-     *   "current_page": 1,
-     *   "data": [
-     *     {
-     *       "id": 1,
-     *       "name": "João Silva",
-     *       "phone": "11999999999",
-     *       "sla_status": "pending",
-     *       "corretor": {
-     *         "id": 2,
-     *         "name": "Corretor A"
-     *       },
-     *       "status": {
-     *         "id": 1,
-     *         "name": "Novo"
-     *       },
-     *       "empreendimentos": [
-     *         {
-     *           "id": 1,
-     *           "name": "Residencial Alpha"
-     *         }
-     *       ],
-     *       "interactions": [
-     *         {
-     *           "id": 10,
-     *           "type": "whatsapp",
-     *           "created_at": "2026-01-27T12:00:00Z"
-     *         }
-     *       ]
-     *     }
-     *   ]
-     * }
-     */
     public function index(Request $request)
 {
 
-
-    $user = $request->user(); // usuário logado via Sanctum
+    $user = $request->user();
 
     $query = Lead::with([
         'corretor:id,name',
@@ -368,43 +249,18 @@ private function saveCustomValues(Lead $lead, array $values): array
         },
     ]);
 
-    /*
-    |--------------------------------------------------------------------------
-    | REGRA DE VISUALIZAÇÃO
-    |--------------------------------------------------------------------------
-    | admin / gestor -> veem todos
-    | corretor -> vê apenas os próprios leads
-    |
-    | Delega pro scope centralizado (Lead::visibleTo) — mesma regra
-    | que o chat usa pra decidir se o anexo de lead é permitido.
-    */
     $query->visibleTo($user);
 
-    /*
-    |--------------------------------------------------------------------------
-    | INTERSECÇÃO DE ACL (usado pelo chat)
-    |--------------------------------------------------------------------------
-    | Quando o frontend está montando a lista de leads pra anexar numa
-    | conversa, ele passa `visible_to_user_id=<peer>`. Isso restringe a
-    | lista a leads que TANTO o usuário logado QUANTO o peer enxergam,
-    | evitando que o sender anexe um lead que o outro não tem acesso.
-    |
-    | Se o peer for admin/gestor, o scope não adiciona restrição.
-    | Se o peer for corretor, força assigned_user_id = peer.id.
-    | Dois corretores distintos → intersecção vazia (só um pode ser dono).
-    */
     if ($request->filled('visible_to_user_id')) {
         $peer = \App\Models\User::find((int) $request->visible_to_user_id);
         if (!$peer) {
-            // peer inválido: fail-safe, não vaza nada.
+
             $query->whereRaw('1 = 0');
         } else {
             $query->visibleTo($peer);
         }
     }
 
-    // 🔍 Filtros — centralizado em applyLeadFilters() pra que index e counts
-    // apliquem exatamente as mesmas regras.
     $this->applyLeadFilters($request, $query);
 
    if ($request->filled('search')) {
@@ -417,25 +273,21 @@ private function saveCustomValues(Lead $lead, array $values): array
           ->orWhere('phone', 'like', "%{$search}%")
           ->orWhere('email', 'like', "%{$search}%")
 
-          // 🔥 EMPREENDIMENTO
           ->orWhereHas('empreendimentos', function ($q2) use ($search) {
               $q2->where('name', 'like', "%{$search}%");
           })
 
-          // 🔥 STATUS
           ->orWhereHas('status', function ($q2) use ($search) {
               $q2->where('name', 'like', "%{$search}%");
           })
 
-          // 🔥 CORRETOR
           ->orWhereHas('corretor', function ($q2) use ($search) {
               $q2->where('name', 'like', "%{$search}%");
           })
 
-          // 🔥 DATA (formato YYYY-MM-DD)
           ->orWhereDate('created_at', $search);
     });
-    
+
 }
 
     $perPage = (int) $request->input('per_page', 15);
@@ -446,34 +298,14 @@ private function saveCustomValues(Lead $lead, array $values): array
     );
 }
 
-    /**
-     * Contadores pros cards-resumo da listagem de leads (doc funcional).
-     * Respeita as mesmas regras de visibilidade (corretor só vê os seus).
-     *
-     * GET /leads/counts
-     *
-     * @response 200 {
-     *   "quente": 103,
-     *   "morno": 59,
-     *   "frio": 28,
-     *   "total": 400,
-     *   "em_atendimento": 180,
-     *   "sem_interacao_10d": 30
-     * }
-     */
     public function counts(Request $request)
     {
         $user = $request->user();
 
         $base = Lead::query()->visibleTo($user);
 
-        // Respeita os mesmos filtros da listagem — exceto `temperature`, que
-        // é filtrada separadamente por card. Sem isso, os contadores ficam
-        // descolados da grade (o usuário filtra "sem tarefa" e o "Total"
-        // continua mostrando o total geral).
         $this->applyLeadFilters($request, $base, ['temperature']);
 
-        // Busca textual também afeta os contadores (mesmo comportamento da index).
         if ($request->filled('search')) {
             $search = $request->search;
             $base->where(function ($q) use ($search) {
@@ -503,20 +335,10 @@ private function saveCustomValues(Lead $lead, array $values): array
         ]);
     }
 
-    /**
-     * Aplica filtros de listagem de leads numa query builder. Usado tanto por
-     * index() quanto por counts() pra garantir consistência. Os filtros abaixo
-     * são whitelistados e, quando aceitam múltiplos valores, o frontend manda
-     * como CSV ("a,b,c").
-     *
-     * @param  array  $skip  Lista de filtros a ignorar (útil pro counts, que
-     *                       quebra a contagem por temperatura separadamente).
-     */
     private function applyLeadFilters(Request $request, $query, array $skip = []): void
     {
         $should = fn(string $k) => $request->filled($k) && !in_array($k, $skip, true);
 
-        // Helper: pega string ou CSV e devolve array limpo.
         $csv = function ($raw) {
             if ($raw === null || $raw === '') return [];
             $arr = is_array($raw) ? $raw : explode(',', (string) $raw);
@@ -590,8 +412,6 @@ private function saveCustomValues(Lead $lead, array $values): array
             $query->whereDate('updated_at', '<=', $request->updated_to);
         }
 
-        // Filtro de tarefas: 'ativas' (abertas), 'atrasadas' (abertas + scheduled_at
-        // no passado), 'sem' (nenhum appointment do tipo task).
         if ($should('tarefa')) {
             $val = trim((string) $request->tarefa);
 
@@ -616,48 +436,6 @@ private function saveCustomValues(Lead $lead, array $values): array
         }
     }
 
-    /**
-     * Visualizar lead
-     *
-     * Retorna os dados completos de um lead específico,
-     * incluindo histórico de contatos, corretor,
-     * origem e empreendimentos vinculados.
-     *
-     * @urlParam lead int ID do lead. Example: 1
-     *
-     * @response 200 {
-     *   "id": 1,
-     *   "name": "João Silva",
-     *   "phone": "11999999999",
-     *   "sla_status": "met",
-     *   "corretor": {
-     *     "id": 2,
-     *     "name": "Corretor A"
-     *   },
-     *   "source": {
-     *     "id": 1,
-     *     "name": "ManyChat"
-     *   },
-     *   "empreendimentos": [
-     *     {
-     *       "id": 1,
-     *       "name": "Residencial Alpha"
-     *     }
-     *   ],
-     *   "interactions": [
-     *     {
-     *       "id": 10,
-     *       "type": "whatsapp",
-     *       "note": "Primeiro contato",
-     *       "user": {
-     *         "id": 2,
-     *         "name": "Corretor A"
-     *       }
-     *     }
-     *   ]
-     * }
-     */
-
 public function store(Request $request)
 {
     $user = auth()->user();
@@ -667,18 +445,15 @@ public function store(Request $request)
         'phone'              => 'required|string|max:30',
         'whatsapp'           => 'nullable|string|max:30',
         'email'              => 'nullable|email|max:255',
-        'channel'            => 'nullable|string|max:80',        // origem
+        'channel'            => 'nullable|string|max:80',
         'campaign'           => 'nullable|string|max:150',
         'empreendimento_id'  => 'nullable|integer|exists:empreendimentos,id',
         'city_of_interest'   => 'nullable|string|max:120',
         'region_of_interest' => 'nullable|string|max:120',
         'assigned_user_id'   => 'nullable|integer|exists:users,id',
-        'force'              => 'nullable|boolean',              // bypass do duplicate check
+        'force'              => 'nullable|boolean',
     ]);
 
-    // force=true só é aceito se o usuário for admin ou gestor. Corretor não
-    // pode ignorar a regra de duplicidade — precisa pedir liberação pro
-    // gerente/admin (defesa em camada além do bloqueio visual no frontend).
     $forceBypass = !empty($data['force']);
     if ($forceBypass && !in_array($user->role, ['admin', 'gestor'], true)) {
         return response()->json([
@@ -686,8 +461,6 @@ public function store(Request $request)
         ], 403);
     }
 
-    // 🔎 Verificação de duplicidade (telefone / WhatsApp / email).
-    // Se encontrar e o cliente não tiver confirmado via `force`, devolve 409.
     if (!$forceBypass) {
         $duplicates = $this->findDuplicateLeads(
             $data['phone']    ?? null,
@@ -715,12 +488,11 @@ public function store(Request $request)
         ]
     ));
 
-    // 🔥 fallback: se admin não escolheu
     if (!$assignedUserId) {
-        // O service já notifica o corretor sorteado pelo rodízio.
+
         app(\App\Services\LeadAssignmentService::class)->assign($lead);
     } else {
-        // Admin escolheu o responsável direto — notifica imediatamente.
+
         $target = \App\Models\User::find($assignedUserId);
         if ($target && $target->id !== auth()->id()) {
             try {
@@ -745,13 +517,6 @@ public function store(Request $request)
     return response()->json($lead);
 }
 
-
-/**
- * Endpoint leve pro frontend consultar duplicidade enquanto o corretor
- * preenche o modal. Aceita qualquer combinação de phone/whatsapp/email.
- *
- * GET /leads/check-duplicates?phone=...&whatsapp=...&email=...
- */
 public function checkDuplicates(Request $request)
 {
     $duplicates = $this->findDuplicateLeads(
@@ -766,26 +531,6 @@ public function checkDuplicates(Request $request)
     ]);
 }
 
-
-/**
- * ===========================================================================
- *                   FILA DE LEADS ÓRFÃOS (READ-ONLY)
- * ===========================================================================
- * Leads com assigned_user_id = null formam uma fila lógica que o rodízio
- * consome em ordem (FIFO por created_at) sempre que um corretor vira
- * 'disponivel'. Essa view serve pros gestores e admins acompanharem o
- * tamanho da fila e identificarem gargalos — NÃO é uma ferramenta de
- * atribuição. A distribuição segue 100% automática via LeadAssignmentService.
- *
- * Autorização: só admin e gestor. Corretor não tem acesso.
- * ===========================================================================
- */
-
-/**
- * GET /leads/queue
- * Lista completa da fila de órfãos, ordenada do mais antigo pro mais novo
- * (que é a mesma ordem em que o rodízio vai consumir).
- */
 public function queue(Request $request)
 {
     $this->ensureManager();
@@ -810,10 +555,7 @@ public function queue(Request $request)
     $now = now();
 
     $items = $leads->map(function ($lead) use ($now) {
-        // Carbon 3 (Laravel 12) retorna signed por padrão: como created_at
-        // está no passado, $now->diffInMinutes($created_at) vem NEGATIVO e
-        // cai pra 0 no cast (int). Invertendo a ordem ($created_at->diffInMinutes($now))
-        // + abs() garante positivo independente da versão do Carbon.
+
         $minutes = (int) abs($lead->created_at->diffInMinutes($now));
         return [
             'id'               => $lead->id,
@@ -838,8 +580,6 @@ public function queue(Request $request)
         ];
     });
 
-    // Contagem de corretores disponíveis pro gestor entender por que a
-    // fila está (ou não) avançando. Não bloqueia nada — é só contexto.
     $availableBrokers = \App\Models\User::where('role', 'corretor')
         ->where('active', true)
         ->where('status_corretor', 'disponivel')
@@ -853,26 +593,19 @@ public function queue(Request $request)
     ]);
 }
 
-/**
- * GET /leads/queue/count
- * Endpoint leve pra alimentar o badge do sidebar sem ter que transferir
- * a lista inteira a cada polling.
- */
 public function queueCount(Request $request)
 {
     $this->ensureManager();
 
     $total = Lead::whereNull('assigned_user_id')->count();
 
-    // Pega só o mais antigo pra calcular a cor do badge sem carregar tudo.
     $oldestMinutes = 0;
     if ($total > 0) {
         $oldest = Lead::whereNull('assigned_user_id')
             ->orderBy('created_at', 'asc')
             ->value('created_at');
         if ($oldest) {
-            // Mesma armadilha do queue(): Carbon 3 devolve signed — inverter
-            // ordem e aplicar abs() pra garantir sempre positivo.
+
             $oldestMinutes = (int) abs(\Carbon\Carbon::parse($oldest)->diffInMinutes(now()));
         }
     }
@@ -883,10 +616,6 @@ public function queueCount(Request $request)
     ]);
 }
 
-/**
- * Guarda compartilhada pelos endpoints da fila. Mantém a lógica num
- * só lugar caso a gente adicione mais views read-only no futuro.
- */
 private function ensureManager(): void
 {
     $user = auth()->user();
@@ -898,13 +627,6 @@ private function ensureManager(): void
     }
 }
 
-
-/**
- * Busca leads que batam em qualquer um dos três contatos informados.
- * Normaliza telefones (só dígitos) pra não falhar por causa de máscara.
- *
- * @return \Illuminate\Support\Collection
- */
 protected function findDuplicateLeads(?string $phone, ?string $whatsapp, ?string $email)
 {
     $phoneDigits    = $phone    ? preg_replace('/\D/', '', $phone)    : null;
@@ -916,7 +638,7 @@ protected function findDuplicateLeads(?string $phone, ?string $whatsapp, ?string
 
     $query->where(function ($q) use ($phoneDigits, $whatsappDigits, $email) {
         if ($phoneDigits) {
-            // Compara só dígitos pra tolerar máscaras diferentes
+
             $q->orWhereRaw("REPLACE(REPLACE(REPLACE(REPLACE(phone,' ',''),'-',''),'(',''),')','') = ?", [$phoneDigits]);
             $q->orWhereRaw("REPLACE(REPLACE(REPLACE(REPLACE(whatsapp,' ',''),'-',''),'(',''),')','') = ?", [$phoneDigits]);
         }
@@ -934,7 +656,7 @@ protected function findDuplicateLeads(?string $phone, ?string $whatsapp, ?string
 
 public function destroy(Lead $lead)
 {
-    // Bloqueia quem não tem leads.delete (só admin e gestor, por config)
+
     $this->authorize('delete', $lead);
 
     $lead->delete();
@@ -942,20 +664,6 @@ public function destroy(Lead $lead)
     return response()->json(['success' => true]);
 }
 
-/**
- * LGPD — devolve o valor cleartext de um campo sensível e registra o
- * acesso em lead_histories (type='pii_revealed'). Usado pelo botão
- * "Revelar" na aba Dados do lead.
- *
- * Query params (um dos dois):
- *   - field=phone|whatsapp|email       (campo fixo do lead)
- *   - custom_slug=cpf|rg|...           (custom_field.slug)
- *
- * Resposta: { value: string|null, label: string }
- *
- * Permissão: admin, gestor ou corretor responsável pelo lead. Corretor
- * que NÃO é dono recebe 403 — se for pra ele ver, o gestor reatribui.
- */
 public function reveal(Request $request, Lead $lead)
 {
     $user = auth()->user();
@@ -982,7 +690,7 @@ public function reveal(Request $request, Lead $lead)
     $value = null;
 
     if (!empty($data['field'])) {
-        // Campos fixos — lista branca conferida pelo validator acima
+
         $field = $data['field'];
         $labels = ['phone' => 'Telefone', 'whatsapp' => 'WhatsApp', 'email' => 'E-mail'];
         $label = $labels[$field];
@@ -992,8 +700,7 @@ public function reveal(Request $request, Lead $lead)
         $cf = CustomField::where('slug', $slug)->first();
         if (!$cf) abort(404, 'Campo customizado não encontrado.');
         if (!$cf->is_sensitive) {
-            // Não-sensível não precisa revelar — devolve direto sem log,
-            // pra não poluir o histórico.
+
             $val = LeadCustomFieldValue::where('lead_id', $lead->id)
                 ->where('custom_field_id', $cf->id)->first();
             return response()->json([
@@ -1007,8 +714,6 @@ public function reveal(Request $request, Lead $lead)
         $value = $val?->value;
     }
 
-    // Loga o acesso. Esta é a trilha que a LGPD espera (Art. 37):
-    // "quem leu o CPF do lead X, quando, e em que contexto".
     LeadHistory::create([
         'lead_id'     => $lead->id,
         'user_id'     => $user->id,
@@ -1038,7 +743,7 @@ $lead->load([
     'interactions' => function ($q) {
         $q->with([
             'user:id,name',
-            'appointment' // 👈 AGORA SIM
+            'appointment'
         ])->orderByDesc('created_at');
     },
     'histories' => function ($q) {
@@ -1050,31 +755,11 @@ $lead->load([
     return new LeadResource($lead);
 }
 
-    /**
-     * POST /leads/{id}/first-contact
-     *
-     * O corretor dono do lead marca que fez o primeiro contato. Isso:
-     *   - Cumpre o SLA (sla_status: pending → met). Com 'met', o
-     *     CheckLeadSlaJob ignora o lead e não reatribui por SLA vencido.
-     *   - Opcionalmente move o lead pra etapa+subetapa configuradas em
-     *     lead_after_first_contact_status_id / ..._substatus_id.
-     *   - Grava LeadHistory com o evento + mudanças de etapa/subetapa.
-     *
-     * Regras de acesso:
-     *   - Só o corretor dono do lead OU admin/gestor pode chamar.
-     *   - Só funciona se sla_status === 'pending'. Idempotente: se já foi
-     *     marcado, retorna 409 com mensagem amigável.
-     *
-     * Validação de campos obrigatórios (RequiredFields da etapa destino)
-     * fica no FRONTEND — o modal RequiredFields wizard chama esse endpoint
-     * DEPOIS de já ter gravado os custom fields. Backend aqui só move.
-     */
     public function firstContact(Request $request, $id)
     {
         $lead = Lead::findOrFail($id);
         $user = $request->user();
 
-        // ---- AUTORIZAÇÃO -----------------------------------------------
         $role = strtolower(trim((string) ($user->role ?? '')));
         $isOwner = (int) $lead->assigned_user_id === (int) $user->id;
         if (!$isOwner && !in_array($role, ['admin', 'gestor'], true)) {
@@ -1083,7 +768,6 @@ $lead->load([
             ], 403);
         }
 
-        // ---- IDEMPOTÊNCIA ----------------------------------------------
         if (strtolower((string) $lead->sla_status) !== 'pending') {
             return response()->json([
                 'message'    => 'Primeiro contato já foi registrado (ou SLA já encerrou).',
@@ -1091,7 +775,6 @@ $lead->load([
             ], 409);
         }
 
-        // ---- LÊ CONFIG DE DESTINO --------------------------------------
         $toStatusId = \App\Models\Setting::get('lead_after_first_contact_status_id', null);
         $toSubId    = \App\Models\Setting::get('lead_after_first_contact_substatus_id', null);
         $toStatusId = is_numeric($toStatusId) ? (int) $toStatusId : null;
@@ -1100,8 +783,6 @@ $lead->load([
         $oldStatusId = $lead->status_id;
         $oldSubId    = $lead->lead_substatus_id;
 
-        // Se a subetapa configurada não pertence à etapa de destino (ou à
-        // atual, se não vamos mover), ignora — evita inconsistência.
         if ($toSubId) {
             $targetStatus = $toStatusId ?: $oldStatusId;
             $sub = \App\Models\LeadSubstatus::find($toSubId);
@@ -1124,12 +805,10 @@ $lead->load([
             $subChanged = true;
         }
 
-        // Guarda dados de interação (usado p/ relatório "tempo até 1ª resposta")
         $update['last_interaction_at'] = now();
 
         $lead->update($update);
 
-        // ---- HISTÓRICOS ------------------------------------------------
         try {
             LeadHistory::create([
                 'lead_id'     => $lead->id,
