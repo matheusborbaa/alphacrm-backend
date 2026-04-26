@@ -31,6 +31,8 @@ class User extends Authenticatable
 
         'chat_read_receipts',
 
+        'theme_preference',
+
         'parent_user_id',
         'empreendimento_access_mode',
     ];
