@@ -3,11 +3,13 @@
 namespace App\Http\Controllers;
 
 use App\Models\ChatMessageAttachment;
+use App\Models\Commission;
 use App\Models\CustomField;
 use App\Models\Empreendimento;
 use App\Models\EmpreendimentoImage;
 use App\Models\LeadCustomFieldValue;
 use App\Models\LeadDocument;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
@@ -16,18 +18,19 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 /**
  * Listagem unificada de TODOS os arquivos uploadados pro servidor.
  *
- * Agrega 5 fontes:
+ * Agrega 7 fontes (visão completa do que ocupa disco):
  *
  *   1. lead_documents              — aba Documentos do lead
  *   2. lead_custom_field_values    — custom fields tipo 'file' (JSON em value)
- *   3. chat_message_attachments    — anexos do chat (só os 'upload' diretos —
+ *   3. chat_message_attachments    — anexos do chat (só 'upload' diretos —
  *                                    references a lead_document já contam na fonte 1)
  *   4. empreendimentos.book_path / price_table_path — 2 slots fixos por empreendimento
  *   5. empreendimento_images       — galeria (imagens/plantas/decorado)
+ *   6. users.avatar                — fotos de perfil dos corretores
+ *   7. commissions.payment_receipt_path — comprovantes de pagamento de comissão
  *
- * NÃO inclui:
- *   - users.profile_photo / users.foto    → fotos de perfil ficam fora
- *     (decisão do produto: "apenas documentos mesmos")
+ * Painel mostra também TOTAL OCUPADO no servidor (sem filtro), pra o
+ * admin saber quanto disk está em uso global, mesmo navegando filtros.
  *
  * Uso típico: admin acompanha o que está consumindo disco e identifica
  * arquivos órfãos. Cada item retorna `download_url` que aponta pro
@@ -61,15 +64,30 @@ class AdminFilesController extends Controller
         // Pra catálogos pequenos/médios isso é O(N) aceitável; se algum
         // dia escalar pra 100k+ arquivos, migrar pra view materializada
         // ou índice consolidado.
-        $rows = collect();
+        //
+        // Coletamos sempre TODAS as fontes pra o cálculo do total global
+        // ser preciso (independente do filtro). O filtro de tipo apenas
+        // remove do conjunto pós-coleta.
+        $allRows = collect()
+            ->merge($this->fromLeadDocuments())
+            ->merge($this->fromCustomFieldFiles())
+            ->merge($this->fromChatAttachments())
+            ->merge($this->fromEmpreendimentoDocs())
+            ->merge($this->fromEmpreendimentoImages())
+            ->merge($this->fromUserAvatars())
+            ->merge($this->fromCommissionReceipts());
 
-        if (!$type || $type === 'lead_document')        $rows = $rows->merge($this->fromLeadDocuments());
-        if (!$type || $type === 'custom_field')         $rows = $rows->merge($this->fromCustomFieldFiles());
-        if (!$type || $type === 'chat')                 $rows = $rows->merge($this->fromChatAttachments());
-        if (!$type || $type === 'empreendimento')       $rows = $rows->merge($this->fromEmpreendimentoDocs());
-        if (!$type || $type === 'empreendimento_image') $rows = $rows->merge($this->fromEmpreendimentoImages());
+        // Total GLOBAL — sempre o tudo no servidor, sem filtro.
+        // Útil pro admin saber o disk total ocupado mesmo enquanto navega
+        // filtros específicos.
+        $globalCount = $allRows->count();
+        $globalBytes = $allRows->sum(fn ($r) => (int) ($r['size_bytes'] ?? 0));
 
-        // Filtros pós-coleta (cheap; rows já está montado)
+        // Aplica filtros (type primeiro pra reduzir o set)
+        $rows = $allRows;
+        if ($type) {
+            $rows = $rows->filter(fn ($r) => $r['type'] === $type);
+        }
         if ($q !== '') {
             $needle = mb_strtolower($q);
             $rows = $rows->filter(fn ($r) =>
@@ -96,12 +114,14 @@ class AdminFilesController extends Controller
         $sliced = $rows->forPage($page, $perPage)->values();
 
         return response()->json([
-            'data'        => $sliced,
-            'total'       => $totalCount,
-            'total_bytes' => $totalBytes,
-            'page'        => $page,
-            'per_page'    => $perPage,
-            'last_page'   => (int) ceil($totalCount / $perPage),
+            'data'           => $sliced,
+            'total'          => $totalCount,
+            'total_bytes'    => $totalBytes,
+            'global_count'   => $globalCount,
+            'global_bytes'   => $globalBytes,
+            'page'           => $page,
+            'per_page'       => $perPage,
+            'last_page'      => (int) ceil(max(1, $totalCount) / $perPage),
         ]);
     }
 
@@ -258,6 +278,58 @@ class AdminFilesController extends Controller
                 'context_label'  => 'Empreendimento: ' . ($i->empreendimento?->name ?? '#' . $i->empreendimento_id),
                 'context_url'    => $i->empreendimento_id ? "empreendimento.html?id={$i->empreendimento_id}" : null,
                 'download_url'   => null,   // imagens são servidas via static URL pública (não passa por endpoint)
+            ]);
+    }
+
+    /**
+     * Fotos de perfil dos usuários (users.avatar). Servidas via URL pública
+     * — não há endpoint dedicado de download (browser pode abrir direto).
+     */
+    private function fromUserAvatars(): Collection
+    {
+        return User::query()
+            ->whereNotNull('avatar')
+            ->where('avatar', '!=', '')
+            ->select(['id', 'name', 'avatar', 'created_at', 'updated_at'])
+            ->get()
+            ->map(fn ($u) => [
+                'id'             => 'avatar-' . $u->id,
+                'type'           => 'user_avatar',
+                'type_label'     => 'Foto de Perfil',
+                'original_name'  => basename($u->avatar),
+                'size_bytes'     => $this->fileSize($u->avatar),
+                'mime_type'      => $this->mimeFromPath($u->avatar),
+                'created_at'     => optional($u->updated_at ?: $u->created_at)->toIso8601String(),
+                'uploader'       => $u->name,
+                'context_label'  => 'Usuário: ' . $u->name,
+                'context_url'    => "corretor.html?id={$u->id}",
+                'download_url'   => null,
+            ]);
+    }
+
+    /**
+     * Comprovantes de pagamento de comissão (commissions.payment_receipt_path).
+     * Upload feito pelo financeiro/admin ao confirmar pagamento.
+     */
+    private function fromCommissionReceipts(): Collection
+    {
+        return Commission::query()
+            ->whereNotNull('payment_receipt_path')
+            ->where('payment_receipt_path', '!=', '')
+            ->with(['user:id,name', 'lead:id,name'])
+            ->get()
+            ->map(fn ($c) => [
+                'id'             => 'commission-' . $c->id,
+                'type'           => 'commission_receipt',
+                'type_label'     => 'Comprovante de Comissão',
+                'original_name'  => basename($c->payment_receipt_path),
+                'size_bytes'     => $this->fileSize($c->payment_receipt_path),
+                'mime_type'      => $this->mimeFromPath($c->payment_receipt_path),
+                'created_at'     => optional($c->paid_at ?: $c->updated_at ?: $c->created_at)->toIso8601String(),
+                'uploader'       => null,
+                'context_label'  => 'Comissão #' . $c->id . ($c->lead?->name ? ' · Lead: ' . $c->lead->name : ''),
+                'context_url'    => 'comissoes.html',
+                'download_url'   => null,
             ]);
     }
 
