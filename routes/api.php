@@ -26,6 +26,7 @@ use App\Http\Controllers\StatusRequiredFieldController;
 use App\Http\Controllers\LeadCustomFieldValueController;
 use App\Http\Controllers\LeadCustomFieldFileController;
 use App\Http\Controllers\AdminFilesController;
+use App\Http\Controllers\MediaController;
 use App\Models\Appointment;
 use App\Models\LeadStatus;
 use App\Models\Lead;
@@ -1179,6 +1180,21 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post  ('/leads/{lead}/custom-field-files/{slug}', [LeadCustomFieldFileController::class, 'store']);
     Route::get   ('/leads/{lead}/custom-field-files/{slug}', [LeadCustomFieldFileController::class, 'download']);
     Route::delete('/leads/{lead}/custom-field-files/{slug}', [LeadCustomFieldFileController::class, 'destroy']);
+
+    /*
+    |--------------------------------------------------------------------------
+    | BIBLIOTECA DE MÍDIA — Área do Corretor
+    |--------------------------------------------------------------------------
+    | Materiais institucionais/marketing organizados em pastas hierárquicas.
+    | Permissions granulares: view (todos), upload, create_folder, delete.
+    */
+    Route::get   ('/media/contents',                   [MediaController::class, 'contents'])->middleware('permission:media.view');
+    Route::get   ('/media/folders/{folder}/contents',  [MediaController::class, 'contents'])->middleware('permission:media.view');
+    Route::get   ('/media/files/{file}/download',      [MediaController::class, 'downloadFile'])->middleware('permission:media.view');
+    Route::post  ('/media/folders',                    [MediaController::class, 'storeFolder'])->middleware('permission:media.create_folder');
+    Route::post  ('/media/files',                      [MediaController::class, 'uploadFile'])->middleware('permission:media.upload');
+    Route::delete('/media/folders/{folder}',           [MediaController::class, 'destroyFolder'])->middleware('permission:media.delete');
+    Route::delete('/media/files/{file}',               [MediaController::class, 'destroyFile'])->middleware('permission:media.delete');
 });
 
 

@@ -241,6 +241,27 @@ class Catalog
                     ['name' => 'notifications.view', 'label' => 'Ver notificações'],
                 ],
             ],
+
+            // ============================================================
+            // BIBLIOTECA DE MÍDIA — Área do Corretor → aba Biblioteca
+            // ============================================================
+            // Materiais institucionais (PDFs, fotos, vídeos, contratos
+            // modelo) organizados em pastas hierárquicas. Corretor baixa
+            // pra usar em redes sociais / divulgação. Admin/gestor sobe
+            // e organiza. Permissions granulares pra que clientes
+            // diferentes possam ter políticas distintas (ex: gestor sobe
+            // mas só admin apaga).
+            [
+                'key'   => 'media',
+                'label' => 'Biblioteca de Mídia',
+                'icon'  => 'folder-open',
+                'permissions' => [
+                    ['name' => 'media.view',          'label' => 'Ver e baixar arquivos',  'hint' => 'Necessária pra abrir a aba Biblioteca'],
+                    ['name' => 'media.upload',        'label' => 'Subir arquivos'],
+                    ['name' => 'media.create_folder', 'label' => 'Criar pastas'],
+                    ['name' => 'media.delete',        'label' => 'Apagar arquivos e pastas', 'hint' => 'Apagar pasta deleta subpastas e arquivos junto'],
+                ],
+            ],
         ];
     }
 
@@ -381,6 +402,10 @@ class Catalog
             'reports.productivity',
             'chat.use',
             'notifications.view',
+            // Biblioteca de Mídia: corretor lê+baixa material institucional.
+            // Upload/criar pasta/apagar são de gestor/admin (já incluídos
+            // nos defaults dos respectivos types via $all e $gestor).
+            'media.view',
         ];
 
         return [
