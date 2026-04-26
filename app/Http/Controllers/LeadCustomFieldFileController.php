@@ -48,10 +48,19 @@ class LeadCustomFieldFileController extends Controller
 {
     use AuthorizesRequests;
 
-    /** Disco onde os arquivos vivem. Mesmo do LeadDocumentController. */
-    private const DISK = 'private';
+    /**
+     * Disco onde os arquivos vivem. 'local' = storage/app/ (padrão do
+     * Laravel, mesmo do LeadDocumentController). NÃO é público — não há
+     * URL direta; tudo passa pelo download() que valida o lead+policy.
+     *
+     * Antes tinha 'private' aqui, mas esse disco não existe na config
+     * default — só rolaria se o admin tivesse adicionado em
+     * config/filesystems.php manualmente. Padronizado pra 'local' pra
+     * não exigir setup extra.
+     */
+    private const DISK = 'local';
 
-    /** Diretório raiz dentro do disco. */
+    /** Diretório raiz dentro do disco (storage/app/lead_custom_files/...). */
     private const ROOT = 'lead_custom_files';
 
     /**
