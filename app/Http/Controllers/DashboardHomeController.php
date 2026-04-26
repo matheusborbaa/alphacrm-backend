@@ -30,6 +30,27 @@ class DashboardHomeController extends Controller
      *                      a métrica é "tempo até sair", não "tempo até agora".
      *                      null = sem dados ainda (etapa nunca teve saída).
      *
+     * Sprint H1.4-fix (abr/2026) — CONTAGEM CUMULATIVA.
+     *
+     * Antes: `withCount('leads')` contava só leads ATUALMENTE em cada
+     * etapa (snapshot). Resultado quebrava a noção de funil — se a maioria
+     * dos leads tivesse avançado, a etapa inicial mostrava número MENOR
+     * que as posteriores, gerando conversão > 100% (ex: 2 em "Lead
+     * Cadastrado", 4 em "Venda" → conversão 200% absurdo).
+     *
+     * Agora: pra cada etapa N, contamos leads cuja etapa ATUAL tem
+     * order >= N (incluindo terminais). Conceito: lead em "Vendido"
+     * passou por todas as etapas anteriores, então conta em todas.
+     * Isso garante:
+     *   - Números monotonicamente decrescentes ao longo do funil
+     *   - Conversão sempre <= 100%
+     *   - Conversão geral = última_etapa_não_terminal / topo_funil
+     *
+     * Caveat: aproximação. Se o lead foi importado direto numa etapa
+     * avançada sem passar pelas anteriores, ele ainda "conta" nelas.
+     * Pra precisão real (com lead_histories), seria outra reescrita
+     * mais cara — fica pra quando precisar.
+     *
      * Retorno: array de etapas em ordem cronológica, cada uma com name,
      * order, color_hex, total, conv_rate_pct e avg_days. Frontend usa
      * tudo pra renderizar o funil novo (números dentro, descrição+%+tempo
@@ -43,18 +64,43 @@ class DashboardHomeController extends Controller
         // intervalo, agrupados por etapa atual onde estão agora".
         [$start, $end] = $this->resolveFunnelPeriod($request);
 
+        // 1) Etapas que aparecem no funil (não-terminais).
         $statuses = \App\Models\LeadStatus::query()
-            ->where('is_terminal', false)         // tira terminais do funil
-            ->withCount(['leads' => function ($q) use ($start, $end) {
-                if ($start && $end) {
-                    $q->whereBetween('created_at', [$start, $end]);
-                }
-            }])
+            ->where('is_terminal', false)
             ->orderBy('order')
             ->get(['id', 'name', 'order', 'color_hex']);
 
         if ($statuses->isEmpty()) {
             return response()->json([]);
+        }
+
+        // 2) Mapa de TODOS os status (incl. terminais) → order, pra contar
+        //    cumulativo. Lead em "Vendido" (terminal) tem que contar como
+        //    "passou por Lead Cadastrado, Em Atendimento, Pasta…" porque
+        //    chegou ao fim do pipeline pra fechar venda.
+        $allStatusOrders = \App\Models\LeadStatus::query()
+            ->orderBy('order')
+            ->pluck('order', 'id'); // [status_id => order]
+
+        // 3) Quantos leads em cada status_id (com filtro de período).
+        $leadsByStatusId = \App\Models\Lead::query()
+            ->when($start && $end, fn($q) => $q->whereBetween('created_at', [$start, $end]))
+            ->whereNotNull('status_id')
+            ->selectRaw('status_id, COUNT(*) as cnt')
+            ->groupBy('status_id')
+            ->pluck('cnt', 'status_id'); // [status_id => count]
+
+        // 4) Pra cada etapa do funil, soma leads de todos status com
+        //    order >= a dela (cumulativo).
+        $cumulativeByEtapa = [];
+        foreach ($statuses as $stage) {
+            $sum = 0;
+            foreach ($allStatusOrders as $sid => $order) {
+                if ($order >= (int) $stage->order) {
+                    $sum += (int) ($leadsByStatusId[$sid] ?? 0);
+                }
+            }
+            $cumulativeByEtapa[$stage->id] = $sum;
         }
 
         // Calcula tempo médio em cada etapa de uma vez (uma única passada
@@ -67,8 +113,8 @@ class DashboardHomeController extends Controller
         // comparada à imediatamente anterior). A primeira etapa fica em
         // 100% por definição — é o ponto de entrada do funil.
         $previousTotal = null;
-        $payload = $statuses->map(function ($status) use (&$previousTotal, $avgDaysByStatus) {
-            $total = (int) $status->leads_count;
+        $payload = $statuses->map(function ($status) use (&$previousTotal, $avgDaysByStatus, $cumulativeByEtapa) {
+            $total = (int) ($cumulativeByEtapa[$status->id] ?? 0);
             $convPct = ($previousTotal === null)
                 ? 100.0
                 : ($previousTotal > 0 ? round(($total / $previousTotal) * 100, 1) : 0.0);
