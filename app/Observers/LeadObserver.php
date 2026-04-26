@@ -9,9 +9,27 @@ use App\Models\LeadHistory;
 use App\Models\Commission;
 use App\Models\Setting;
 use App\Services\AuditService;
+use App\Services\MediaLibrarySync;
 
 class LeadObserver
 {
+    /**
+     * Sprint Biblioteca/Lead — quando um lead é criado, cria também
+     * a pasta-espelho dele em /LEADS/. Falha silenciosa: erro na
+     * biblioteca não pode bloquear o cadastro do lead.
+     */
+    public function created(Lead $lead): void
+    {
+        try {
+            app(MediaLibrarySync::class)->ensureFolderForLead($lead);
+        } catch (\Throwable $e) {
+            \Log::warning('Falha ao criar pasta da biblioteca pro lead', [
+                'lead_id' => $lead->id,
+                'error'   => $e->getMessage(),
+            ]);
+        }
+    }
+
     /**
      * Dispara sempre que um Lead é atualizado.
      *
@@ -19,6 +37,8 @@ class LeadObserver
      *   1. Registrar em lead_histories toda vez que status OU substatus muda
      *      (usado pela aba "Histórico" do lead.php).
      *   2. Criar comissão quando o lead é marcado como "Vendido".
+     *   3. Sincronizar nome da pasta-espelho na biblioteca quando o
+     *      `name` do lead mudar.
      *
      * Rodar tudo aqui em um único observer garante que qualquer caminho
      * que chame $lead->update(...) — LeadController@update, KanbanController@move,
@@ -30,6 +50,43 @@ class LeadObserver
         $this->logStatusHistory($lead);
         $this->logSubstatusHistory($lead);
         $this->maybeCreateCommission($lead);
+        $this->maybeSyncMediaFolder($lead);
+    }
+
+    /**
+     * Sprint Biblioteca/Lead — interceptado ANTES do delete pra
+     * apagar a pasta-espelho enquanto a relação lead_id ainda existe.
+     * Se rodasse no `deleted`, a FK nullOnDelete já teria nulificado.
+     */
+    public function deleting(Lead $lead): void
+    {
+        try {
+            app(MediaLibrarySync::class)->handleLeadDeleted($lead->id);
+        } catch (\Throwable $e) {
+            \Log::warning('Falha ao remover pasta da biblioteca do lead', [
+                'lead_id' => $lead->id,
+                'error'   => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Renomeia a pasta-espelho quando o nome do lead mudar. Reatribuição
+     * (mudança de assigned_user_id) NÃO precisa tocar a pasta — o filtro
+     * de acesso lê assigned_user_id em runtime via JOIN, então o novo
+     * corretor enxerga automaticamente.
+     */
+    protected function maybeSyncMediaFolder(Lead $lead): void
+    {
+        if (!$lead->wasChanged('name')) return;
+        try {
+            app(MediaLibrarySync::class)->ensureFolderForLead($lead);
+        } catch (\Throwable $e) {
+            \Log::warning('Falha ao renomear pasta da biblioteca do lead', [
+                'lead_id' => $lead->id,
+                'error'   => $e->getMessage(),
+            ]);
+        }
     }
 
     /**

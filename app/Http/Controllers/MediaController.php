@@ -57,17 +57,31 @@ class MediaController extends Controller
         // Lista de empreendimento_ids que o user pode ver. null = admin/all
         // (sem filtro). Usado pra esconder pastas vinculadas que o user
         // não atende.
-        $allowedEmpIds = $this->allowedEmpreendimentoIds($user);
+        $allowedEmpIds  = $this->allowedEmpreendimentoIds($user);
+
+        // Sprint Biblioteca/Lead — leads que o user pode ver. null = admin/
+        // gestor (vê tudo); array vazio = sem leads. Aplicamos filtro
+        // separado das pastas de empreendimento.
+        $isManager      = $this->isManagerRole($user);
+        $allowedLeadIds = $isManager ? null : $this->accessibleLeadIds($user);
 
         $childFolders = MediaFolder::query()
             ->when($folder, fn ($q) => $q->where('parent_id', $folder->id))
             ->when(!$folder, fn ($q) => $q->whereNull('parent_id'))
             ->when(is_array($allowedEmpIds), function ($q) use ($allowedEmpIds) {
-                // Mostra: pastas SEM vínculo OU pastas com empreendimento_id
-                // que o user pode acessar.
+                // Mostra: pastas SEM vínculo de empreendimento OU com
+                // empreendimento_id que o user atende.
                 $q->where(function ($qq) use ($allowedEmpIds) {
                     $qq->whereNull('empreendimento_id')
                        ->orWhereIn('empreendimento_id', $allowedEmpIds);
+                });
+            })
+            ->when(is_array($allowedLeadIds), function ($q) use ($allowedLeadIds) {
+                // Mesma lógica pra leads: pastas SEM lead_id OU com
+                // lead_id que o user (corretor) é responsável.
+                $q->where(function ($qq) use ($allowedLeadIds) {
+                    $qq->whereNull('lead_id')
+                       ->orWhereIn('lead_id', $allowedLeadIds);
                 });
             })
             ->withCount(['children', 'files'])
@@ -81,6 +95,7 @@ class MediaController extends Controller
                 'files_count'       => $f->files_count,
                 'is_system'         => (bool) $f->is_system,
                 'empreendimento_id' => $f->empreendimento_id,
+                'lead_id'           => $f->lead_id,
                 'created_at'        => optional($f->created_at)->toIso8601String(),
             ]);
 
@@ -117,6 +132,7 @@ class MediaController extends Controller
                 'description'       => $folder->description,
                 'is_system'         => (bool) $folder->is_system,
                 'empreendimento_id' => $folder->empreendimento_id,
+                'lead_id'           => $folder->lead_id,
             ] : null,
             'breadcrumb'  => $breadcrumb,
             'folders'     => $childFolders,
@@ -125,16 +141,33 @@ class MediaController extends Controller
     }
 
     /**
-     * Decide se o user pode ver a pasta. Pasta sem empreendimento (própria
-     * ou herdado) → todos veem. Pasta vinculada → só quem tem acesso ao
-     * empreendimento. Admin sempre passa.
+     * Decide se o user pode ver a pasta. Regras combinadas:
+     *   - Sem vínculo (empreendimento ou lead, próprio ou herdado): todos veem
+     *   - Com empreendimento_id: só quem canAccessEmpreendimento()
+     *   - Com lead_id: admin/gestor sempre + corretor responsável (assigned_user_id)
      */
     private function userCanSeeFolder($user, MediaFolder $folder): bool
     {
+        // Empreendimento — mantido como antes
         $effectiveEmp = $folder->effectiveEmpreendimentoId();
-        if (!$effectiveEmp) return true;
-        if (!$user) return false;
-        return $user->canAccessEmpreendimento($effectiveEmp);
+        if ($effectiveEmp) {
+            if (!$user) return false;
+            if (!$user->canAccessEmpreendimento($effectiveEmp)) return false;
+        }
+
+        // Lead — admin/gestor passa direto, corretor só se for o dono
+        $effectiveLead = $folder->effectiveLeadId();
+        if ($effectiveLead) {
+            if (!$user) return false;
+            if ($this->isManagerRole($user)) return true;
+
+            // Carrega só o assigned_user_id (sem hidratar o lead inteiro)
+            $assigned = \App\Models\Lead::whereKey($effectiveLead)
+                ->value('assigned_user_id');
+            if ((int) $assigned !== (int) $user->id) return false;
+        }
+
+        return true;
     }
 
     /**
@@ -149,6 +182,29 @@ class MediaController extends Controller
         if ($role === 'admin') return null;
         if (($user->empreendimento_access_mode ?? null) === 'all') return null;
         return $user->accessibleEmpreendimentoIds()->all();
+    }
+
+    /**
+     * Sprint Biblioteca/Lead — IDs de leads que o corretor é responsável.
+     * Usado SÓ pra corretor (admin/gestor passa por isManagerRole + null).
+     * Retorna array (pode ser vazio) — nunca null.
+     */
+    private function accessibleLeadIds($user): array
+    {
+        if (!$user) return [];
+        return \App\Models\Lead::where('assigned_user_id', $user->id)
+            ->pluck('id')
+            ->all();
+    }
+
+    /**
+     * Decide se o user é admin ou gestor (vê leads de todos).
+     */
+    private function isManagerRole($user): bool
+    {
+        if (!$user) return false;
+        $role = method_exists($user, 'effectiveRole') ? $user->effectiveRole() : ($user->role ?? '');
+        return in_array(strtolower((string) $role), ['admin', 'gestor'], true);
     }
 
     /**
@@ -168,20 +224,21 @@ class MediaController extends Controller
             'description' => 'nullable|string|max:1000',
         ]);
 
-        $user        = $request->user();
-        $parentId    = $data['parent_id'] ?? null;
-        $inheritedEmp = null;
+        $user         = $request->user();
+        $parentId     = $data['parent_id'] ?? null;
+        $inheritedEmp  = null;
+        $inheritedLead = null;
 
         if ($parentId) {
             $parent = MediaFolder::with('parent.parent.parent')->find($parentId);
             if ($parent) {
-                // Bloqueia user sem acesso ao empreendimento de criar pasta
-                // dentro da subárvore vinculada (defesa em profundidade —
-                // o frontend já não deve mostrar a pasta).
+                // Bloqueia user sem acesso (de empreendimento OU de lead) de
+                // criar pasta dentro da subárvore restrita.
                 if (!$this->userCanSeeFolder($user, $parent)) {
                     return response()->json(['message' => 'Sem acesso à pasta destino.'], 403);
                 }
-                $inheritedEmp = $parent->effectiveEmpreendimentoId();
+                $inheritedEmp  = $parent->effectiveEmpreendimentoId();
+                $inheritedLead = $parent->effectiveLeadId();
             }
         }
 
@@ -189,6 +246,7 @@ class MediaController extends Controller
             'name'              => trim($data['name']),
             'parent_id'         => $parentId,
             'empreendimento_id' => $inheritedEmp,
+            'lead_id'           => $inheritedLead,
             'description'       => $data['description'] ?? null,
             'created_by'        => auth()->id(),
             'is_system'         => false,
@@ -199,6 +257,7 @@ class MediaController extends Controller
             'name'              => $folder->name,
             'parent_id'         => $folder->parent_id,
             'empreendimento_id' => $folder->empreendimento_id,
+            'lead_id'           => $folder->lead_id,
             'description'       => $folder->description,
             'is_system'         => false,
             'children_count'    => 0,
@@ -221,17 +280,25 @@ class MediaController extends Controller
         //    de empreendimento só são removidas quando o próprio empreendimento
         //    é apagado em /empreendimentos (via EmpreendimentoObserver).
         if ($folder->is_system) {
-            $msg = $folder->empreendimento_id
-                ? 'Esta pasta pertence a um empreendimento e só pode ser removida ao excluir o empreendimento.'
-                : 'Esta pasta é gerenciada pelo sistema e não pode ser excluída.';
+            $msg = 'Esta pasta é gerenciada pelo sistema e não pode ser excluída.';
+            if ($folder->empreendimento_id) {
+                $msg = 'Esta pasta pertence a um empreendimento e só pode ser removida ao excluir o empreendimento.';
+            } elseif ($folder->lead_id) {
+                $msg = 'Esta pasta pertence a um lead e só pode ser removida ao excluir o lead.';
+            }
             return response()->json(['message' => $msg], 422);
         }
 
-        // 2) Defesa redundante: pasta não-system mas vinculada a empreendimento
-        //    (caso esquisito de inconsistência) — também bloqueia.
+        // 2) Defesa redundante: pasta não-system mas vinculada (caso de
+        //    inconsistência) — também bloqueia.
         if ($folder->empreendimento_id) {
             return response()->json([
                 'message' => 'Pastas vinculadas a empreendimentos só são removidas ao excluir o empreendimento.',
+            ], 422);
+        }
+        if ($folder->lead_id) {
+            return response()->json([
+                'message' => 'Pastas vinculadas a leads só são removidas ao excluir o lead.',
             ], 422);
         }
 

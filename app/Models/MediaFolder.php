@@ -30,6 +30,7 @@ class MediaFolder extends Model
     protected $fillable = [
         'parent_id',
         'empreendimento_id',
+        'lead_id',
         'name',
         'created_by',
         'description',
@@ -63,6 +64,11 @@ class MediaFolder extends Model
     public function empreendimento(): BelongsTo
     {
         return $this->belongsTo(Empreendimento::class);
+    }
+
+    public function lead(): BelongsTo
+    {
+        return $this->belongsTo(Lead::class);
     }
 
     /**
@@ -102,6 +108,26 @@ class MediaFolder extends Model
         while ($cur) {
             if ($cur->empreendimento_id) {
                 return (int) $cur->empreendimento_id;
+            }
+            $cur = $cur->parent;
+        }
+        return null;
+    }
+
+    /**
+     * Mesma lógica de effectiveEmpreendimentoId, mas pra lead_id.
+     * Subpasta dentro de "/LEADS/Maria Silva/" herda o lead_id da raiz —
+     * só o corretor responsável (e admin/gestor) enxerga toda a subárvore.
+     */
+    public function effectiveLeadId(): ?int
+    {
+        if ($this->lead_id) {
+            return (int) $this->lead_id;
+        }
+        $cur = $this->parent;
+        while ($cur) {
+            if ($cur->lead_id) {
+                return (int) $cur->lead_id;
             }
             $cur = $cur->parent;
         }

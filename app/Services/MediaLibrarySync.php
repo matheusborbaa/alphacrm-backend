@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Empreendimento;
+use App\Models\Lead;
 use App\Models\MediaFile;
 use App\Models\MediaFolder;
 use Illuminate\Support\Facades\Storage;
@@ -21,7 +22,8 @@ use Illuminate\Support\Facades\Storage;
  */
 class MediaLibrarySync
 {
-    public const ROOT_FOLDER_NAME = 'EMPREENDIMENTOS';
+    public const ROOT_FOLDER_NAME       = 'EMPREENDIMENTOS';
+    public const ROOT_LEADS_FOLDER_NAME = 'LEADS';
 
     /**
      * Garante que existe a pasta raiz "EMPREENDIMENTOS" e retorna ela.
@@ -141,5 +143,108 @@ class MediaLibrarySync
             $paths = array_merge($paths, $this->collectFilePathsRecursive($child));
         }
         return $paths;
+    }
+
+
+    /* ====================================================================
+     * LEADS — espelho de pasta por lead, restrito ao corretor responsável
+     * ====================================================================
+     * Mesmo padrão do empreendimento, mas com semântica de acesso pessoal:
+     *   /LEADS/                  (raiz system)
+     *   /LEADS/Maria Silva (#42)/  (lead_id=42, is_system=true)
+     *
+     * O MediaController filtra: pasta com lead_id só aparece pra admin/
+     * gestor OU corretor cujo lead.assigned_user_id é ele mesmo. Se o
+     * lead for reatribuído, o filtro reage (lê assigned_user_id em runtime).
+     * ==================================================================== */
+
+    /**
+     * Garante que existe a pasta raiz "LEADS". Igual à raiz EMPREENDIMENTOS.
+     */
+    public function ensureLeadsRootFolder(): MediaFolder
+    {
+        return MediaFolder::firstOrCreate(
+            [
+                'parent_id'         => null,
+                'empreendimento_id' => null,
+                'lead_id'           => null,
+                'name'              => self::ROOT_LEADS_FOLDER_NAME,
+            ],
+            [
+                'description' => 'Materiais organizados por lead. Cada subpasta é gerenciada automaticamente — apenas o corretor responsável pelo lead (e admin/gestor) enxerga o conteúdo.',
+                'is_system'   => true,
+                'created_by'  => null,
+            ]
+        );
+    }
+
+    /**
+     * Garante que existe a subpasta deste lead dentro da raiz LEADS.
+     * Idempotente: se já existe (mesmo lead_id), só renomeia se o nome
+     * do lead mudou.
+     *
+     * Nome inclui o ID do lead pra evitar colisão entre leads de mesmo
+     * nome ("Maria Silva" pode aparecer várias vezes na base): formato
+     * "Maria Silva (#42)".
+     */
+    public function ensureFolderForLead(Lead $lead): MediaFolder
+    {
+        $root = $this->ensureLeadsRootFolder();
+        $desiredName = $this->buildLeadFolderName($lead);
+
+        $folder = MediaFolder::where('lead_id', $lead->id)->first();
+
+        if (!$folder) {
+            return MediaFolder::create([
+                'parent_id'   => $root->id,
+                'lead_id'     => $lead->id,
+                'name'        => $desiredName,
+                'description' => 'Pasta automática do lead ' . $lead->name . '. Visível apenas pro corretor responsável e admin/gestor.',
+                'is_system'   => true,
+                'created_by'  => null,
+            ]);
+        }
+
+        // Sincroniza se o nome do lead mudou ou alguém moveu pra fora da raiz
+        $changes = [];
+        if ($folder->name !== $desiredName) $changes['name'] = $desiredName;
+        if ((int) $folder->parent_id !== (int) $root->id) $changes['parent_id'] = $root->id;
+        if (!$folder->is_system) $changes['is_system'] = true;
+        if ($changes) {
+            $folder->update($changes);
+        }
+        return $folder;
+    }
+
+    private function buildLeadFolderName(Lead $lead): string
+    {
+        $name = trim((string) $lead->name) ?: ('Lead #' . $lead->id);
+        // Limita pra não estourar varchar(200) com nomes monstros
+        if (mb_strlen($name) > 160) {
+            $name = mb_substr($name, 0, 157) . '...';
+        }
+        return $name . ' (#' . $lead->id . ')';
+    }
+
+    /**
+     * Quando o lead é deletado, apaga a pasta + subpastas + arquivos
+     * físicos do disco. Mesma estratégia de handleEmpreendimentoDeleted:
+     * coleta paths antes do delete (cascade do parent_id derruba files
+     * no DB), depois limpa do disco.
+     *
+     * Chamado pelo LeadObserver::deleting() — ANTES do delete real, com
+     * a relação `lead_id` ainda viva (se rodasse depois, FK nullOnDelete
+     * já teria zerado).
+     */
+    public function handleLeadDeleted(int $leadId): void
+    {
+        $folder = MediaFolder::where('lead_id', $leadId)->first();
+        if (!$folder) return;
+
+        $paths = $this->collectFilePathsRecursive($folder);
+        $folder->delete();
+        if (!empty($paths)) {
+            Storage::disk('local')->delete($paths);
+        }
     }
 }
