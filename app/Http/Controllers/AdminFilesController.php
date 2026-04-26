@@ -68,14 +68,19 @@ class AdminFilesController extends Controller
         // Coletamos sempre TODAS as fontes pra o cálculo do total global
         // ser preciso (independente do filtro). O filtro de tipo apenas
         // remove do conjunto pós-coleta.
+        //
+        // Cada fonte é envolvida num try/catch pra isolar falhas — se um
+        // model/relação tiver problema (ex: relacionamento errado, coluna
+        // renomeada), só aquela fonte fica vazia, o resto continua. Sem
+        // isso, um erro em qualquer uma quebra a página inteira com 500.
         $allRows = collect()
-            ->merge($this->fromLeadDocuments())
-            ->merge($this->fromCustomFieldFiles())
-            ->merge($this->fromChatAttachments())
-            ->merge($this->fromEmpreendimentoDocs())
-            ->merge($this->fromEmpreendimentoImages())
-            ->merge($this->fromUserAvatars())
-            ->merge($this->fromCommissionReceipts());
+            ->merge($this->safeCollect('lead_documents',        fn () => $this->fromLeadDocuments()))
+            ->merge($this->safeCollect('custom_field_files',    fn () => $this->fromCustomFieldFiles()))
+            ->merge($this->safeCollect('chat_attachments',      fn () => $this->fromChatAttachments()))
+            ->merge($this->safeCollect('empreendimento_docs',   fn () => $this->fromEmpreendimentoDocs()))
+            ->merge($this->safeCollect('empreendimento_images', fn () => $this->fromEmpreendimentoImages()))
+            ->merge($this->safeCollect('user_avatars',          fn () => $this->fromUserAvatars()))
+            ->merge($this->safeCollect('commission_receipts',   fn () => $this->fromCommissionReceipts()));
 
         // Total GLOBAL — sempre o tudo no servidor, sem filtro.
         // Útil pro admin saber o disk total ocupado mesmo enquanto navega
@@ -310,13 +315,16 @@ class AdminFilesController extends Controller
     /**
      * Comprovantes de pagamento de comissão (commissions.payment_receipt_path).
      * Upload feito pelo financeiro/admin ao confirmar pagamento.
+     *
+     * Cuidado com relacionamentos: Commission tem `corretor()` (não `user()`)
+     * e `lead()`. Usar nomes errados quebra com 500.
      */
     private function fromCommissionReceipts(): Collection
     {
         return Commission::query()
             ->whereNotNull('payment_receipt_path')
             ->where('payment_receipt_path', '!=', '')
-            ->with(['user:id,name', 'lead:id,name'])
+            ->with(['corretor:id,name', 'lead:id,name'])
             ->get()
             ->map(fn ($c) => [
                 'id'             => 'commission-' . $c->id,
@@ -326,7 +334,7 @@ class AdminFilesController extends Controller
                 'size_bytes'     => $this->fileSize($c->payment_receipt_path),
                 'mime_type'      => $this->mimeFromPath($c->payment_receipt_path),
                 'created_at'     => optional($c->paid_at ?: $c->updated_at ?: $c->created_at)->toIso8601String(),
-                'uploader'       => null,
+                'uploader'       => $c->corretor?->name,
                 'context_label'  => 'Comissão #' . $c->id . ($c->lead?->name ? ' · Lead: ' . $c->lead->name : ''),
                 'context_url'    => 'comissoes.html',
                 'download_url'   => null,
@@ -336,6 +344,22 @@ class AdminFilesController extends Controller
     /* ====================================================================
      * HELPERS
      * ==================================================================== */
+
+    /**
+     * Wrapper defensivo pra cada fonte. Se a fonte explode (model
+     * mudou de nome, coluna não existe, relação errada, etc), loga e
+     * devolve coleção vazia — assim a página inteira não quebra com
+     * 500 por causa de UMA fonte com problema.
+     */
+    private function safeCollect(string $sourceName, callable $fn): Collection
+    {
+        try {
+            return $fn();
+        } catch (\Throwable $e) {
+            \Log::warning("[AdminFilesController] fonte '{$sourceName}' falhou: " . $e->getMessage());
+            return collect();
+        }
+    }
 
     /**
      * Tenta descobrir tamanho do arquivo no disco. Como cada fonte
