@@ -46,19 +46,42 @@ class MediaController extends Controller
             return response()->json(['message' => 'Pasta não encontrada.'], 404);
         }
 
+        $user = $request->user();
+
+        // Sprint Biblioteca — Se a pasta atual está dentro de uma subárvore
+        // vinculada a empreendimento e o user não tem acesso, recusa direto.
+        if ($folder && !$this->userCanSeeFolder($user, $folder)) {
+            return response()->json(['message' => 'Você não tem acesso a esta pasta.'], 403);
+        }
+
+        // Lista de empreendimento_ids que o user pode ver. null = admin/all
+        // (sem filtro). Usado pra esconder pastas vinculadas que o user
+        // não atende.
+        $allowedEmpIds = $this->allowedEmpreendimentoIds($user);
+
         $childFolders = MediaFolder::query()
             ->when($folder, fn ($q) => $q->where('parent_id', $folder->id))
             ->when(!$folder, fn ($q) => $q->whereNull('parent_id'))
+            ->when(is_array($allowedEmpIds), function ($q) use ($allowedEmpIds) {
+                // Mostra: pastas SEM vínculo OU pastas com empreendimento_id
+                // que o user pode acessar.
+                $q->where(function ($qq) use ($allowedEmpIds) {
+                    $qq->whereNull('empreendimento_id')
+                       ->orWhereIn('empreendimento_id', $allowedEmpIds);
+                });
+            })
             ->withCount(['children', 'files'])
             ->orderBy('name')
             ->get()
             ->map(fn ($f) => [
-                'id'            => $f->id,
-                'name'          => $f->name,
-                'description'   => $f->description,
-                'children_count'=> $f->children_count,
-                'files_count'   => $f->files_count,
-                'created_at'    => optional($f->created_at)->toIso8601String(),
+                'id'                => $f->id,
+                'name'              => $f->name,
+                'description'       => $f->description,
+                'children_count'    => $f->children_count,
+                'files_count'       => $f->files_count,
+                'is_system'         => (bool) $f->is_system,
+                'empreendimento_id' => $f->empreendimento_id,
+                'created_at'        => optional($f->created_at)->toIso8601String(),
             ]);
 
         $files = MediaFile::query()
@@ -88,7 +111,13 @@ class MediaController extends Controller
         }
 
         return response()->json([
-            'folder'      => $folder ? ['id' => $folder->id, 'name' => $folder->name, 'description' => $folder->description] : null,
+            'folder'      => $folder ? [
+                'id'                => $folder->id,
+                'name'              => $folder->name,
+                'description'       => $folder->description,
+                'is_system'         => (bool) $folder->is_system,
+                'empreendimento_id' => $folder->empreendimento_id,
+            ] : null,
             'breadcrumb'  => $breadcrumb,
             'folders'     => $childFolders,
             'files'       => $files,
@@ -96,8 +125,40 @@ class MediaController extends Controller
     }
 
     /**
+     * Decide se o user pode ver a pasta. Pasta sem empreendimento (própria
+     * ou herdado) → todos veem. Pasta vinculada → só quem tem acesso ao
+     * empreendimento. Admin sempre passa.
+     */
+    private function userCanSeeFolder($user, MediaFolder $folder): bool
+    {
+        $effectiveEmp = $folder->effectiveEmpreendimentoId();
+        if (!$effectiveEmp) return true;
+        if (!$user) return false;
+        return $user->canAccessEmpreendimento($effectiveEmp);
+    }
+
+    /**
+     * Retorna array de empreendimento_ids que o user atende, ou null se
+     * o user vê tudo (admin ou access_mode=all). Quando user não autenticado
+     * por algum motivo, retorna [] = nada visível.
+     */
+    private function allowedEmpreendimentoIds($user): ?array
+    {
+        if (!$user) return [];
+        $role = method_exists($user, 'effectiveRole') ? $user->effectiveRole() : ($user->role ?? '');
+        if ($role === 'admin') return null;
+        if (($user->empreendimento_access_mode ?? null) === 'all') return null;
+        return $user->accessibleEmpreendimentoIds()->all();
+    }
+
+    /**
      * POST /media/folders
      * Body: { name, parent_id? }
+     *
+     * Sprint Biblioteca — quando o parent tem empreendimento_id (ou herda
+     * de algum ancestral), a nova subpasta também herda — assim materiais
+     * organizados em subpastas dentro de "/EMPREENDIMENTOS/Reserva Verde/"
+     * continuam restritos a quem atende esse empreendimento.
      */
     public function storeFolder(Request $request)
     {
@@ -107,20 +168,41 @@ class MediaController extends Controller
             'description' => 'nullable|string|max:1000',
         ]);
 
+        $user        = $request->user();
+        $parentId    = $data['parent_id'] ?? null;
+        $inheritedEmp = null;
+
+        if ($parentId) {
+            $parent = MediaFolder::with('parent.parent.parent')->find($parentId);
+            if ($parent) {
+                // Bloqueia user sem acesso ao empreendimento de criar pasta
+                // dentro da subárvore vinculada (defesa em profundidade —
+                // o frontend já não deve mostrar a pasta).
+                if (!$this->userCanSeeFolder($user, $parent)) {
+                    return response()->json(['message' => 'Sem acesso à pasta destino.'], 403);
+                }
+                $inheritedEmp = $parent->effectiveEmpreendimentoId();
+            }
+        }
+
         $folder = MediaFolder::create([
-            'name'        => trim($data['name']),
-            'parent_id'   => $data['parent_id'] ?? null,
-            'description' => $data['description'] ?? null,
-            'created_by'  => auth()->id(),
+            'name'              => trim($data['name']),
+            'parent_id'         => $parentId,
+            'empreendimento_id' => $inheritedEmp,
+            'description'       => $data['description'] ?? null,
+            'created_by'        => auth()->id(),
+            'is_system'         => false,
         ]);
 
         return response()->json([
-            'id'            => $folder->id,
-            'name'          => $folder->name,
-            'parent_id'     => $folder->parent_id,
-            'description'   => $folder->description,
-            'children_count'=> 0,
-            'files_count'   => 0,
+            'id'                => $folder->id,
+            'name'              => $folder->name,
+            'parent_id'         => $folder->parent_id,
+            'empreendimento_id' => $folder->empreendimento_id,
+            'description'       => $folder->description,
+            'is_system'         => false,
+            'children_count'    => 0,
+            'files_count'       => 0,
         ], 201);
     }
 
@@ -128,9 +210,23 @@ class MediaController extends Controller
      * DELETE /media/folders/{folder}
      * Cascade: apaga subpastas e arquivos juntos. Tenta apagar arquivos
      * físicos do disco também.
+     *
+     * Bloqueia delete de pasta system (raiz EMPREENDIMENTOS e pasta
+     * gerenciada de cada empreendimento) — só backend deleta essas.
      */
-    public function destroyFolder(MediaFolder $folder)
+    public function destroyFolder(Request $request, MediaFolder $folder)
     {
+        if ($folder->is_system) {
+            return response()->json([
+                'message' => 'Esta pasta é gerenciada pelo sistema e não pode ser excluída manualmente.',
+            ], 422);
+        }
+
+        // Defesa: corretor sem acesso ao empreendimento da pasta não apaga.
+        if (!$this->userCanSeeFolder($request->user(), $folder)) {
+            return response()->json(['message' => 'Sem acesso a esta pasta.'], 403);
+        }
+
         // Antes de deletar do banco, junta paths físicos pra apagar do disco
         $paths = $this->collectFilePathsRecursive($folder);
 
@@ -171,6 +267,15 @@ class MediaController extends Controller
             'description' => 'nullable|string|max:1000',
         ]);
 
+        // Defesa: bloqueia upload em pasta vinculada a empreendimento que o
+        // user não atende. (Frontend já esconde, mas reforço aqui.)
+        if ($request->filled('folder_id')) {
+            $target = MediaFolder::with('parent.parent.parent')->find($request->input('folder_id'));
+            if ($target && !$this->userCanSeeFolder($request->user(), $target)) {
+                return response()->json(['message' => 'Sem acesso à pasta destino.'], 403);
+            }
+        }
+
         $upload  = $request->file('file');
         $orig    = $upload->getClientOriginalName();
         $safe    = $this->sanitizeFilename($orig);
@@ -206,6 +311,18 @@ class MediaController extends Controller
      */
     public function downloadFile(Request $request, MediaFile $file): StreamedResponse
     {
+        // Sprint Biblioteca — bloqueia download de arquivo dentro de pasta
+        // vinculada a empreendimento sem acesso. Sem essa checagem, alguém
+        // podia adivinhar IDs e baixar materiais de empreendimentos que não
+        // atende. Mais barato carregar a pasta com ancestrais aqui (1 query
+        // a mais) do que vazar arquivo institucional.
+        if ($file->folder_id) {
+            $folder = MediaFolder::with('parent.parent.parent')->find($file->folder_id);
+            if ($folder && !$this->userCanSeeFolder($request->user(), $folder)) {
+                abort(403, 'Sem acesso a este arquivo.');
+            }
+        }
+
         $disk = Storage::disk(self::DISK);
         if (!$disk->exists($file->storage_path)) {
             abort(404, 'Arquivo não encontrado no servidor.');
@@ -230,8 +347,17 @@ class MediaController extends Controller
     /**
      * DELETE /media/files/{file}
      */
-    public function destroyFile(MediaFile $file)
+    public function destroyFile(Request $request, MediaFile $file)
     {
+        // Defesa: arquivo dentro de pasta de empreendimento que o user
+        // não atende não pode ser apagado.
+        if ($file->folder_id) {
+            $folder = MediaFolder::with('parent.parent.parent')->find($file->folder_id);
+            if ($folder && !$this->userCanSeeFolder($request->user(), $folder)) {
+                return response()->json(['message' => 'Sem acesso a este arquivo.'], 403);
+            }
+        }
+
         $path = $file->storage_path;
         $file->delete();
         if ($path) Storage::disk(self::DISK)->delete($path);
