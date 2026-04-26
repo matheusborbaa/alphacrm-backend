@@ -46,6 +46,10 @@ use App\Http\Controllers\VpsStatusController;
     Route::post('/me', [UserController::class, 'updateProfile'])->middleware(['auth:sanctum']);
     // Status do corretor (disponivel/ocupado/offline) — usado pelo rodízio.
     Route::post('/users/me/status', [UserController::class, 'updateStatus'])->middleware(['auth:sanctum']);
+    // Sprint Auto-Offline — heartbeat de presença. Frontend manda ~60/60s
+    // pra atualizar last_seen_at. Comando MarkInactiveCorretoresOffline
+    // marca offline quem não bate há mais de N min.
+    Route::post('/users/me/heartbeat', [UserController::class, 'heartbeat'])->middleware(['auth:sanctum']);
     // Sprint 3.8d — preferências pessoais (self-service). Hoje só
     // chat_read_receipts; futuras preferências de usuário entram aqui.
     Route::post('/users/me/preferences', [UserController::class, 'updatePreferences'])->middleware(['auth:sanctum']);

@@ -27,6 +27,17 @@ Schedule::command('leads:release-cooldowns')
     ->onOneServer()
     ->withoutOverlapping();
 
+// Sprint Auto-Offline — força offline corretores que ficaram com status
+// 'disponivel' mas pararam de mandar heartbeat (provavelmente fecharam
+// o navegador). Threshold é configurável em Configurações → Geral
+// (corretor_auto_offline_minutes). Setar 0 desativa o feature e este
+// comando vira noop. Roda a cada 5 min — barato, só faz UPDATE em users
+// expirados. Resolve "tem gente disponível há dias com sistema fechado".
+Schedule::command('corretores:mark-offline-inactive')
+    ->everyFiveMinutes()
+    ->onOneServer()
+    ->withoutOverlapping();
+
 // Monitoramento automático de capacidade do servidor (disco/RAM). Roda
 // de hora em hora — o comando tem dedup interno (24h entre lembretes
 // pra uma mesma métrica em estado crítico sustentado), então rodar

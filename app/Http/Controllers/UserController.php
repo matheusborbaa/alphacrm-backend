@@ -547,6 +547,13 @@ class UserController extends Controller
             $claimed = $assigner->tryClaimNextOrphan($user->fresh());
         }
 
+        // Quando o user fica 'disponivel', considera presente — registra
+        // last_seen_at imediatamente pra evitar ser considerado "ocioso"
+        // pelo MarkInactiveCorretoresOffline assim que voltar.
+        if ($after === 'disponivel') {
+            $user->forceFill(['last_seen_at' => now()])->save();
+        }
+
         return response()->json([
             'status'         => $after,
             'cooldown_until' => $user->fresh()->cooldown_until?->toIso8601String(),
@@ -555,6 +562,31 @@ class UserController extends Controller
                 'name' => $claimed->name,
             ] : null,
         ]);
+    }
+
+    /**
+     * POST /users/me/heartbeat
+     *
+     * Sprint Auto-Offline — frontend envia a cada ~60s (visibility-aware:
+     * só com aba em foco). Atualiza last_seen_at pra "provar" que o user
+     * tá efetivamente usando o sistema.
+     *
+     * Comando MarkInactiveCorretoresOffline percorre users com
+     * status='disponivel' AND last_seen_at < now() - corretor_auto_offline_minutes
+     * e força offline — pra evitar fila distribuir lead pra quem fechou
+     * o navegador esquecido.
+     *
+     * Endpoint barato: 1 UPDATE em users por chamada.
+     */
+    public function heartbeat(Request $request)
+    {
+        $user = $request->user();
+        if ($user) {
+            // forceFill + save evita validação de mass-assignment
+            // (last_seen_at não precisa estar em $fillable).
+            $user->forceFill(['last_seen_at' => now()])->save();
+        }
+        return response()->json(['ok' => true, 'at' => now()->toIso8601String()]);
     }
 
     /**

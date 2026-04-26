@@ -162,6 +162,18 @@ class SettingController extends Controller
             'default' => true,
         ],
 
+        // =================== AUTO-OFFLINE POR INATIVIDADE ===============
+        // Minutos sem heartbeat antes do MarkInactiveCorretoresOffline
+        // forçar status_corretor='offline'. Frontend bate em
+        // /users/me/heartbeat a cada ~60s enquanto a aba está visível e o
+        // user está disponível. 0 desliga o auto-offline (legacy).
+        'corretor_auto_offline_minutes' => [
+            'type'    => 'int',
+            'default' => 60,
+            'min'     => 0,
+            'max'     => 1440,
+        ],
+
         // =================== SESSÕES SIMULTÂNEAS (Sprint 3.0a) ==========
         // Quantidade máxima de tokens Sanctum vivos por user. No login,
         // AuthController conta os tokens; se atingiu, devolve 409 com a
