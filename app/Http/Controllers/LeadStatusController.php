@@ -19,7 +19,7 @@ class LeadStatusController extends Controller
 {
     public function index()
     {
-        return LeadStatus::select('id', 'name', 'order', 'color_hex', 'is_terminal')
+        return LeadStatus::select('id', 'name', 'order', 'color_hex', 'is_terminal', 'is_discard')
             ->withCount('leads')
             ->orderBy('order')
             ->get();
@@ -98,6 +98,10 @@ class LeadStatusController extends Controller
             'color_hex' => ['nullable', 'regex:/^#[0-9A-Fa-f]{6}$/'],
             // Sprint H1.4 — esconder do funil (etapa terminal: vendido/perdido)
             'is_terminal' => 'sometimes|boolean',
+            // Etapa de descarte (Perdido/Descartado/Cancelado): pula a
+            // cobrança em cascata de obrigatórios das etapas anteriores.
+            // Ver LeadStatusRequirementValidator::intermediateAndTargetStatusIds().
+            'is_discard'  => 'sometimes|boolean',
         ]);
     }
 }

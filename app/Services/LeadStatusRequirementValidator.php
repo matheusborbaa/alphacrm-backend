@@ -249,6 +249,15 @@ class LeadStatusRequirementValidator
      * Quando target.order <= current.order (voltando), ainda assim pegamos
      * tudo até o destino: os campos ja preenchidos simplesmente nao viram
      * "missing" e não aparecem no modal.
+     *
+     * EXCEÇÃO — etapas de DESCARTE (is_discard=true):
+     *   Descartado/Perdido/Cancelado NÃO cobram a cascata. O lead foi
+     *     abandonado justamente porque o corretor NÃO conseguiu coletar
+     *     as infos das etapas anteriores; cobrar tudo de novo bloqueia
+     *     o descarte e gera fricção pura. Cobramos apenas as regras
+     *     configuradas para a própria etapa de descarte (típico:
+     *     "motivo do descarte" custom field).
+     *   Vendido continua na cascata — venda quer histórico completo.
      */
     private function intermediateAndTargetStatusIds(?int $currentStatusId, ?int $targetStatusId): array
     {
@@ -258,6 +267,11 @@ class LeadStatusRequirementValidator
 
         $target = LeadStatus::find($targetStatusId);
         if (!$target) return [];
+
+        // Etapa de descarte → só ela mesma. Sem cascata de anteriores.
+        if (!empty($target->is_discard)) {
+            return [(int) $target->id];
+        }
 
         // Todas as etapas do início até o destino (inclusive)
         return LeadStatus::where('order', '<=', $target->order)
