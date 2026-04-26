@@ -151,13 +151,22 @@ class LeadObserver
             return;
         }
 
-        $percentage = $lead->empreendimento
-            ? $lead->empreendimento->commission_percentage
-            : 5;
+        // Fix bug NULL: o ternário antigo (`$emp ? $emp->commission_percentage : 5`)
+        // só pegava o fallback quando o empreendimento NÃO existia. Se o
+        // empreendimento existia mas o campo estava vazio (NULL), o INSERT
+        // explodia com SQLSTATE 23000 — `commission_percentage` é NOT NULL.
+        // Coalescing aninhado garante fallback em ambos os casos.
+        $percentage = $lead->empreendimento?->commission_percentage ?? 5;
 
         $saleValue = $lead->sale_value
             ?? $lead->empreendimento?->average_sale_value
             ?? 0;
+
+        // Defesa final: se ainda assim algo zerou o percentage, usa 5.
+        // Mantém a comissão "draft" criável; admin ajusta depois em /comissoes.
+        if ($percentage === null || $percentage === '') {
+            $percentage = 5;
+        }
 
         $commissionValue = ($saleValue * $percentage) / 100;
 
