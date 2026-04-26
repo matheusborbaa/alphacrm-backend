@@ -40,7 +40,14 @@ class ManyChatWebhookController extends Controller
                 'order' => 1
             ]);
 
-            $lead = Lead::where('phone', $data['phone'])->first();
+
+
+            $phoneDigits = Lead::normalizePhone($data['phone']);
+            $lead = $phoneDigits
+                ? Lead::where('phone_normalized', $phoneDigits)
+                      ->orWhere('whatsapp_normalized', $phoneDigits)
+                      ->first()
+                : null;
 
             if (!$lead) {
                 $lead = Lead::create([

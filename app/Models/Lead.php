@@ -65,6 +65,37 @@ class Lead extends Model
         'value'               => 'decimal:2',
     ];
 
+    /**
+     * Normaliza um telefone pra forma canônica usada nas comparações de duplicidade.
+     * - Mantém só dígitos
+     * - Se vier com código de país (Brasil = 55) e o resultado tiver mais de 11 dígitos,
+     *   pega os últimos 11 (DDD + número celular/fixo)
+     * - Retorna null pra strings vazias
+     */
+    public static function normalizePhone(?string $value): ?string
+    {
+        if ($value === null) return null;
+        $digits = preg_replace('/\D/', '', $value);
+        if ($digits === '') return null;
+        if (strlen($digits) > 11) {
+            $digits = substr($digits, -11);
+        }
+        return $digits;
+    }
+
+
+    public function setPhoneAttribute($value): void
+    {
+        $this->attributes['phone'] = $value;
+        $this->attributes['phone_normalized'] = self::normalizePhone($value);
+    }
+
+    public function setWhatsappAttribute($value): void
+    {
+        $this->attributes['whatsapp'] = $value;
+        $this->attributes['whatsapp_normalized'] = self::normalizePhone($value);
+    }
+
     public function corretor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'assigned_user_id');

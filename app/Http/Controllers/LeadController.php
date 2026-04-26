@@ -469,8 +469,14 @@ public function store(Request $request)
         );
 
         if ($duplicates->isNotEmpty()) {
+
+            $isManager = in_array($user->role, ['admin', 'gestor'], true);
+            $msg = $isManager
+                ? 'Lead possivelmente duplicado. Revise os resultados antes de confirmar o cadastro.'
+                : 'Lead já cadastrado. Procure o gerente ou administrador.';
+
             return response()->json([
-                'message'    => 'Já existem leads com esses contatos.',
+                'message'    => $msg,
                 'duplicates' => $duplicates,
             ], 409);
         }
@@ -629,22 +635,27 @@ private function ensureManager(): void
 
 protected function findDuplicateLeads(?string $phone, ?string $whatsapp, ?string $email)
 {
-    $phoneDigits    = $phone    ? preg_replace('/\D/', '', $phone)    : null;
-    $whatsappDigits = $whatsapp ? preg_replace('/\D/', '', $whatsapp) : null;
+
+    $phoneDigits    = \App\Models\Lead::normalizePhone($phone);
+    $whatsappDigits = \App\Models\Lead::normalizePhone($whatsapp);
+
+    if (!$phoneDigits && !$whatsappDigits && !$email) {
+        return collect();
+    }
 
     $query = \App\Models\Lead::query()
         ->select(['id', 'name', 'phone', 'whatsapp', 'email', 'status_id', 'assigned_user_id', 'created_at'])
         ->with(['status:id,name', 'corretor:id,name']);
 
     $query->where(function ($q) use ($phoneDigits, $whatsappDigits, $email) {
-        if ($phoneDigits) {
 
-            $q->orWhereRaw("REPLACE(REPLACE(REPLACE(REPLACE(phone,' ',''),'-',''),'(',''),')','') = ?", [$phoneDigits]);
-            $q->orWhereRaw("REPLACE(REPLACE(REPLACE(REPLACE(whatsapp,' ',''),'-',''),'(',''),')','') = ?", [$phoneDigits]);
+        if ($phoneDigits) {
+            $q->orWhere('phone_normalized', $phoneDigits);
+            $q->orWhere('whatsapp_normalized', $phoneDigits);
         }
         if ($whatsappDigits && $whatsappDigits !== $phoneDigits) {
-            $q->orWhereRaw("REPLACE(REPLACE(REPLACE(REPLACE(phone,' ',''),'-',''),'(',''),')','') = ?", [$whatsappDigits]);
-            $q->orWhereRaw("REPLACE(REPLACE(REPLACE(REPLACE(whatsapp,' ',''),'-',''),'(',''),')','') = ?", [$whatsappDigits]);
+            $q->orWhere('phone_normalized', $whatsappDigits);
+            $q->orWhere('whatsapp_normalized', $whatsappDigits);
         }
         if ($email) {
             $q->orWhere('email', $email);
