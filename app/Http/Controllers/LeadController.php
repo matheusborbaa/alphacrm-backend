@@ -54,9 +54,20 @@ public function update(Request $request, Lead $lead, LeadStatusRequirementValida
      *
      * Alguns campos só gestor/admin pode alterar. O corretor NÃO passa
      * o lead pra outro corretor sozinho, nem "maquia" origem/campanha
-     * pra poluir relatório de marketing. Se o corretor tentou mudar
-     * explicitamente qualquer um desses campos, retornamos 403. Se
-     * enviou o MESMO valor (noop), removemos silenciosamente do payload
+     * pra poluir relatório de marketing.
+     *
+     * REGRA REVISADA (catch-22 fix):
+     *   - assigned_user_id  → SEMPRE bloqueado pra corretor (nunca rouba lead)
+     *   - source_id / channel / campaign → corretor pode PREENCHER quando
+     *     estão vazios (primeira vez), mas NÃO pode TROCAR valor já existente.
+     *
+     * Por que essa flexibilidade: o modal de obrigatoriedade pode forçar
+     * o corretor a preencher Origem (ou outros) pra mudar etapa do lead.
+     * Se o admin esqueceu de cadastrar, o corretor ficava preso — tinha
+     * que preencher mas o save dava 403. Agora a primeira preenchida é
+     * permitida; trocar valor existente continua sendo só do gestor.
+     *
+     * Se enviou o MESMO valor (noop), removemos silenciosamente do payload
      * pra evitar histórico falso.
      * ------------------------------------------------------------------ */
     $authUser  = auth()->user();
@@ -66,19 +77,43 @@ public function update(Request $request, Lead $lead, LeadStatusRequirementValida
         true
     );
     if (!$isManager) {
-        $managerOnly = ['assigned_user_id', 'source_id', 'channel', 'campaign'];
-        foreach ($managerOnly as $f) {
+        // Reatribuição: SEMPRE proibida pra corretor (mesmo se atual = null)
+        $strictManagerOnly = ['assigned_user_id'];
+
+        // Marketing: corretor pode preencher quando vazio, não pode trocar
+        $fillableWhenEmpty = ['source_id', 'channel', 'campaign'];
+
+        foreach ($strictManagerOnly as $f) {
             if (!array_key_exists($f, $data)) continue;
             $current   = $lead->{$f};
             $attempted = $data[$f];
-            // Normaliza pra comparar (null, '', 0 são equivalentes aqui).
             $a = $current   === null ? '' : (string) $current;
             $b = $attempted === null ? '' : (string) $attempted;
             if ($a !== $b) {
                 abort(403, 'Só gestor/admin pode alterar este campo.');
             }
-            // Valor igual ao atual — noop, não deixa na água do update
             unset($data[$f]);
+        }
+
+        foreach ($fillableWhenEmpty as $f) {
+            if (!array_key_exists($f, $data)) continue;
+            $current   = $lead->{$f};
+            $attempted = $data[$f];
+            $a = $current   === null ? '' : (string) $current;
+            $b = $attempted === null ? '' : (string) $attempted;
+            // noop → silencioso
+            if ($a === $b) {
+                unset($data[$f]);
+                continue;
+            }
+            // Atual está VAZIO e corretor está preenchendo pela primeira
+            // vez → permitido (a obrigatoriedade da etapa pode estar
+            // forçando isso).
+            if ($a === '') {
+                continue;
+            }
+            // Atual JÁ tem valor e corretor tentou trocar → bloqueado.
+            abort(403, 'Só gestor/admin pode alterar este campo.');
         }
     }
 
