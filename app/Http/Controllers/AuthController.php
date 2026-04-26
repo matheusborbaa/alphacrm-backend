@@ -108,7 +108,15 @@ class AuthController extends Controller
                 'id'    => $user->id,
                 'name'  => $user->name,
                 'email' => $user->email,
-                'role'  => $user->role ?? null,
+                // Sprint Hierarquia (fix) — usa effectiveRole() pra retornar
+                // o role considerando coluna + Spatie. O frontend persiste
+                // isso no localStorage e usa em data-require-role= pra
+                // gating de UI (sidebar, páginas admin-only). Se voltasse
+                // só $user->role, admins criados via assignRole() sem
+                // setar a coluna apareceriam como "" e perderiam acesso.
+                'role'  => method_exists($user, 'effectiveRole')
+                    ? ($user->effectiveRole() ?: null)
+                    : ($user->role ?? null),
             ],
         ]);
     }

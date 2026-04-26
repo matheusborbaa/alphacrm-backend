@@ -786,7 +786,19 @@ Route::middleware('auth:sanctum')
 |--------------------------------------------------------------------------
 */
 Route::middleware('auth:sanctum')->get('/me', function (Request $request) {
-    return response()->json($request->user());
+    $u = $request->user();
+    // Sprint Hierarquia (fix) — força o `role` no payload a refletir o
+    // effectiveRole (coluna + Spatie), e não só a coluna. O frontend
+    // sincroniza isso no localStorage via core/auth.js → refreshCurrentUser,
+    // e o gate de páginas admin-only depende desse valor estar certo.
+    $payload = $u->toArray();
+    if (method_exists($u, 'effectiveRole')) {
+        $eff = $u->effectiveRole();
+        if ($eff !== '') {
+            $payload['role'] = $eff;
+        }
+    }
+    return response()->json($payload);
 });
 
 
