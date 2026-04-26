@@ -359,7 +359,13 @@ class SettingController extends Controller
     private function ensureAdmin(): void
     {
         $u = auth()->user();
-        $role = strtolower(trim((string) ($u->role ?? '')));
+        // Sprint Hierarquia (fix) — usa effectiveRole() pra olhar coluna +
+        // Spatie roles juntos. Antes só lia $u->role (coluna), bloqueando
+        // admin que tinha role só no Spatie. Resultado: salvar setting
+        // dava 403 silencioso — UI parecia que "nada acontecia ao alterar".
+        $role = method_exists($u, 'effectiveRole')
+            ? $u->effectiveRole()
+            : strtolower(trim((string) ($u->role ?? '')));
         if ($role !== 'admin') {
             abort(403, 'Ação restrita ao administrador.');
         }

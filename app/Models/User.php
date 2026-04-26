@@ -123,27 +123,40 @@ class User extends Authenticatable
     }
 
     /**
-     * Sprint Hierarquia (fix) — devolve o role "efetivo" combinando coluna
-     * users.role (legado) + Spatie roles. Algumas contas antigas têm só a
-     * coluna populada; outras têm só Spatie; outras as duas. Antes os
-     * helpers liam só `$this->role`, e admins criados via `assignRole()`
-     * sem setar a coluna acabavam tratados como corretor (bug: "sou admin,
-     * deveria ver todos" no dropdown de corretor da Home).
+     * Sprint Hierarquia (fix) — devolve o role "efetivo" considerando AMBAS
+     * as fontes (coluna users.role + Spatie roles), de forma PERMISSIVA na
+     * promoção: se QUALQUER uma das duas disser 'admin', tratamos como
+     * admin. Isso evita inconsistência entre lugares que olhavam só coluna
+     * (SettingController::ensureAdmin, que continua olhando só coluna pra
+     * manter compat) e lugares que olhavam só Spatie.
      *
-     * Mesma resolução que o resto do sistema usa em respostas JSON
-     * (UserController@index linha 97 etc): Spatie primeiro, coluna depois.
+     * Ordem de retorno (alta→baixa autoridade): admin > gestor > corretor.
+     * Se nenhuma das duas tiver nada, retorna string vazia.
+     *
+     * Histórico do bug: a versão anterior usava Spatie como fonte primária
+     * e coluna como fallback. Em contas onde a coluna estava 'admin' mas o
+     * Spatie tinha outra role atribuída por engano (ou vice-versa), o
+     * usuário era rebaixado e perdia visibilidade no dropdown de corretor
+     * + bloqueio em /settings, /lead-status etc.
      */
     public function effectiveRole(): string
     {
-        // getRoleNames() pode disparar query — proteção pra contextos onde
-        // a relação não foi eager-loaded (ex: $request->user() já vem com
-        // roles carregadas via auth middleware na maior parte dos casos).
+        $col = strtolower(trim((string) ($this->role ?? '')));
+        $spatie = '';
         try {
-            $spatie = $this->getRoleNames()->first();
+            $spatie = strtolower(trim((string) ($this->getRoleNames()->first() ?? '')));
         } catch (\Throwable $e) {
-            $spatie = null;
+            // Tabela Spatie indisponível ou relação não carregável — segue
+            // só com a coluna.
         }
-        return strtolower((string) ($spatie ?? $this->role ?? ''));
+
+        // Promoção permissiva: se UMA das duas disser admin/gestor, vale.
+        foreach (['admin', 'gestor', 'corretor'] as $candidate) {
+            if ($col === $candidate || $spatie === $candidate) {
+                return $candidate;
+            }
+        }
+        return $col ?: $spatie;
     }
 
     /**
