@@ -63,13 +63,16 @@ class RoleController extends Controller
 
         $roles = Role::with('permissions:id,name')->orderBy('id')->get();
 
-        // Contagem de usuários por role (whatsapp pivot model_has_roles).
-        // Spatie não tem withCount nativo da relação; query manual barata.
-        $userCounts = DB::table('model_has_roles')
-            ->where('model_type', \App\Models\User::class)
-            ->select('role_id', DB::raw('COUNT(*) as total'))
-            ->groupBy('role_id')
-            ->pluck('total', 'role_id');
+        // Contagem de usuários por role. JOIN explícito com `users` filtrando
+        // `deleted_at IS NULL` pra ignorar soft-deleted (sem isso a contagem
+        // mostra o histórico todo — bug reportado: 4 admins quando só tem 2).
+        $userCounts = DB::table('model_has_roles as mhr')
+            ->join('users as u', 'u.id', '=', 'mhr.model_id')
+            ->where('mhr.model_type', \App\Models\User::class)
+            ->whereNull('u.deleted_at')
+            ->select('mhr.role_id', DB::raw('COUNT(*) as total'))
+            ->groupBy('mhr.role_id')
+            ->pluck('total', 'mhr.role_id');
 
         return response()->json($roles->map(function ($r) use ($userCounts) {
             return [
@@ -101,9 +104,12 @@ class RoleController extends Controller
             'is_system'    => (bool) $role->is_system,
             'description'  => $role->description,
             'permissions'  => $role->permissions->pluck('name')->values(),
-            'users_count'  => DB::table('model_has_roles')
-                ->where('model_type', \App\Models\User::class)
-                ->where('role_id', $role->id)
+            // Conta só users NÃO soft-deleted — bate com a UI de Usuários.
+            'users_count'  => DB::table('model_has_roles as mhr')
+                ->join('users as u', 'u.id', '=', 'mhr.model_id')
+                ->where('mhr.model_type', \App\Models\User::class)
+                ->where('mhr.role_id', $role->id)
+                ->whereNull('u.deleted_at')
                 ->count(),
         ]);
     }
@@ -253,9 +259,13 @@ class RoleController extends Controller
             ], 422);
         }
 
-        $usersWithRole = DB::table('model_has_roles')
-            ->where('model_type', \App\Models\User::class)
-            ->where('role_id', $role->id)
+        // Igual ao counts: ignora users soft-deleted, senão um cargo nunca
+        // poderia ser excluído depois que algum usuário foi removido.
+        $usersWithRole = DB::table('model_has_roles as mhr')
+            ->join('users as u', 'u.id', '=', 'mhr.model_id')
+            ->where('mhr.model_type', \App\Models\User::class)
+            ->where('mhr.role_id', $role->id)
+            ->whereNull('u.deleted_at')
             ->count();
 
         if ($usersWithRole > 0) {
