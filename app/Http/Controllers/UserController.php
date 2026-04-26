@@ -147,6 +147,12 @@ class UserController extends Controller
             'active'          => (bool) $user->active,
             'status_corretor' => $user->status_corretor,
             'role'            => $user->getRoleNames()->first() ?? $user->role,
+            // Sprint Seccionamento — hierarquia + permissão por empreendimento.
+            // empreendimento_ids: lista do pivot (apenas relevante quando
+            // access_mode='specific'; quando 'all', UI ignora a lista).
+            'parent_user_id'              => $user->parent_user_id,
+            'empreendimento_access_mode'  => $user->empreendimento_access_mode ?? 'all',
+            'empreendimento_ids'          => $user->empreendimentos()->pluck('empreendimentos.id')->all(),
         ]);
     }
 
@@ -167,6 +173,11 @@ class UserController extends Controller
             'password' => 'nullable|string|min:6',
             'role'     => ['required', Rule::in(['admin', 'gestor', 'corretor'])],
             'active'   => 'boolean',
+            // Sprint Seccionamento — hierarquia + permissão por empreendimento.
+            'parent_user_id'              => ['nullable', 'integer', 'exists:users,id'],
+            'empreendimento_access_mode'  => ['nullable', Rule::in(['all', 'specific'])],
+            'empreendimento_ids'          => ['nullable', 'array'],
+            'empreendimento_ids.*'        => ['integer', 'exists:empreendimentos,id'],
         ]);
 
         if ($data['role'] === 'admin' && !$request->user()->can('users.assign_admin')) {
@@ -192,6 +203,17 @@ class UserController extends Controller
         ]);
 
         $user->assignRole($data['role']);
+
+        // Sprint Seccionamento — aplica gestor + permissão de empreendimentos.
+        // Faz validação de cascata: gestor só pode dar pro subordinado o
+        // que ele mesmo tem (admin pode tudo). Se falhar, reverte o user
+        // recém-criado pra não deixar inconsistente.
+        try {
+            $this->applySeccionamentoFields($user, $data, $request->user());
+        } catch (ValidationException $e) {
+            $user->delete();
+            throw $e;
+        }
 
         // Email de boas-vindas com senha provisória. Só dispara se a senha
         // foi gerada pelo sistema (admin que escolheu senha manualmente
@@ -237,6 +259,11 @@ class UserController extends Controller
             'password' => 'nullable|string|min:6',
             'active'   => 'nullable|boolean',
             'role'     => ['nullable', Rule::in(['admin', 'gestor', 'corretor'])],
+            // Sprint Seccionamento — opcionais. Se omitidos, mantém valores atuais.
+            'parent_user_id'              => ['nullable', 'integer', 'exists:users,id'],
+            'empreendimento_access_mode'  => ['nullable', Rule::in(['all', 'specific'])],
+            'empreendimento_ids'          => ['nullable', 'array'],
+            'empreendimento_ids.*'        => ['integer', 'exists:empreendimentos,id'],
         ]);
 
         // Se mudando a role, valida autorização adicional
@@ -261,8 +288,22 @@ class UserController extends Controller
         // role já foi tratado via syncRoles; remove do fill pra não duplicar
         unset($data['role']);
 
+        // Sprint Seccionamento — campos de hierarquia/permissão são processados
+        // pelo helper (validação de cascata + sync no pivot). Removemos do
+        // $data antes do fill pra não duplicar gravação.
+        $seccionamentoFields = [
+            'parent_user_id'             => $data['parent_user_id']             ?? null,
+            'empreendimento_access_mode' => $data['empreendimento_access_mode'] ?? null,
+            'empreendimento_ids'         => $data['empreendimento_ids']         ?? null,
+        ];
+        unset($data['parent_user_id'], $data['empreendimento_access_mode'], $data['empreendimento_ids']);
+
         $user->fill(array_filter($data, fn($v) => !is_null($v)));
         $user->save();
+
+        // Aplica seccionamento APÓS o save dos campos básicos pra ter um
+        // user "completo" no banco antes de tocar pivot/parent.
+        $this->applySeccionamentoFields($user, $seccionamentoFields, $request->user());
 
         return response()->json([
             'success' => true,
@@ -503,5 +544,115 @@ class UserController extends Controller
                 'name' => $claimed->name,
             ] : null,
         ]);
+    }
+
+    /**
+     * Sprint Seccionamento — aplica os campos de hierarquia + permissão
+     * por empreendimento, com validação de cascata.
+     *
+     * Regras:
+     *   - parent_user_id: deve apontar pra um user com role 'gestor' ou
+     *     'admin'. Não pode ser auto-referência. Não pode criar ciclo.
+     *   - empreendimento_access_mode + empreendimento_ids:
+     *       - 'all'      → ignora pivot, libera todos os empreendimentos
+     *       - 'specific' → exige lista; sync no pivot
+     *   - Cascata: se quem tá criando/editando NÃO é admin, só pode dar
+     *     pro target empreendimentos que o ACTOR mesmo tem. Admin pode tudo.
+     *
+     * Aceita campos null no array — significa "não atualizar esse campo".
+     * Vazia ou ausente NÃO zera a config existente (só se mandar 'all'
+     * ou 'specific' explicitamente).
+     */
+    private function applySeccionamentoFields(User $target, array $fields, User $actor): void
+    {
+        $isAdmin = strtolower((string) ($actor->role ?? '')) === 'admin';
+
+        // ===== parent_user_id =====
+        if (array_key_exists('parent_user_id', $fields) && $fields['parent_user_id'] !== null) {
+            $parentId = (int) $fields['parent_user_id'];
+
+            // Auto-referência proibida (X é gestor de X mesmo).
+            if ($parentId === $target->id) {
+                throw ValidationException::withMessages([
+                    'parent_user_id' => 'Usuário não pode ser gestor de si mesmo.',
+                ]);
+            }
+
+            // Parent precisa existir + ser admin/gestor (não faz sentido
+            // corretor "gerenciar" outro corretor).
+            $parent = User::find($parentId);
+            if (!$parent) {
+                throw ValidationException::withMessages([
+                    'parent_user_id' => 'Gestor selecionado não existe.',
+                ]);
+            }
+            $parentRole = strtolower((string) ($parent->role ?? ''));
+            if (!in_array($parentRole, ['admin', 'gestor'], true)) {
+                throw ValidationException::withMessages([
+                    'parent_user_id' => 'O gestor responsável precisa ter cargo de admin ou gestor.',
+                ]);
+            }
+
+            // Anti-ciclo simples: target não pode ser ancestral do parent.
+            // Isso evita A→B→A (parent.parent.parent.... bate em target).
+            $cursor = $parent;
+            $depth  = 0;
+            while ($cursor && $depth < 10) {
+                if ($cursor->parent_user_id === $target->id) {
+                    throw ValidationException::withMessages([
+                        'parent_user_id' => 'Hierarquia inválida — criaria um ciclo.',
+                    ]);
+                }
+                $cursor = $cursor->parent_user_id ? User::find($cursor->parent_user_id) : null;
+                $depth++;
+            }
+
+            $target->parent_user_id = $parentId;
+        }
+
+        // ===== access_mode + empreendimento_ids =====
+        $newMode = $fields['empreendimento_access_mode'] ?? null;
+        $ids     = $fields['empreendimento_ids'] ?? null;
+
+        if ($newMode !== null) {
+            if ($newMode === 'all') {
+                // Libera tudo dinâmico — não precisa pivot, esvazia.
+                $target->empreendimento_access_mode = 'all';
+                $target->save();
+                $target->empreendimentos()->sync([]);
+                return;
+            }
+
+            // 'specific' — precisa de lista (mesmo vazia, mas explícita).
+            if (!is_array($ids)) {
+                throw ValidationException::withMessages([
+                    'empreendimento_ids' => 'Informe a lista de empreendimentos quando o modo é "específico".',
+                ]);
+            }
+
+            $ids = array_values(array_unique(array_map('intval', $ids)));
+
+            // Cascata: se actor não é admin, só pode liberar o que ele tem.
+            if (!$isAdmin) {
+                $actorIds = $actor->accessibleEmpreendimentoIds()->all();
+                $forbidden = array_diff($ids, $actorIds);
+                if (!empty($forbidden)) {
+                    throw ValidationException::withMessages([
+                        'empreendimento_ids' => 'Você não pode dar acesso a empreendimentos que você mesmo não tem ('
+                            . implode(', ', $forbidden) . ').',
+                    ]);
+                }
+            }
+
+            $target->empreendimento_access_mode = 'specific';
+            $target->save();
+            $target->empreendimentos()->sync($ids);
+        } else {
+            // Mode não foi enviado mas parent_user_id pode ter mudado;
+            // garante que parent_user_id seja persistido.
+            if ($target->isDirty('parent_user_id')) {
+                $target->save();
+            }
+        }
     }
 }

@@ -196,6 +196,34 @@ class SettingController extends Controller
             'min'     => 1,
             'max'     => 30,
         ],
+
+        // =================== SECCIONAMENTO — LEAD ÓRFÃO =================
+        // Quando um lead vira órfão (nenhum corretor habilitado disponível
+        // pro empreendimento dele), espera X minutos antes de cair pro
+        // primeiro corretor disponível IGNORANDO permissão. Lógica:
+        //   - 0   = nunca cai pra alguém sem permissão (lead fica órfão até
+        //           admin atribuir manual ou alguém habilitar empreendimento)
+        //   - >0  = job CheckOrphanLeadsJob roda no schedule e reatribui
+        //           pro primeiro disponível qualquer após X min de orfandade
+        // Default 30 — meia hora de espera é razoável pra dar chance do
+        // corretor habilitado voltar de offline antes de "queimar" o lead.
+        'lead_orphan_reassign_after_minutes' => [
+            'type'    => 'int',
+            'default' => 30,
+            'min'     => 0,
+            'max'     => 1440,
+        ],
+
+        // Etapa MÍNIMA pra um lead permanecer com o corretor depois que
+        // ele perde acesso ao empreendimento. Se o lead está em etapa
+        // ABAIXO (order menor) dessa, volta pra fila pra outro corretor
+        // habilitado pegar. Se está nessa etapa OU acima, fica com o
+        // corretor original (não puxa o tapete em negociação avançada).
+        // null/0 = desliga essa regra (lead sempre fica com corretor).
+        'lead_persistence_min_status_id' => [
+            'type'    => 'int_or_null',
+            'default' => null,
+        ],
     ];
 
     /** Lista TODAS as configurações (chave => valor). Só chaves conhecidas. */

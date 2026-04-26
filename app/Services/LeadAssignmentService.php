@@ -49,7 +49,9 @@ class LeadAssignmentService
      */
     public function assign(Lead $lead): ?User
     {
-        $corretor = $this->pickNextAvailable();
+        // Sprint Seccionamento — passa empreendimento do lead pra
+        // filtrar pool por permissão (só corretores habilitados pegam).
+        $corretor = $this->pickNextAvailable(null, $lead->empreendimento_id);
 
         if (!$corretor) {
             $this->handleOrphan($lead);
@@ -77,11 +79,30 @@ class LeadAssignmentService
         // Segurança: só reclama pra quem realmente pode receber lead.
         if (!$this->isEligible($corretor)) return null;
 
+        // Sprint Seccionamento — corretor só pega órfão de empreendimento
+        // que ele tem acesso. Pré-resolve a lista de IDs acessíveis.
+        $accessibleEmpIds = $corretor->accessibleEmpreendimentoIds()->all();
+
         // Transação + lock pra evitar que dois corretores virando 'disponivel'
         // ao mesmo tempo pipem o mesmo órfão.
-        $lead = DB::transaction(function () use ($corretor) {
-            $lead = Lead::whereNull('assigned_user_id')
-                ->orderBy('created_at', 'asc')
+        $lead = DB::transaction(function () use ($corretor, $accessibleEmpIds) {
+            $q = Lead::whereNull('assigned_user_id');
+
+            // Filtra pelos empreendimentos que o corretor pode atender.
+            // Lead sem empreendimento_id (null) é permitido pra qualquer
+            // um — não há ninguém pra "barrar" a permissão sobre.
+            if (!empty($accessibleEmpIds)) {
+                $q->where(function ($q) use ($accessibleEmpIds) {
+                    $q->whereNull('empreendimento_id')
+                      ->orWhereIn('empreendimento_id', $accessibleEmpIds);
+                });
+            } else {
+                // Edge case: corretor não tem permissão pra nenhum
+                // empreendimento → só pode pegar leads sem empreendimento.
+                $q->whereNull('empreendimento_id');
+            }
+
+            $lead = $q->orderBy('created_at', 'asc')
                 ->lockForUpdate()
                 ->first();
 
@@ -129,7 +150,9 @@ class LeadAssignmentService
         // não pode receber o lead de volta imediatamente. Se ele for o único
         // elegível, cai no branch "só ele está disponível" e mantemos com
         // novo prazo (conforme política "tirar só se houver outro").
-        $next = $this->pickNextAvailable($currentId);
+        // Sprint Seccionamento — passa empreendimento_id pra respeitar
+        // permissão também na reatribuição por SLA.
+        $next = $this->pickNextAvailable($currentId, $lead->empreendimento_id);
 
         // Ninguém além do corretor atual disponível: mantém com ele +
         // novo prazo (política "tirar só se houver outro").
@@ -386,7 +409,7 @@ class LeadAssignmentService
      *   corretor que acabou de falhar o SLA — não pode receber de volta
      *   imediatamente). Se o único elegível for o excluído, retorna null.
      */
-    private function pickNextAvailable(?int $excludeUserId = null): ?User
+    private function pickNextAvailable(?int $excludeUserId = null, ?int $empreendimentoId = null): ?User
     {
         $q = User::where('role', 'corretor')
             ->where('active', true)
@@ -396,6 +419,20 @@ class LeadAssignmentService
                 $q->whereNull('cooldown_until')
                   ->orWhere('cooldown_until', '<=', now());
             });
+
+        // Sprint Seccionamento — filtra por permissão de empreendimento.
+        // Considerado apto: access_mode='all' OU está na pivot pro emp.
+        // Se lead não tem empreendimento (null), todo mundo é apto.
+        if ($empreendimentoId !== null) {
+            $q->where(function ($q) use ($empreendimentoId) {
+                $q->where('empreendimento_access_mode', 'all')
+                  ->orWhereExists(function ($sub) use ($empreendimentoId) {
+                      $sub->from('user_empreendimentos')
+                          ->whereColumn('user_empreendimentos.user_id', 'users.id')
+                          ->where('user_empreendimentos.empreendimento_id', $empreendimentoId);
+                  });
+            });
+        }
 
         if ($excludeUserId) {
             $q->where('id', '!=', $excludeUserId);

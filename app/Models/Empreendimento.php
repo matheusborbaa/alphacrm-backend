@@ -66,6 +66,23 @@ public function fieldValues()
     return $this->hasMany(EmpreendimentoFieldValue::class);
 }
 
+    /**
+     * Sprint Seccionamento — users com permissão "specific" pra esse
+     * empreendimento. Inversa de User::empreendimentos(). Só lista users
+     * com pivot row; users com access_mode='all' NÃO aparecem aqui (eles
+     * não têm registro na pivot — modelo dinâmico). Pra obter TODOS os
+     * users que podem atender, use a query no LeadAssignmentService.
+     */
+    public function users()
+    {
+        return $this->belongsToMany(
+            \App\Models\User::class,
+            'user_empreendimentos',
+            'empreendimento_id',
+            'user_id'
+        )->withTimestamps();
+    }
+
 
 
 }
