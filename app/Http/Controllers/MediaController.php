@@ -97,6 +97,18 @@ class MediaController extends Controller
             usort($files, fn ($a, $b) => strcasecmp($a['name'] ?? '', $b['name'] ?? ''));
         }
 
+        $isEmpRootFolder = $folder && $folder->empreendimento_id && !$folder->lead_id;
+        if ($isEmpRootFolder) {
+            $files = array_merge(
+                $files,
+                $this->aggregateEmpreendimentoDocuments($folder->empreendimento_id),
+                $this->aggregateEmpreendimentoCustomFieldFiles($folder->empreendimento_id),
+                $this->aggregateEmpreendimentoImages($folder->empreendimento_id)
+            );
+
+            usort($files, fn ($a, $b) => strcasecmp($a['name'] ?? '', $b['name'] ?? ''));
+        }
+
         $breadcrumb = [];
         $cur = $folder;
         while ($cur) {
@@ -217,11 +229,11 @@ class MediaController extends Controller
     {
 
         if ($folder->is_system) {
-            $msg = 'Esta pasta é gerenciada pelo sistema e não pode ser excluída.';
+            $msg = 'Pasta SISTEMA: bloqueada para exclusão e edição (nem admin pode remover).';
             if ($folder->empreendimento_id) {
-                $msg = 'Esta pasta pertence a um empreendimento e só pode ser removida ao excluir o empreendimento.';
+                $msg = 'Pasta SISTEMA do empreendimento: bloqueada para exclusão/edição. Só é removida ao excluir o empreendimento. Nem admin pode apagar manualmente.';
             } elseif ($folder->lead_id) {
-                $msg = 'Esta pasta pertence a um lead e só pode ser removida ao excluir o lead.';
+                $msg = 'Pasta SISTEMA do lead: bloqueada para exclusão/edição. Só é removida ao excluir o lead. Nem admin pode apagar manualmente.';
             }
             return response()->json(['message' => $msg], 422);
         }
@@ -442,6 +454,200 @@ class MediaController extends Controller
             \Log::warning('Falha ao agregar custom field files na biblioteca', [
                 'lead_id' => $leadId,
                 'error'   => $e->getMessage(),
+            ]);
+            return [];
+        }
+    }
+
+    /**
+     * Documentos "fixos" do empreendimento: book de vendas e tabela de preços.
+     * Espelha o comportamento de aggregateLeadDocuments(), mas pra empreendimentos.
+     */
+    private function aggregateEmpreendimentoDocuments(int $empreendimentoId): array
+    {
+        try {
+            $emp = \App\Models\Empreendimento::find($empreendimentoId);
+            if (!$emp) return [];
+
+            $out = [];
+
+            $slots = [
+                'book' => [
+                    'label' => 'Book de vendas',
+                    'category' => 'Book',
+                ],
+                'price_table' => [
+                    'label' => 'Tabela de preços',
+                    'category' => 'Tabela de preços',
+                ],
+            ];
+
+            foreach ($slots as $slot => $info) {
+                $pathCol = $slot . '_path';
+                $timeCol = $slot . '_uploaded_at';
+                $url = $emp->{$pathCol};
+                if (!$url) continue;
+
+                $rel = ltrim(preg_replace('#^/?storage/#', '', (string) $url), '/');
+                $sizeBytes = 0;
+                $mime      = 'application/pdf';
+                try {
+                    if ($rel && \Illuminate\Support\Facades\Storage::disk('public')->exists($rel)) {
+                        $sizeBytes = (int) \Illuminate\Support\Facades\Storage::disk('public')->size($rel);
+                        $detected  = \Illuminate\Support\Facades\Storage::disk('public')->mimeType($rel);
+                        if ($detected) $mime = $detected;
+                    }
+                } catch (\Throwable $e) {
+
+                }
+
+                $out[] = [
+                    'id'            => 'emp_doc_' . $slot . '_' . $emp->id,
+                    'name'          => $info['label'] . ' — ' . ($emp->name ?? ''),
+                    'original_name' => basename($rel ?: $url),
+                    'mime_type'     => $mime,
+                    'size_bytes'    => $sizeBytes,
+                    'description'   => $info['label'] . ' do empreendimento.',
+                    'category'      => $info['category'],
+                    'uploader'      => null,
+                    'created_at'    => optional($emp->{$timeCol})->toIso8601String(),
+                    'download_url'  => $url,
+                    'preview_url'   => $url,
+                    'source'        => 'emp_doc',
+                    'source_label'  => 'Documento do empreendimento',
+                ];
+            }
+
+            return $out;
+        } catch (\Throwable $e) {
+            \Log::warning('Falha ao agregar documentos do empreendimento na biblioteca', [
+                'empreendimento_id' => $empreendimentoId,
+                'error'             => $e->getMessage(),
+            ]);
+            return [];
+        }
+    }
+
+    /**
+     * Campos personalizados do empreendimento que sejam do tipo arquivo.
+     * Se o meta tiver 'path', usa Storage::url() do disco public (mesma convenção
+     * dos uploads de book/price_table). Se não, fica sem download_url.
+     */
+    private function aggregateEmpreendimentoCustomFieldFiles(int $empreendimentoId): array
+    {
+        try {
+            $rows = \App\Models\EmpreendimentoFieldValue::query()
+                ->where('empreendimento_id', $empreendimentoId)
+                ->whereNotNull('value')
+                ->with('definition:id,slug,name,type')
+                ->get()
+                ->filter(fn ($v) => optional($v->definition)->type === 'file');
+
+            $out = [];
+            foreach ($rows as $v) {
+                $meta = is_string($v->value) ? json_decode($v->value, true) : (array) $v->value;
+                if (!is_array($meta) || empty($meta['path'])) continue;
+
+                $cfName = $v->definition->name ?? 'Campo customizado';
+                $rel    = ltrim(preg_replace('#^/?storage/#', '', (string) $meta['path']), '/');
+
+                $downloadUrl = null;
+                try {
+                    if ($rel && \Illuminate\Support\Facades\Storage::disk('public')->exists($rel)) {
+                        $downloadUrl = \Illuminate\Support\Facades\Storage::disk('public')->url($rel);
+                    } else {
+
+                        $downloadUrl = $meta['path'];
+                    }
+                } catch (\Throwable $e) {
+                    $downloadUrl = $meta['path'];
+                }
+
+                $out[] = [
+                    'id'            => 'emp_cf_' . $v->id,
+                    'name'          => $meta['name'] ?? 'Arquivo',
+                    'original_name' => $meta['name'] ?? null,
+                    'mime_type'     => $meta['mime'] ?? null,
+                    'size_bytes'    => (int) ($meta['size'] ?? 0),
+                    'description'   => 'Campo customizado: ' . $cfName,
+                    'category'      => $cfName,
+                    'uploader'      => null,
+                    'created_at'    => optional($v->updated_at)->toIso8601String(),
+                    'download_url'  => $downloadUrl,
+                    'source'        => 'custom_field',
+                    'source_label'  => 'Campo personalizado',
+                ];
+            }
+
+            return $out;
+        } catch (\Throwable $e) {
+            \Log::warning('Falha ao agregar custom field files do empreendimento na biblioteca', [
+                'empreendimento_id' => $empreendimentoId,
+                'error'             => $e->getMessage(),
+            ]);
+            return [];
+        }
+    }
+
+    /**
+     * Imagens cadastradas no empreendimento (galeria, plantas, decorado).
+     */
+    private function aggregateEmpreendimentoImages(int $empreendimentoId): array
+    {
+        try {
+            $imgs = \App\Models\EmpreendimentoImage::where('empreendimento_id', $empreendimentoId)
+                ->orderBy('category')
+                ->orderBy('order')
+                ->get();
+
+            $catLabels = [
+                'imagens'  => 'Galeria',
+                'plantas'  => 'Plantas',
+                'decorado' => 'Decorado',
+            ];
+
+            $out = [];
+            foreach ($imgs as $img) {
+                $url = $img->image_path;
+                if (!$url) continue;
+
+                $rel = ltrim(preg_replace('#^/?storage/#', '', (string) $url), '/');
+                $sizeBytes = 0;
+                $mime      = 'image/jpeg';
+                try {
+                    if ($rel && \Illuminate\Support\Facades\Storage::disk('public')->exists($rel)) {
+                        $sizeBytes = (int) \Illuminate\Support\Facades\Storage::disk('public')->size($rel);
+                        $detected  = \Illuminate\Support\Facades\Storage::disk('public')->mimeType($rel);
+                        if ($detected) $mime = $detected;
+                    }
+                } catch (\Throwable $e) {
+
+                }
+
+                $cat = $catLabels[$img->category] ?? ucfirst((string) $img->category);
+
+                $out[] = [
+                    'id'            => 'emp_img_' . $img->id,
+                    'name'          => basename($rel ?: $url),
+                    'original_name' => basename($rel ?: $url),
+                    'mime_type'     => $mime,
+                    'size_bytes'    => $sizeBytes,
+                    'description'   => $cat . ($img->is_cover ? ' (capa)' : ''),
+                    'category'      => $cat,
+                    'uploader'      => null,
+                    'created_at'    => optional($img->created_at)->toIso8601String(),
+                    'download_url'  => $url,
+                    'preview_url'   => $url,
+                    'source'        => 'emp_image',
+                    'source_label'  => 'Imagem do empreendimento',
+                ];
+            }
+
+            return $out;
+        } catch (\Throwable $e) {
+            \Log::warning('Falha ao agregar imagens do empreendimento na biblioteca', [
+                'empreendimento_id' => $empreendimentoId,
+                'error'             => $e->getMessage(),
             ]);
             return [];
         }
