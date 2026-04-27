@@ -123,6 +123,11 @@ class Lead extends Model
         return $this->belongsTo(LeadChannel::class, 'channel_id');
     }
 
+    public function documents(): HasMany
+    {
+        return $this->hasMany(LeadDocument::class);
+    }
+
     /**
      * Label "humano" do canal pra UI: prefere o nome da relação (FK),
      * cai pro string livre `channel` se a FK não estiver setada (compat

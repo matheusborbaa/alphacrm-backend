@@ -828,6 +828,211 @@ private function ensureAdmin(): void
     }
 }
 
+/**
+ * BULK ASSIGN — atribui N leads pra um corretor.
+ * Permissão: precisa poder editar cada lead individualmente.
+ */
+public function bulkAssign(Request $request)
+{
+    $data = $request->validate([
+        'lead_ids'         => 'required|array|min:1|max:500',
+        'lead_ids.*'       => 'integer|exists:leads,id',
+        'assigned_user_id' => 'required|integer|exists:users,id',
+    ]);
+
+    $user = auth()->user();
+    $isManager = in_array($user->role ?? '', ['admin', 'gestor'], true);
+    if (!$isManager) {
+        abort(403, 'Apenas admin/gestor pode atribuir leads em lote.');
+    }
+
+    $leads = Lead::whereIn('id', $data['lead_ids'])->get();
+    $target = \App\Models\User::find($data['assigned_user_id']);
+    if (!$target) abort(404, 'Corretor não encontrado.');
+
+    $ok = 0;
+    $skipped = [];
+
+    foreach ($leads as $lead) {
+        try {
+            $this->authorize('update', $lead);
+        } catch (\Throwable $e) {
+            $skipped[] = $lead->id;
+            continue;
+        }
+
+        $previous = $lead->assigned_user_id;
+        $lead->update(['assigned_user_id' => $target->id]);
+
+        LeadHistory::create([
+            'lead_id'     => $lead->id,
+            'user_id'     => auth()->id(),
+            'type'        => 'assignment',
+            'description' => 'Reatribuído em lote para ' . $target->name,
+            'from'        => (string) $previous,
+            'to'          => (string) $target->id,
+        ]);
+
+
+        if ($previous !== (int) $target->id && $target->id !== auth()->id()) {
+            try {
+                $target->notify(new \App\Notifications\LeadAssignedNotification($lead->fresh()));
+            } catch (\Throwable $e) {
+                \Log::warning('Falha ao notificar corretor em bulk-assign', [
+                    'lead_id' => $lead->id, 'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        $ok++;
+    }
+
+    return response()->json([
+        'success'   => true,
+        'updated'   => $ok,
+        'skipped'   => count($skipped),
+        'skipped_ids' => $skipped,
+    ]);
+}
+
+/**
+ * BULK STATUS — muda etapa (status_id e/ou substatus) de N leads.
+ * IMPORTANTE: ignora regras de obrigatoriedade — operação administrativa.
+ * Loga o pulo das regras no histórico pra auditoria.
+ */
+public function bulkStatus(Request $request)
+{
+    $data = $request->validate([
+        'lead_ids'           => 'required|array|min:1|max:500',
+        'lead_ids.*'         => 'integer|exists:leads,id',
+        'status_id'          => 'nullable|integer|exists:lead_status,id',
+        'lead_substatus_id'  => 'nullable|integer|exists:lead_substatus,id',
+    ]);
+
+    if (!$data['status_id'] && !($data['lead_substatus_id'] ?? null)) {
+        abort(422, 'Informe pelo menos status_id ou lead_substatus_id.');
+    }
+
+    $user = auth()->user();
+    $isManager = in_array($user->role ?? '', ['admin', 'gestor'], true);
+    if (!$isManager) {
+        abort(403, 'Apenas admin/gestor pode mover leads em lote.');
+    }
+
+    $leads = Lead::whereIn('id', $data['lead_ids'])->get();
+    $newStatus    = $data['status_id'] ?? null;
+    $newSubstatus = $data['lead_substatus_id'] ?? null;
+
+    $statusName = $newStatus
+        ? optional(\App\Models\LeadStatus::find($newStatus))->name
+        : null;
+    $substatusName = $newSubstatus
+        ? optional(\App\Models\LeadSubstatus::find($newSubstatus))->name
+        : null;
+
+    $ok = 0;
+    $skipped = [];
+
+    foreach ($leads as $lead) {
+        try {
+            $this->authorize('move', $lead);
+        } catch (\Throwable $e) {
+            $skipped[] = $lead->id;
+            continue;
+        }
+
+        $previousStatus = $lead->status_id;
+        $previousSub    = $lead->lead_substatus_id;
+
+        $update = [];
+        if ($newStatus !== null) {
+            $update['status_id'] = $newStatus;
+
+            if ($newStatus !== $previousStatus && $newSubstatus === null) {
+                $update['lead_substatus_id'] = null;
+            }
+            $update['status_changed_at'] = now();
+        }
+        if ($newSubstatus !== null) {
+            $update['lead_substatus_id'] = $newSubstatus;
+        }
+
+        $lead->update($update);
+
+        $desc = 'Status alterado em lote';
+        if ($statusName)    $desc .= ' → ' . $statusName;
+        if ($substatusName) $desc .= ' / ' . $substatusName;
+
+        LeadHistory::create([
+            'lead_id'     => $lead->id,
+            'user_id'     => auth()->id(),
+            'type'        => 'status_change',
+            'description' => $desc . ' (regras de obrigatoriedade ignoradas — operação em lote)',
+            'from'        => (string) $previousStatus,
+            'to'          => (string) ($newStatus ?? $previousStatus),
+        ]);
+
+        $ok++;
+    }
+
+    return response()->json([
+        'success'     => true,
+        'updated'     => $ok,
+        'skipped'     => count($skipped),
+        'skipped_ids' => $skipped,
+    ]);
+}
+
+/**
+ * BULK DELETE — soft-delete de N leads.
+ */
+public function bulkDelete(Request $request)
+{
+    $data = $request->validate([
+        'lead_ids'   => 'required|array|min:1|max:500',
+        'lead_ids.*' => 'integer|exists:leads,id',
+        'reason'     => 'nullable|string|max:500',
+    ]);
+
+    $reason = trim((string) ($data['reason'] ?? ''));
+    $leads  = Lead::whereIn('id', $data['lead_ids'])->get();
+
+    $ok = 0;
+    $skipped = [];
+
+    foreach ($leads as $lead) {
+        try {
+            $this->authorize('delete', $lead);
+        } catch (\Throwable $e) {
+            $skipped[] = $lead->id;
+            continue;
+        }
+
+        $lead->update([
+            'deleted_by_user_id' => auth()->id(),
+            'deletion_reason'    => $reason !== '' ? $reason : 'Excluído em lote',
+        ]);
+
+        LeadHistory::create([
+            'lead_id'     => $lead->id,
+            'user_id'     => auth()->id(),
+            'type'        => 'soft_deleted',
+            'description' => 'Lead enviado para lixeira em lote'
+                . ($reason !== '' ? ' — motivo: ' . $reason : ''),
+        ]);
+
+        $lead->delete();
+        $ok++;
+    }
+
+    return response()->json([
+        'success'     => true,
+        'deleted'     => $ok,
+        'skipped'     => count($skipped),
+        'skipped_ids' => $skipped,
+    ]);
+}
+
 public function reveal(Request $request, Lead $lead)
 {
     $user = auth()->user();

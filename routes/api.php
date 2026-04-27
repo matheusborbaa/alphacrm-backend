@@ -437,6 +437,11 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::delete('/leads/{lead}', [LeadController::class, 'destroy']);
 
 
+    Route::post  ('/leads/bulk-assign', [LeadController::class, 'bulkAssign']);
+    Route::post  ('/leads/bulk-status', [LeadController::class, 'bulkStatus']);
+    Route::post  ('/leads/bulk-delete', [LeadController::class, 'bulkDelete']);
+
+
     Route::get   ('/admin/leads/trash',                [LeadController::class, 'trash']);
     Route::post  ('/admin/leads/{id}/restore',         [LeadController::class, 'restore']);
     Route::delete('/admin/leads/{id}/force',           [LeadController::class, 'forceDestroy']);
