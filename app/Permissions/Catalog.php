@@ -125,6 +125,7 @@ class Catalog
                     ['name' => 'reports.productivity', 'label' => 'Relatório de produtividade'],
                     ['name' => 'reports.financial',    'label' => 'Relatório financeiro'],
                     ['name' => 'reports.export',       'label' => 'Exportar relatórios (PDF/Excel)'],
+                    ['name' => 'reports.executive',    'label' => 'BI Executivo (visão 360°)'],
                 ],
             ],
 

@@ -654,6 +654,17 @@ Route::middleware(['auth:sanctum', 'permission:reports.productivity|reports.fina
     Route::get('/reports/ranking',          [RelatoriosController::class, 'ranking']);
     Route::get('/reports/evolution',        [RelatoriosController::class, 'evolution']);
 
+
+    Route::get('/bi/overview',                  [\App\Http\Controllers\BiController::class, 'overview']);
+    Route::get('/bi/visit-to-sale',             [\App\Http\Controllers\BiController::class, 'visitToSale']);
+    Route::get('/bi/commission-forecast',       [\App\Http\Controllers\BiController::class, 'commissionForecast']);
+    Route::get('/bi/lead-aging',                [\App\Http\Controllers\BiController::class, 'leadAging']);
+    Route::get('/bi/lost-reasons',              [\App\Http\Controllers\BiController::class, 'lostReasons']);
+    Route::get('/bi/empreendimento-performance',[\App\Http\Controllers\BiController::class, 'empreendimentoPerformance']);
+    Route::get('/bi/tipologia-analysis',        [\App\Http\Controllers\BiController::class, 'tipologiaAnalysis']);
+    Route::get('/bi/lead-heatmap',              [\App\Http\Controllers\BiController::class, 'leadHeatmap']);
+    Route::get('/bi/top-ranking',               [\App\Http\Controllers\BiController::class, 'topRanking']);
+
     Route::get('/reports/export/{tipo}/{formato}',
         [\App\Http\Controllers\RelatoriosExportController::class, 'export'])
         ->where('tipo', 'funnel|productivity|origin|ranking')
