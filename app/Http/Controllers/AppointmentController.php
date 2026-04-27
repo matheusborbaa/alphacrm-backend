@@ -179,10 +179,15 @@ public function byMonth(Request $request)
                    ->whereMonth('due_at', $request->month);
             });
         })
+
+
         ->when(!in_array($user->role, ['admin','gestor']), function ($q) use ($user) {
-            $q->where('user_id', $user->id);
+            $q->where(function ($sub) use ($user) {
+                $sub->where('user_id', $user->id)
+                    ->orWhere('scope', 'company');
+            });
         })
-        ->get(['id','starts_at','due_at','type','status']);
+        ->get(['id','starts_at','due_at','type','status','scope','user_id']);
 
     $now = \Carbon\Carbon::now();
     $appointments->transform(function ($app) use ($now) {
