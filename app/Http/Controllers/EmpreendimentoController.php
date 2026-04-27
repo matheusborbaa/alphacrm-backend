@@ -253,7 +253,7 @@ public function cities()
         'leads.status',
         'images',
         'fieldValues.definition',
-        'tipologias',
+        'tipologias.fieldValues.definition',
     ]);
 
     return $empreendimento;
@@ -263,7 +263,7 @@ public function cities()
 public function listTipologias(Empreendimento $empreendimento)
 {
     return response()->json(
-        $empreendimento->tipologias()->get()
+        $empreendimento->tipologias()->with('fieldValues.definition')->get()
     );
 }
 

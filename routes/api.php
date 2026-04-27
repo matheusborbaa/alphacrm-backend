@@ -16,6 +16,8 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\EmpreendimentoImageController;
 use App\Http\Controllers\EmpreendimentoFieldDefinitionController;
 use App\Http\Controllers\EmpreendimentoFieldValueController;
+use App\Http\Controllers\TipologiaFieldDefinitionController;
+use App\Http\Controllers\TipologiaFieldValueController;
 use App\Http\Controllers\AppointmentController;
 use App\Http\Controllers\TaskController;
 use App\Http\Controllers\TaskCommentController;
@@ -117,6 +119,34 @@ Route::middleware(['auth:sanctum', 'permission:empreendimentos.field_definitions
             EmpreendimentoFieldDefinitionController::class
         );
     });
+
+
+Route::get('/meta/tipologia-fields', function () {
+    return \App\Models\TipologiaFieldDefinition::where('active', true)
+        ->orderBy('order')
+        ->orderBy('name')
+        ->get();
+});
+
+Route::middleware(['auth:sanctum', 'permission:tipologias.field_definitions.manage|settings.tipologia_fields'])
+    ->prefix('admin')
+    ->group(function () {
+        Route::apiResource(
+            'tipologia-field-definitions',
+            TipologiaFieldDefinitionController::class
+        );
+    });
+
+Route::middleware(['auth:sanctum', 'permission:settings.tipologia_fields|tipologias.field_definitions.manage|empreendimentos.update'])->group(function () {
+    Route::get(
+        '/admin/tipologias/{tipologia}/fields',
+        [TipologiaFieldValueController::class, 'index']
+    );
+    Route::post(
+        '/admin/tipologias/{tipologia}/fields',
+        [TipologiaFieldValueController::class, 'store']
+    );
+});
 
 Route::post('/auth/refresh', [AuthController::class, 'refresh']);
 Route::get('/auth/permissions', [AuthController::class, 'permissions'])

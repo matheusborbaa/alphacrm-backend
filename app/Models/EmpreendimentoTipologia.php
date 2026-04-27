@@ -33,4 +33,9 @@ class EmpreendimentoTipologia extends Model
     {
         return $this->belongsTo(Empreendimento::class);
     }
+
+    public function fieldValues()
+    {
+        return $this->hasMany(TipologiaFieldValue::class, 'tipologia_id');
+    }
 }

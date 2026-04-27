@@ -72,6 +72,7 @@ class Catalog
                     ['name' => 'empreendimentos.update',                     'label' => 'Editar empreendimento'],
                     ['name' => 'empreendimentos.delete',                     'label' => 'Excluir empreendimento'],
                     ['name' => 'empreendimentos.field_definitions.manage',   'label' => 'Configurar campos customizados'],
+                    ['name' => 'tipologias.field_definitions.manage',        'label' => 'Configurar campos das tipologias'],
                 ],
             ],
 
@@ -159,6 +160,7 @@ class Catalog
                     ['name' => 'settings.email',                   'label' => 'Configurações de E-mail'],
                     ['name' => 'settings.pipeline',                'label' => 'Etapas do pipeline'],
                     ['name' => 'settings.empreendimento_fields',  'label' => 'Campos do empreendimento'],
+                    ['name' => 'settings.tipologia_fields',        'label' => 'Campos da tipologia'],
                     ['name' => 'settings.task_colors',             'label' => 'Cores de tarefas'],
                     ['name' => 'settings.roles',                   'label' => 'Cargos e permissões'],
                     ['name' => 'settings.deletion_requests',       'label' => 'Solicitações de exclusão'],
@@ -260,6 +262,7 @@ class Catalog
             'settings.email',
             'settings.pipeline',
             'settings.empreendimento_fields',
+            'settings.tipologia_fields',
             'settings.task_colors',
             'settings.roles',
             'settings.deletion_requests',
