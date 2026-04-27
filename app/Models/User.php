@@ -83,6 +83,11 @@ class User extends Authenticatable
         )->withTimestamps();
     }
 
+    public function googleCredential(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(UserGoogleCredential::class);
+    }
+
     public function effectiveRole(): string
     {
         $col = strtolower(trim((string) ($this->role ?? '')));

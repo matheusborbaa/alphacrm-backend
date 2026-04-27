@@ -57,13 +57,27 @@ class Appointment extends Model
     public const STATUS_DONE      = 'done';
     public const STATUS_CANCELLED = 'cancelled';
 
+
+    public const MODALITY_PRESENCIAL = 'presencial';
+    public const MODALITY_ONLINE     = 'online';
+
+    public const CONFIRM_PENDING   = 'pending';
+    public const CONFIRM_CONFIRMED = 'confirmed';
+    public const CONFIRM_COMPLETED = 'completed';
+    public const CONFIRM_NO_SHOW   = 'no_show';
+    public const CONFIRM_CANCELLED = 'cancelled';
+
     protected $fillable = [
         'title',
         'lead_id',
         'user_id',
         'type',
         'task_kind',
+        'modality',
         'description',
+        'location',
+        'attendee_email',
+        'attendee_phone',
         'starts_at',
         'ends_at',
         'due_at',
@@ -72,17 +86,32 @@ class Appointment extends Model
         'priority',
         'reminder_at',
         'status',
+        'confirmation_status',
+        'confirmation_token',
+        'lead_confirmed_at',
+        'cancellation_reason',
+        'meeting_url',
+        'external_event_id',
+        'external_event_etag',
+        'last_synced_at',
+        'last_sync_error',
+        'reminder_sent_24h_at',
+        'reminder_sent_1h_at',
         'scope',
         'created_by',
         'created_at',
     ];
 
     protected $casts = [
-        'starts_at'    => 'datetime:Y-m-d H:i:s',
-        'ends_at'      => 'datetime:Y-m-d H:i:s',
-        'due_at'       => 'datetime:Y-m-d H:i:s',
-        'completed_at' => 'datetime:Y-m-d H:i:s',
-        'reminder_at'  => 'datetime:Y-m-d H:i:s',
+        'starts_at'             => 'datetime:Y-m-d H:i:s',
+        'ends_at'               => 'datetime:Y-m-d H:i:s',
+        'due_at'                => 'datetime:Y-m-d H:i:s',
+        'completed_at'          => 'datetime:Y-m-d H:i:s',
+        'reminder_at'           => 'datetime:Y-m-d H:i:s',
+        'lead_confirmed_at'     => 'datetime',
+        'last_synced_at'        => 'datetime',
+        'reminder_sent_24h_at'  => 'datetime',
+        'reminder_sent_1h_at'   => 'datetime',
     ];
 
     public function user()
@@ -165,5 +194,40 @@ class Appointment extends Model
     public function isCompleted(): bool
     {
         return $this->completed_at !== null;
+    }
+
+
+    public function isVisit(): bool
+    {
+        return $this->type === self::TYPE_VISIT
+            || $this->task_kind === self::KIND_VISITA
+            || $this->task_kind === self::KIND_AGENDAMENTO;
+    }
+
+
+    protected static function booted(): void
+    {
+        static::creating(function (Appointment $appt) {
+            if ($appt->isVisit() && empty($appt->confirmation_token)) {
+                $appt->confirmation_token = self::generateUniqueToken();
+            }
+            if ($appt->isVisit() && empty($appt->confirmation_status)) {
+                $appt->confirmation_status = self::CONFIRM_PENDING;
+            }
+        });
+    }
+
+    private static function generateUniqueToken(): string
+    {
+        do {
+            $token = bin2hex(random_bytes(24));
+        } while (self::where('confirmation_token', $token)->exists());
+        return $token;
+    }
+
+
+    public function isVisitOnline(): bool
+    {
+        return $this->modality === self::MODALITY_ONLINE;
     }
 }
