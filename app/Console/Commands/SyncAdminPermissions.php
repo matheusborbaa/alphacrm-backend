@@ -27,7 +27,24 @@ class SyncAdminPermissions extends Command
     {
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
-        $guard = 'web';
+
+        $existingRoles = Role::all();
+        $this->line('Roles existentes no banco:');
+        foreach ($existingRoles as $r) {
+            $this->line(sprintf('  - "%s" (guard: %s, id: %d)', $r->name, $r->guard_name, $r->id));
+        }
+        $this->newLine();
+
+        $admin = Role::where('name', 'admin')->first();
+
+        if (!$admin) {
+            $this->warn('Role "admin" não encontrado. Criando agora com guard "web"...');
+            $admin = Role::create(['name' => 'admin', 'guard_name' => 'web']);
+            $this->line('  ✓ Role criado.');
+        }
+
+        $guard = $admin->guard_name ?: 'web';
+        $this->info('Usando guard "' . $guard . '" do role admin.');
 
         $names = array_unique(array_merge(
             Catalog::allNames(),
@@ -43,13 +60,8 @@ class SyncAdminPermissions extends Command
         }
         $this->line("  ✓ {$created} permissão(ões) criada(s) no banco.");
 
-        $admin = Role::where('name', 'admin')->where('guard_name', $guard)->first();
-        if (!$admin) {
-            $this->error('Role "admin" não encontrado. Rode primeiro: php artisan db:seed --class=Database\\Seeders\\RolesPermissionsSeeder');
-            return self::FAILURE;
-        }
 
-
+        $admin->load('permissions');
         $missing = array_diff($names, $admin->permissions->pluck('name')->toArray());
 
         if (empty($missing)) {
@@ -62,6 +74,19 @@ class SyncAdminPermissions extends Command
         }
 
         app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+
+        $usersWithRole = \App\Models\User::role('admin')->count();
+        $usersByColumn = \App\Models\User::where('role', 'admin')->count();
+        $this->newLine();
+        $this->line("Usuários com role admin (Spatie): {$usersWithRole}");
+        $this->line("Usuários com coluna role='admin': {$usersByColumn}");
+
+        if ($usersByColumn > 0 && $usersWithRole < $usersByColumn) {
+            $this->warn("Há usuários com coluna role='admin' mas sem o role Spatie atribuído.");
+            $this->warn("Rode: php artisan db:seed --class=Database\\\\Seeders\\\\RolesPermissionsSeeder");
+            $this->warn("Esse seed também sincroniza usuários com seus roles correspondentes.");
+        }
 
         $this->newLine();
         $this->info('Pronto. Os usuários admin precisam fazer logout/login pra atualizar o token.');
