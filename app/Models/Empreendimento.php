@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use App\Models\Lead;
 use App\Models\EmpreendimentoImage;
+use App\Models\EmpreendimentoTipologia;
 
 class Empreendimento extends Model
 {
