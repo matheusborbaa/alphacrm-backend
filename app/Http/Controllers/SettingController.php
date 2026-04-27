@@ -151,6 +151,12 @@ class SettingController extends Controller
             'type'    => 'bool',
             'default' => true,
         ],
+
+
+        'pipeline_strict_mode' => [
+            'type'    => 'bool',
+            'default' => false,
+        ],
     ];
 
     public function index()

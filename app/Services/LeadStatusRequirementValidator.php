@@ -165,9 +165,18 @@ class LeadStatusRequirementValidator
             }
 
 
+
+
+            $strictMode = false;
+            try {
+                $strictMode = (bool) \App\Models\Setting::get('pipeline_strict_mode', false);
+            } catch (\Throwable $e) {  }
+
             $intermediateSubstatusRules = StatusRequiredField::with(['customField', 'substatus.status'])
                 ->where('required', true)
-                ->where('enforce_on_skip', true)
+                ->when(!$strictMode, function ($q) {
+                    $q->where('enforce_on_skip', true);
+                })
                 ->whereNotNull('lead_substatus_id')
 
                 ->where(function ($q) use ($targetSubstatusId) {
