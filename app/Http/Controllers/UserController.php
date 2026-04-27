@@ -222,12 +222,40 @@ class UserController extends Controller
 
         if (!empty($data['role']) && $data['role'] !== ($user->getRoleNames()->first() ?? $user->role)) {
             $caller = $request->user();
+            $callerRole = strtolower($caller->getRoleNames()->first() ?? $caller->role ?? '');
+            $oldRole    = strtolower($user->getRoleNames()->first() ?? $user->role ?? '');
+            $newRole    = strtolower($data['role']);
+
             $canChangeRole = $caller->can('users.manage') || $caller->can('users.update');
             if (!$canChangeRole) {
                 throw ValidationException::withMessages(['role' => 'Sem permissão.']);
             }
-            if ($data['role'] === 'admin' && !$caller->can('users.assign_admin')) {
+            if ($newRole === 'admin' && !$caller->can('users.assign_admin')) {
                 throw ValidationException::withMessages(['role' => 'Só admin pode promover outro admin.']);
+            }
+
+
+            if ($oldRole === 'admin' && $newRole !== 'admin' && $callerRole !== 'admin') {
+                throw ValidationException::withMessages([
+                    'role' => 'Só outro admin pode rebaixar este usuário.',
+                ]);
+            }
+
+
+            if ($oldRole === 'admin' && $newRole !== 'admin' && $caller->id === $user->id) {
+
+                $remainingAdmins = User::where('id', '!=', $user->id)
+                    ->where(function ($q) {
+                        $q->where('role', 'admin')
+                          ->orWhereHas('roles', fn($r) => $r->where('name', 'admin'));
+                    })
+                    ->where('active', true)
+                    ->count();
+                if ($remainingAdmins === 0) {
+                    throw ValidationException::withMessages([
+                        'role' => 'Você é o único admin ativo. Promova outro usuário a admin antes de se rebaixar.',
+                    ]);
+                }
             }
 
             $user->syncRoles([$data['role']]);
