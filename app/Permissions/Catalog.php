@@ -304,6 +304,9 @@ class Catalog
             'notifications.view',
 
             'media.view',
+
+
+            'academy.view',
         ];
 
         return [

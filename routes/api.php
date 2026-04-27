@@ -462,6 +462,9 @@ Route::middleware(['auth:sanctum', 'permission:academy.view|academy.manage'])->p
     Route::get ('/courses/{course}/quiz',            [\App\Http\Controllers\AcademyQuizController::class, 'userGetQuiz']);
     Route::post('/courses/{course}/quiz/submit',     [\App\Http\Controllers\AcademyQuizController::class, 'userSubmitQuiz']);
     Route::get ('/courses/{course}/quiz/attempts',   [\App\Http\Controllers\AcademyQuizController::class, 'userListAttempts']);
+
+
+    Route::get ('/certificates/{course}/download',   [\App\Http\Controllers\AcademyCertificateController::class, 'download']);
 });
 
 
