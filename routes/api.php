@@ -523,6 +523,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/settings',            [SettingController::class, 'index']);
     Route::get('/settings/{key}',      [SettingController::class, 'show']);
     Route::put('/settings/{key}',      [SettingController::class, 'update']);
+
+
+    Route::post  ('/admin/settings/image-watermark/logo',    [\App\Http\Controllers\ImageWatermarkController::class, 'uploadLogo']);
+    Route::delete('/admin/settings/image-watermark/logo',    [\App\Http\Controllers\ImageWatermarkController::class, 'deleteLogo']);
+    Route::get   ('/admin/empreendimento-images/watermark-stats', [\App\Http\Controllers\ImageWatermarkController::class, 'stats']);
+    Route::post  ('/admin/empreendimento-images/apply-watermark', [\App\Http\Controllers\ImageWatermarkController::class, 'applyToExisting']);
 });
 
 Route::middleware(['auth:sanctum', 'permission:settings.system'])->group(function () {

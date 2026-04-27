@@ -117,6 +117,19 @@ public function publicShow(string $code)
 {
     $query = Empreendimento::query();
 
+
+    if (\Illuminate\Support\Facades\Schema::hasTable('empreendimento_tipologias')) {
+        $query->addSelect([
+            '*',
+            'tipologias_area_min' => \Illuminate\Support\Facades\DB::table('empreendimento_tipologias')
+                ->whereColumn('empreendimento_id', 'empreendimentos.id')
+                ->selectRaw('MIN(area_min_m2)'),
+            'tipologias_area_max' => \Illuminate\Support\Facades\DB::table('empreendimento_tipologias')
+                ->whereColumn('empreendimento_id', 'empreendimentos.id')
+                ->selectRaw('MAX(COALESCE(area_max_m2, area_min_m2))'),
+        ]);
+    }
+
     if ($request->filled('search')) {
         $query->where('name', 'like', '%' . $request->search . '%');
     }

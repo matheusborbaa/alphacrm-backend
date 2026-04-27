@@ -92,6 +92,21 @@ class EmpreendimentoImageController extends Controller
                 'is_cover'          => $wantCover,
             ]);
 
+
+            try {
+                $watermark = app(\App\Services\ImageWatermarkService::class);
+                if ($watermark->isEnabled()) {
+                    if ($watermark->apply($img->image_path)) {
+                        $img->update(['watermark_applied_at' => now()]);
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Falha ao aplicar marca d\'água na imagem nova', [
+                    'image_id' => $img->id,
+                    'error'    => $e->getMessage(),
+                ]);
+            }
+
             if ($wantCover) {
                 $empreendimento->update([
                     'cover_image' => $img->image_path,

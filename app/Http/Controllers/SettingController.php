@@ -157,6 +157,33 @@ class SettingController extends Controller
             'type'    => 'bool',
             'default' => false,
         ],
+
+
+        'image_watermark_enabled' => [
+            'type'    => 'bool',
+            'default' => false,
+        ],
+        'image_watermark_logo_path' => [
+            'type'    => 'string',
+            'default' => null,
+        ],
+        'image_watermark_position' => [
+            'type'    => 'enum',
+            'default' => 'bottom-right',
+            'options' => ['bottom-right', 'bottom-left', 'top-right', 'top-left', 'center', 'tile'],
+        ],
+        'image_watermark_opacity' => [
+            'type'    => 'int',
+            'default' => 50,
+            'min'     => 5,
+            'max'     => 100,
+        ],
+        'image_watermark_size_pct' => [
+            'type'    => 'int',
+            'default' => 20,
+            'min'     => 5,
+            'max'     => 60,
+        ],
     ];
 
     public function index()

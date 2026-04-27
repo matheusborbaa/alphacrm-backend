@@ -24,10 +24,12 @@ class EmpreendimentoImage extends Model
         'order',
         'category',
         'is_cover',
+        'watermark_applied_at',
     ];
 
     protected $casts = [
-        'is_cover' => 'boolean',
+        'is_cover'             => 'boolean',
+        'watermark_applied_at' => 'datetime',
     ];
 
     public function empreendimento()
