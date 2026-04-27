@@ -36,3 +36,9 @@ Schedule::command('google:sync-incoming')
     ->everyFiveMinutes()
     ->onOneServer()
     ->withoutOverlapping();
+
+
+Schedule::command('visits:send-reminders')
+    ->everyFiveMinutes()
+    ->onOneServer()
+    ->withoutOverlapping();

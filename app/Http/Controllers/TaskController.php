@@ -152,7 +152,36 @@ class TaskController extends Controller
 
         $this->pushToGoogleSafely($task);
 
+
+        $this->notifyGestorOfNewVisitSafely($task);
+
         return response()->json($task->fresh(['lead:id,name', 'user:id,name']), 201);
+    }
+
+
+    private function notifyGestorOfNewVisitSafely(Appointment $appt): void
+    {
+        try {
+            if (!$appt->isVisit()) return;
+
+            $corretor = $appt->user ?: \App\Models\User::find($appt->user_id);
+            if (!$corretor) return;
+
+
+            $gestorId = $corretor->parent_user_id ?? null;
+            if (!$gestorId) return;
+
+            $gestor = \App\Models\User::find($gestorId);
+            if (!$gestor || !$gestor->email) return;
+
+
+            if (strcasecmp($gestor->email, $corretor->email ?? '') === 0) return;
+
+            \Illuminate\Support\Facades\Mail::to($gestor->email)
+                ->send(new \App\Mail\NewVisitForGestorMail($appt, $gestor, $corretor));
+        } catch (\Throwable $e) {
+            \Log::warning('[task] notifyGestorOfNewVisit falhou (silencioso): ' . $e->getMessage());
+        }
     }
 
 
