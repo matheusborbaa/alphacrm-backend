@@ -159,10 +159,41 @@ class TaskController extends Controller
     private function pushToGoogleSafely(Appointment $appt): void
     {
         try {
-            if (!$appt->isVisit()) return;
-            app(\App\Services\GoogleCalendarService::class)->pushAppointment($appt);
+            \Log::info('[task→google] tentando push', [
+                'appt_id'    => $appt->id,
+                'task_kind'  => $appt->task_kind,
+                'type'       => $appt->type,
+                'is_visit'   => $appt->isVisit(),
+                'user_id'    => $appt->user_id,
+            ]);
+
+            if (!$appt->isVisit()) {
+                \Log::info('[task→google] pulado: não é visita (kind=' . $appt->task_kind . ')');
+                return;
+            }
+
+            $service = app(\App\Services\GoogleCalendarService::class);
+
+            if (!$service->isConfigured()) {
+                \Log::warning('[task→google] pulado: Google não configurado (faltam env vars ou pacote)');
+                return;
+            }
+
+            $user = \App\Models\User::find($appt->user_id);
+            if (!$user) {
+                \Log::warning('[task→google] pulado: user_id ' . $appt->user_id . ' não encontrado');
+                return;
+            }
+
+            if (!$service->isUserConnected($user)) {
+                \Log::warning('[task→google] pulado: user ' . $user->id . ' (' . $user->name . ') não tem credencial Google conectada');
+                return;
+            }
+
+            $result = $service->pushAppointment($appt);
+            \Log::info('[task→google] resultado push', ['result' => $result]);
         } catch (\Throwable $e) {
-            \Log::warning('[task] push pro Google falhou (silencioso): ' . $e->getMessage());
+            \Log::error('[task→google] EXCEPTION: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
         }
     }
 

@@ -201,7 +201,8 @@ class Appointment extends Model
     {
         return $this->type === self::TYPE_VISIT
             || $this->task_kind === self::KIND_VISITA
-            || $this->task_kind === self::KIND_AGENDAMENTO;
+            || $this->task_kind === self::KIND_AGENDAMENTO
+            || $this->task_kind === self::KIND_REUNIAO;
     }
 
 
