@@ -9,11 +9,13 @@ class EmpreendimentoImage extends Model
     public const CATEGORY_IMAGENS  = 'imagens';
     public const CATEGORY_PLANTAS  = 'plantas';
     public const CATEGORY_DECORADO = 'decorado';
+    public const CATEGORY_ARTES    = 'artes';
 
     public const CATEGORIES = [
         self::CATEGORY_IMAGENS,
         self::CATEGORY_PLANTAS,
         self::CATEGORY_DECORADO,
+        self::CATEGORY_ARTES,
     ];
 
     protected $fillable = [
