@@ -28,6 +28,8 @@ class User extends Authenticatable
         'status_corretor',
 
         'cooldown_until',
+        'paused_until',
+        'pause_reason',
 
         'chat_read_receipts',
 
@@ -49,8 +51,29 @@ class User extends Authenticatable
             'password' => 'hashed',
             'last_lead_assigned_at' => 'datetime',
             'cooldown_until' => 'datetime',
+            'paused_until' => 'datetime',
             'chat_read_receipts' => 'boolean',
         ];
+    }
+
+
+    public function isPaused(): bool
+    {
+        return $this->paused_until !== null && $this->paused_until->isFuture();
+    }
+
+
+    public function isOnCooldown(): bool
+    {
+        return $this->cooldown_until !== null && $this->cooldown_until->isFuture();
+    }
+
+
+    public function isAvailable(): bool
+    {
+        return strcasecmp((string) $this->status_corretor, 'disponivel') === 0
+            && !$this->isOnCooldown()
+            && !$this->isPaused();
     }
 
 	 public function leads(): HasMany

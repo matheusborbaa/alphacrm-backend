@@ -11,70 +11,99 @@ class ReleaseCooldowns extends Command
 {
     protected $signature = 'leads:release-cooldowns {--dry-run : Só lista o que seria liberado}';
 
-    protected $description = 'Libera corretores cujo cooldown pós-lead já expirou e tenta pegar órfãos';
+    protected $description = 'Libera corretores cujo cooldown ou pausa expirou e tenta pegar órfãos';
 
     public function handle(LeadAssignmentService $assigner): int
     {
         $dryRun = (bool) $this->option('dry-run');
 
+        $cooldownReleased = $this->releaseCooldowns($assigner, $dryRun);
+        $pauseReleased    = $this->releasePauses($assigner, $dryRun);
+
+        $this->newLine();
+        $this->info("Concluído. Cooldowns liberados: {$cooldownReleased}. Pausas liberadas: {$pauseReleased}.");
+
+        return Command::SUCCESS;
+    }
+
+    private function releaseCooldowns(LeadAssignmentService $assigner, bool $dryRun): int
+    {
         $candidates = User::whereNotNull('cooldown_until')
             ->where('cooldown_until', '<=', now())
             ->get();
 
         if ($candidates->isEmpty()) {
-            $this->info('Nenhum cooldown expirado.');
-            return Command::SUCCESS;
+            $this->line('Nenhum cooldown expirado.');
+            return 0;
         }
 
         $this->info(($dryRun ? '[DRY-RUN] ' : '') . "Encontrados {$candidates->count()} corretores com cooldown expirado.");
 
-        $releasedToAvailable = 0;
-        $justCleared         = 0;
-        $errors              = 0;
-
+        $released = 0;
         foreach ($candidates as $user) {
             try {
                 $currentStatus = strtolower((string) ($user->status_corretor ?? ''));
-
-                $this->line(sprintf(
-                    '  - user#%d (%s) status=%s cooldown_until=%s',
-                    $user->id,
-                    $user->name,
-                    $currentStatus ?: '—',
-                    optional($user->cooldown_until)->toDateTimeString() ?? '—'
-                ));
-
-                if ($dryRun) { continue; }
+                if ($dryRun) {
+                    $this->line("  - user#{$user->id} ({$user->name}) cooldown expirado");
+                    continue;
+                }
 
                 if ($currentStatus === 'ocupado') {
-
-                    $user->update([
-                        'status_corretor' => 'disponivel',
-                        'cooldown_until'  => null,
-                    ]);
-                    $releasedToAvailable++;
+                    $user->update(['status_corretor' => 'disponivel', 'cooldown_until' => null]);
+                    $released++;
 
                     $claimed = $assigner->tryClaimNextOrphan($user->fresh());
-                    if ($claimed) {
-                        $this->info("    ✓ lead órfão #{$claimed->id} atribuído");
-                    }
+                    if ($claimed) $this->info("    ✓ user#{$user->id}: lead órfão #{$claimed->id} atribuído");
                 } else {
-
                     $user->update(['cooldown_until' => null]);
-                    $justCleared++;
                 }
             } catch (\Throwable $e) {
-                $errors++;
-                Log::error('ReleaseCooldowns falhou pra user ' . $user->id, [
-                    'exception' => $e->getMessage(),
-                ]);
-                $this->error("    ✗ erro no user {$user->id}: " . $e->getMessage());
+                Log::error('ReleaseCooldowns cooldown falhou user ' . $user->id, ['err' => $e->getMessage()]);
             }
         }
+        return $released;
+    }
 
-        $this->newLine();
-        $this->info("Concluído. Liberados pra disponivel: {$releasedToAvailable}. Timestamps limpos: {$justCleared}. Erros: {$errors}.");
+    private function releasePauses(LeadAssignmentService $assigner, bool $dryRun): int
+    {
+        $candidates = User::whereNotNull('paused_until')
+            ->where('paused_until', '<=', now())
+            ->get();
 
-        return $errors === 0 ? Command::SUCCESS : Command::FAILURE;
+        if ($candidates->isEmpty()) {
+            $this->line('Nenhuma pausa expirada.');
+            return 0;
+        }
+
+        $this->info(($dryRun ? '[DRY-RUN] ' : '') . "Encontrados {$candidates->count()} corretores com pausa expirada.");
+
+        $released = 0;
+        foreach ($candidates as $user) {
+            try {
+                if ($dryRun) {
+                    $this->line("  - user#{$user->id} ({$user->name}) pausa expirada (motivo: {$user->pause_reason})");
+                    continue;
+                }
+
+
+                $update = ['paused_until' => null, 'pause_reason' => null];
+                if (strcasecmp((string) $user->status_corretor, 'disponivel') === 0) {
+
+                } else {
+
+                    $update['status_corretor'] = 'disponivel';
+                }
+
+                $user->update($update);
+                $released++;
+
+
+                $claimed = $assigner->tryClaimNextOrphan($user->fresh());
+                if ($claimed) $this->info("    ✓ user#{$user->id} retomou e pegou lead órfão #{$claimed->id}");
+            } catch (\Throwable $e) {
+                Log::error('ReleaseCooldowns pause falhou user ' . $user->id, ['err' => $e->getMessage()]);
+            }
+        }
+        return $released;
     }
 }

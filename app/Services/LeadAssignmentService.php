@@ -268,6 +268,8 @@ class LeadAssignmentService
 
         if ($u->cooldown_until && $u->cooldown_until->isFuture()) return false;
 
+        if ($u->paused_until && $u->paused_until->isFuture()) return false;
+
         return true;
     }
 
@@ -280,6 +282,11 @@ class LeadAssignmentService
 
                 $q->whereNull('cooldown_until')
                   ->orWhere('cooldown_until', '<=', now());
+            })
+            ->where(function ($q) {
+
+                $q->whereNull('paused_until')
+                  ->orWhere('paused_until', '<=', now());
             });
 
         if ($empreendimentoId !== null) {

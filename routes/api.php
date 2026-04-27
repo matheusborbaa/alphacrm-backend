@@ -51,6 +51,9 @@ use App\Http\Controllers\VpsStatusController;
 
     Route::post('/users/me/heartbeat', [UserController::class, 'heartbeat'])->middleware(['auth:sanctum']);
 
+    Route::post('/users/me/pause',  [UserController::class, 'pauseSelf'])->middleware(['auth:sanctum']);
+    Route::post('/users/me/resume', [UserController::class, 'resumeSelf'])->middleware(['auth:sanctum']);
+
     Route::post('/users/me/preferences', [UserController::class, 'updatePreferences'])->middleware(['auth:sanctum']);
 
     Route::get('/user/me', function (\Illuminate\Http\Request $request) {

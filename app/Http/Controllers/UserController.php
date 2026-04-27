@@ -468,6 +468,67 @@ class UserController extends Controller
         return response()->json(['ok' => true, 'at' => now()->toIso8601String()]);
     }
 
+
+    public function pauseSelf(Request $request)
+    {
+        $user = $request->user();
+
+        $data = $request->validate([
+            'duration_minutes' => 'nullable|integer|min:1|max:1440',
+            'reason'           => 'nullable|string|max:80',
+        ]);
+
+        $minutes = $data['duration_minutes'] ?? null;
+        $reason  = $data['reason'] ?? null;
+
+        $payload = ['pause_reason' => $reason];
+
+        if ($minutes !== null) {
+            $payload['paused_until'] = now()->addMinutes($minutes);
+        } else {
+
+            $payload['paused_until'] = now()->addYear();
+        }
+
+        $user->update($payload);
+
+        return response()->json([
+            'success'      => true,
+            'paused_until' => $user->fresh()->paused_until?->toIso8601String(),
+            'pause_reason' => $reason,
+            'manual'       => $minutes === null,
+        ]);
+    }
+
+
+    public function resumeSelf(Request $request, LeadAssignmentService $assigner)
+    {
+        $user = $request->user();
+
+        if (!$user->isPaused()) {
+
+            $user->update(['paused_until' => null, 'pause_reason' => null]);
+            return response()->json(['success' => true, 'was_paused' => false]);
+        }
+
+        $user->update(['paused_until' => null, 'pause_reason' => null]);
+
+
+        $claimed = null;
+        if (strcasecmp((string) $user->status_corretor, 'disponivel') === 0) {
+            $claimed = $assigner->tryClaimNextOrphan($user->fresh());
+        }
+
+        return response()->json([
+            'success'      => true,
+            'was_paused'   => true,
+            'claimed_lead' => $claimed ? [
+                'id'   => $claimed->id,
+                'name' => $claimed->name,
+            ] : null,
+        ]);
+    }
+
     private function applySeccionamentoFields(User $target, array $fields, User $actor): void
     {
         $isAdmin = strtolower((string) ($actor->role ?? '')) === 'admin';
