@@ -347,7 +347,8 @@ Route::get('/dashboard/appointments', function (Request $request) {
 
     $includeCompleted = (bool) $request->boolean('include_completed', false);
 
-    $query = Appointment::with('lead:id,name')
+    $query = Appointment::withVisibleLead()
+        ->with('lead:id,name')
         ->where('user_id', $user->id)
         ->where(function ($q) use ($windowStart, $windowEnd) {
             $q->whereBetween('due_at',    [$windowStart, $windowEnd])
