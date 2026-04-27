@@ -170,26 +170,32 @@ class ImageWatermarkService
         $tmp = imagecreatetruecolor($w, $h);
         imagealphablending($tmp, false);
         imagesavealpha($tmp, true);
+
         $transparent = imagecolorallocatealpha($tmp, 0, 0, 0, 127);
         imagefilledrectangle($tmp, 0, 0, $w, $h, $transparent);
 
-        imagealphablending($tmp, true);
-        imagecopy($tmp, $src, 0, 0, 0, 0, $w, $h);
 
+        $factor = 1 - ($alphaPct / 100);
 
         for ($x = 0; $x < $w; $x++) {
             for ($y = 0; $y < $h; $y++) {
-                $rgba  = imagecolorat($tmp, $x, $y);
-                $a     = ($rgba >> 24) & 0x7F;
+                $rgba = imagecolorat($src, $x, $y);
+                $a    = ($rgba >> 24) & 0x7F;
                 if ($a === 127) continue;
-                $newA  = (int) min(127, $a + (int) round((127 - $a) * (1 - $alphaPct / 100)));
+
+                $newA = (int) round($a + (127 - $a) * $factor);
+                if ($newA > 127) $newA = 127;
+                if ($newA < 0)   $newA = 0;
+
                 $r = ($rgba >> 16) & 0xFF;
                 $g = ($rgba >> 8) & 0xFF;
                 $b = $rgba & 0xFF;
-                $newColor = imagecolorallocatealpha($tmp, $r, $g, $b, $newA);
-                imagesetpixel($tmp, $x, $y, $newColor);
+
+                $color = imagecolorallocatealpha($tmp, $r, $g, $b, $newA);
+                imagesetpixel($tmp, $x, $y, $color);
             }
         }
+
 
         imagecopy($dst, $tmp, $dstX, $dstY, 0, 0, $w, $h);
         imagedestroy($tmp);
