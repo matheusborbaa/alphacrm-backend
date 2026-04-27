@@ -31,6 +31,7 @@ public function update(Request $request, Lead $lead, LeadStatusRequirementValida
         'assigned_user_id'   => 'sometimes|nullable|exists:users,id',
         'empreendimento_id'  => 'sometimes|nullable|exists:empreendimentos,id',
         'channel'            => 'sometimes|nullable|string|max:100',
+        'channel_id'         => 'sometimes|nullable|integer|exists:lead_channels,id',
         'campaign'           => 'sometimes|nullable|string|max:255',
         'temperature'        => 'sometimes|nullable|in:quente,morno,frio',
         'value'              => 'sometimes|nullable|numeric',
@@ -52,7 +53,7 @@ public function update(Request $request, Lead $lead, LeadStatusRequirementValida
 
         $strictManagerOnly = ['assigned_user_id'];
 
-        $fillableWhenEmpty = ['source_id', 'channel', 'campaign'];
+        $fillableWhenEmpty = ['source_id', 'channel', 'channel_id', 'campaign'];
 
         foreach ($strictManagerOnly as $f) {
             if (!array_key_exists($f, $data)) continue;
@@ -241,6 +242,7 @@ private function saveCustomValues(Lead $lead, array $values): array
         'status:id,name,color_hex',
         'substatus:id,lead_status_id,name,color_hex',
         'source:id,name',
+        'channelRel:id,name',
         'empreendimento:id,name',
         'interactions' => function ($q) {
             $q->with('user:id,name')
@@ -445,7 +447,9 @@ public function store(Request $request)
         'phone'              => 'required|string|max:30',
         'whatsapp'           => 'nullable|string|max:30',
         'email'              => 'nullable|email|max:255',
+        'source_id'          => 'nullable|integer|exists:lead_sources,id',
         'channel'            => 'nullable|string|max:80',
+        'channel_id'         => 'nullable|integer|exists:lead_channels,id',
         'campaign'           => 'nullable|string|max:150',
         'empreendimento_id'  => 'nullable|integer|exists:empreendimentos,id',
         'city_of_interest'   => 'nullable|string|max:120',
@@ -897,6 +901,7 @@ $lead->load([
     'status:id,name,color_hex',
     'substatus:id,lead_status_id,name,color_hex',
     'source:id,name',
+    'channelRel:id,name',
     'empreendimento:id,name',
     'corretor:id,name',
 

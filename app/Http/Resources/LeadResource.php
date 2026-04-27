@@ -24,6 +24,7 @@ class LeadResource extends JsonResource
 
             'sla_deadline_at'     => $this->sla_deadline_at,
             'channel'             => $this->channel,
+            'channel_id'          => $this->channel_id,
             'campaign'            => $this->campaign,
             'city_of_interest'    => $this->city_of_interest,
             'region_of_interest'  => $this->region_of_interest,
@@ -40,6 +41,7 @@ class LeadResource extends JsonResource
             'substatus'      => $this->whenLoaded('substatus', fn() => $this->substatus?->only(['id','name','color_hex','lead_status_id'])),
             'corretor'       => $this->corretor?->only(['id','name']),
             'source'         => $this->whenLoaded('source', fn() => $this->source?->only(['id','name'])),
+            'channel_rel'    => $this->whenLoaded('channelRel', fn() => $this->channelRel?->only(['id','name'])),
             'empreendimento' => $this->empreendimento?->only(['id','name']),
 
             'custom_values' => $this->whenLoaded('customFieldValues', fn() =>

@@ -53,6 +53,7 @@ class Lead extends Model
         'sla_status',
         'manychat_id',
         'channel',
+        'channel_id',
         'campaign',
         'temperature',
         'value',
@@ -115,6 +116,32 @@ class Lead extends Model
     public function source(): BelongsTo
     {
         return $this->belongsTo(LeadSource::class, 'source_id');
+    }
+
+    public function channelRel(): BelongsTo
+    {
+        return $this->belongsTo(LeadChannel::class, 'channel_id');
+    }
+
+    /**
+     * Label "humano" do canal pra UI: prefere o nome da relação (FK),
+     * cai pro string livre `channel` se a FK não estiver setada (compat
+     * com leads antigos).
+     */
+    public function getChannelLabelAttribute(): ?string
+    {
+        if ($this->relationLoaded('channelRel') && $this->channelRel) {
+            return $this->channelRel->name;
+        }
+        if (!empty($this->channel)) {
+            return $this->channel;
+        }
+
+        if ($this->channel_id) {
+            $name = LeadChannel::query()->whereKey($this->channel_id)->value('name');
+            if ($name) return $name;
+        }
+        return null;
     }
 
     public function empreendimentos()

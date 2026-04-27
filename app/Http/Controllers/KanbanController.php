@@ -29,6 +29,7 @@ class KanbanController extends Controller
         'assigned_user_id',
         'empreendimento_id',
         'channel',
+        'channel_id',
         'campaign',
         'source_id',
         'temperature',
@@ -50,6 +51,7 @@ class KanbanController extends Controller
             'corretor:id,name',
             'empreendimento:id,name',
             'source:id,name',
+            'channelRel:id,name',
         ])
         ->orderBy('position')
         ->select($leadSelect);
