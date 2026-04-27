@@ -200,6 +200,13 @@ public function cities()
 
     public function store(Request $request)
 {
+
+
+    $valueRequired = (bool) \App\Models\Setting::get('empreendimento_value_required', true);
+    $priceRule = $valueRequired
+        ? 'required|numeric|min:0.01'
+        : 'nullable|numeric|min:0';
+
     $data = $request->validate([
         'name'                  => 'required|string|max:255',
         'code'                  => 'nullable|string|max:255',
@@ -209,7 +216,7 @@ public function cities()
         'finalidade'            => 'nullable|string|max:60',
         'status'                => 'nullable|string|max:60',
         'metragem'              => 'nullable|numeric|min:0',
-        'initial_price'         => 'nullable|numeric|min:0',
+        'initial_price'         => $priceRule,
         'active'                => 'boolean',
         'commission_percentage' => 'nullable|numeric',
         'average_sale_value'    => 'nullable|numeric',
@@ -218,6 +225,10 @@ public function cities()
         'shortdescription'      => 'nullable|string',
         'description'           => 'nullable|string',
         'cover_image'           => 'nullable|image|mimes:jpg,jpeg,png,webp|max:4096'
+    ], [
+
+        'initial_price.required' => 'Informe o valor do imóvel.',
+        'initial_price.min'      => 'O valor do imóvel deve ser maior que zero.',
     ]);
 
     if($request->hasFile('cover_image')){

@@ -145,6 +145,12 @@ class SettingController extends Controller
             'default' => 'system',
             'options' => ['system', 'light', 'dark'],
         ],
+
+
+        'empreendimento_value_required' => [
+            'type'    => 'bool',
+            'default' => true,
+        ],
     ];
 
     public function index()
