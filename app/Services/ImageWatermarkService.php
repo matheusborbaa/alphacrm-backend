@@ -198,12 +198,11 @@ class ImageWatermarkService
     private function resolvePosition(string $pos, int $baseW, int $baseH, int $logoW, int $logoH, int $margin): array
     {
         return match ($pos) {
-            'bottom-left'  => [$margin, $baseH - $logoH - $margin],
-            'top-right'    => [$baseW - $logoW - $margin, $margin],
-            'top-left'     => [$margin, $margin],
-            'center'       => [(int) (($baseW - $logoW) / 2), (int) (($baseH - $logoH) / 2)],
-            'bottom-right',
-            default        => [$baseW - $logoW - $margin, $baseH - $logoH - $margin],
+            'bottom-left' => [$margin, $baseH - $logoH - $margin],
+            'top-right'   => [$baseW - $logoW - $margin, $margin],
+            'top-left'    => [$margin, $margin],
+            'center'      => [(int) (($baseW - $logoW) / 2), (int) (($baseH - $logoH) / 2)],
+            default       => [$baseW - $logoW - $margin, $baseH - $logoH - $margin],
         };
     }
 
