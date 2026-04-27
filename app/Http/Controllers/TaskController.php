@@ -92,6 +92,14 @@ class TaskController extends Controller
             'user_id'     => 'nullable|exists:users,id',
 
             'scope'       => 'nullable|in:private,company',
+
+
+            'starts_at'      => 'nullable|date',
+            'ends_at'        => 'nullable|date|after_or_equal:starts_at',
+            'modality'       => 'nullable|string|in:presencial,online',
+            'location'       => 'nullable|string|max:1000',
+            'attendee_email' => 'nullable|email|max:191',
+            'attendee_phone' => 'nullable|string|max:32',
         ]);
 
         $user = Auth::user();
@@ -104,26 +112,68 @@ class TaskController extends Controller
             ? $data['scope']
             : 'private';
 
+        $kind = $data['task_kind'] ?? Appointment::KIND_GENERICA;
+        $isVisitKind = in_array($kind, [
+            Appointment::KIND_VISITA,
+            Appointment::KIND_AGENDAMENTO,
+            Appointment::KIND_REUNIAO,
+        ], true);
+
+
+        $startsAt = $data['starts_at'] ?? ($isVisitKind ? ($data['due_at'] ?? null) : null);
+
         $task = Appointment::create([
-            'title'       => $data['title'],
-            'description' => $data['description'] ?? null,
-            'lead_id'     => $data['lead_id'] ?? null,
-            'due_at'      => $data['due_at'] ?? null,
-            'priority'    => $data['priority'] ?? Appointment::PRIORITY_MEDIUM,
-            'reminder_at' => $data['reminder_at'] ?? null,
-            'type'        => Appointment::TYPE_TASK,
-            'task_kind'   => $data['task_kind'] ?? Appointment::KIND_GENERICA,
-            'status'      => Appointment::STATUS_PENDING,
-            'user_id'     => $assigneeId,
-            'scope'       => $scope,
-            'created_by'  => $user->id,
+            'title'          => $data['title'],
+            'description'    => $data['description'] ?? null,
+            'lead_id'        => $data['lead_id'] ?? null,
+            'due_at'         => $data['due_at'] ?? null,
+            'priority'       => $data['priority'] ?? Appointment::PRIORITY_MEDIUM,
+            'reminder_at'    => $data['reminder_at'] ?? null,
+            'type'           => Appointment::TYPE_TASK,
+            'task_kind'      => $kind,
+            'status'         => Appointment::STATUS_PENDING,
+            'user_id'        => $assigneeId,
+            'scope'          => $scope,
+            'created_by'     => $user->id,
+
+
+            'starts_at'      => $startsAt,
+            'ends_at'        => $data['ends_at'] ?? null,
+            'modality'       => $data['modality'] ?? null,
+            'location'       => $data['location'] ?? null,
+            'attendee_email' => $data['attendee_email'] ?? null,
+            'attendee_phone' => $data['attendee_phone'] ?? null,
         ]);
 
         $this->logLeadHistory($task, 'task_created',
             'Tarefa criada: ' . $task->title
         );
 
-        return response()->json($task->load(['lead:id,name', 'user:id,name']), 201);
+
+        $this->pushToGoogleSafely($task);
+
+        return response()->json($task->fresh(['lead:id,name', 'user:id,name']), 201);
+    }
+
+
+    private function pushToGoogleSafely(Appointment $appt): void
+    {
+        try {
+            if (!$appt->isVisit()) return;
+            app(\App\Services\GoogleCalendarService::class)->pushAppointment($appt);
+        } catch (\Throwable $e) {
+            \Log::warning('[task] push pro Google falhou (silencioso): ' . $e->getMessage());
+        }
+    }
+
+    private function deleteFromGoogleSafely(Appointment $appt): void
+    {
+        try {
+            if (!$appt->external_event_id) return;
+            app(\App\Services\GoogleCalendarService::class)->deleteAppointment($appt);
+        } catch (\Throwable $e) {
+            \Log::warning('[task] delete no Google falhou: ' . $e->getMessage());
+        }
     }
 
     public function show(int $id)
@@ -159,6 +209,14 @@ class TaskController extends Controller
             'task_kind'   => ['nullable', \Illuminate\Validation\Rule::in(\App\Models\Appointment::validKindSlugs())],
             'user_id'     => 'nullable|exists:users,id',
             'scope'       => 'nullable|in:private,company',
+
+
+            'starts_at'      => 'nullable|date',
+            'ends_at'        => 'nullable|date|after_or_equal:starts_at',
+            'modality'       => 'nullable|string|in:presencial,online',
+            'location'       => 'nullable|string|max:1000',
+            'attendee_email' => 'nullable|email|max:191',
+            'attendee_phone' => 'nullable|string|max:32',
         ]);
 
         if (isset($data['user_id']) && !$this->isManager(Auth::user())) {
@@ -169,15 +227,30 @@ class TaskController extends Controller
             unset($data['scope']);
         }
 
+
+        $newKind = $data['task_kind'] ?? $task->task_kind;
+        $isVisitKind = in_array($newKind, [
+            Appointment::KIND_VISITA,
+            Appointment::KIND_AGENDAMENTO,
+            Appointment::KIND_REUNIAO,
+        ], true);
+
+        if ($isVisitKind && empty($data['starts_at']) && !empty($data['due_at'])) {
+            $data['starts_at'] = $data['due_at'];
+        }
+
         $task->update($data);
 
         $changed = array_keys($task->getChanges());
-        $significant = array_intersect($changed, ['title', 'due_at', 'priority', 'user_id']);
+        $significant = array_intersect($changed, ['title', 'due_at', 'starts_at', 'priority', 'user_id', 'modality', 'location']);
         if (!empty($significant)) {
             $this->logLeadHistory($task, 'task_updated',
                 'Tarefa atualizada: ' . $task->title . ' (' . implode(', ', $significant) . ')'
             );
         }
+
+
+        $this->pushToGoogleSafely($task->fresh());
 
         return response()->json($task->fresh(['lead:id,name', 'user:id,name']));
     }
@@ -247,6 +320,9 @@ class TaskController extends Controller
 
         $title = $task->title;
         $leadId = $task->lead_id;
+
+
+        $this->deleteFromGoogleSafely($task);
 
         $task->delete();
 
