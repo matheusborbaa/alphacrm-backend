@@ -98,9 +98,9 @@ class AcademyController extends Controller
                     'size_kb'   => round($m->file_size_bytes / 1024),
                 ]),
                 'progress' => [
-                    'watch_seconds'         => $p->watch_seconds ?? 0,
-                    'last_position_seconds' => $p->last_position_seconds ?? 0,
-                    'completed_at'          => $p->completed_at?->toIso8601String(),
+                    'watch_seconds'         => $p?->watch_seconds ?? 0,
+                    'last_position_seconds' => $p?->last_position_seconds ?? 0,
+                    'completed_at'          => $p?->completed_at?->toIso8601String(),
                 ],
             ];
         });
