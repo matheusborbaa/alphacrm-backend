@@ -30,3 +30,9 @@ Schedule::command('servidor:check-capacity')
     ->hourly()
     ->onOneServer()
     ->withoutOverlapping();
+
+
+Schedule::command('google:sync-incoming')
+    ->everyFiveMinutes()
+    ->onOneServer()
+    ->withoutOverlapping();

@@ -38,4 +38,15 @@ return [
         'quota_gb' => (int) env('ALPHACRM_DISK_QUOTA_GB', 30),
     ],
 
+
+    'google' => [
+        'client_id'     => env('GOOGLE_CLIENT_ID'),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+
+        'redirect_uri'  => env('GOOGLE_REDIRECT_URI'),
+
+        'frontend_callback' => env('GOOGLE_FRONTEND_CALLBACK', 'https://app.alphacrm.com.br/perfil.php'),
+        'timezone'      => env('GOOGLE_CALENDAR_TIMEZONE', 'America/Sao_Paulo'),
+    ],
+
 ];

@@ -451,6 +451,17 @@ Route::get ('/public/visita/{token}',            [\App\Http\Controllers\PublicVi
 Route::post('/public/visita/{token}/confirm',    [\App\Http\Controllers\PublicVisitController::class, 'confirm']);
 Route::post('/public/visita/{token}/cancel',     [\App\Http\Controllers\PublicVisitController::class, 'cancel']);
 
+
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get ('/admin/google/status',      [\App\Http\Controllers\GoogleAuthController::class, 'status']);
+    Route::get ('/admin/google/auth-url',    [\App\Http\Controllers\GoogleAuthController::class, 'authUrl']);
+    Route::post('/admin/google/disconnect',  [\App\Http\Controllers\GoogleAuthController::class, 'disconnect']);
+    Route::post('/admin/google/sync-now',    [\App\Http\Controllers\GoogleAuthController::class, 'syncNow']);
+});
+
+
+Route::get('/admin/google/callback', [\App\Http\Controllers\GoogleAuthController::class, 'callback']);
+
 Route::middleware(['auth:sanctum', 'permission:agenda.view_all|agenda.view_team|agenda.view_own|agenda.create|agenda.update_all|agenda.update_own|agenda.delete|appointments.view_any|appointments.view_own|appointments.manage_any|appointments.manage_own'])->group(function () {
     Route::get('/tasks',                 [TaskController::class, 'index']);
     Route::post('/tasks',                [TaskController::class, 'store']);

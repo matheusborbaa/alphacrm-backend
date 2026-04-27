@@ -342,7 +342,33 @@ LeadHistory::create([
     'description' => 'Tarefa criada: ' . $appointment->type,
 ]);
 
-        return response()->json($appointment, 201);
+
+        $this->pushToGoogleSafely($appointment);
+
+        return response()->json($appointment->fresh(), 201);
+    }
+
+
+    private function pushToGoogleSafely(Appointment $appt): void
+    {
+        try {
+            if (!$appt->isVisit()) return;
+            $service = app(\App\Services\GoogleCalendarService::class);
+            $service->pushAppointment($appt);
+        } catch (\Throwable $e) {
+            \Log::warning('[appointment] push pro Google falhou (sync continua, visita salva): ' . $e->getMessage());
+        }
+    }
+
+    private function deleteFromGoogleSafely(Appointment $appt): void
+    {
+        try {
+            if (!$appt->external_event_id) return;
+            $service = app(\App\Services\GoogleCalendarService::class);
+            $service->deleteAppointment($appt);
+        } catch (\Throwable $e) {
+            \Log::warning('[appointment] delete no Google falhou: ' . $e->getMessage());
+        }
     }
 
     public function update(Request $request, Appointment $appointment)
@@ -368,7 +394,10 @@ LeadHistory::create([
 
         $appointment->update($data);
 
-        return response()->json($appointment);
+
+        $this->pushToGoogleSafely($appointment->fresh());
+
+        return response()->json($appointment->fresh());
     }
 
 
@@ -418,6 +447,13 @@ LeadHistory::create([
             } catch (\Throwable $e) {  }
         }
 
+
+        if (in_array($newStatus, ['cancelled', 'no_show'], true) && $appointment->external_event_id) {
+            $this->deleteFromGoogleSafely($appointment);
+        } else {
+            $this->pushToGoogleSafely($appointment->fresh());
+        }
+
         return response()->json($appointment->fresh());
     }
 
@@ -425,6 +461,9 @@ LeadHistory::create([
     {
 
         abort_if($appointment->user_id !== Auth::id(), 403);
+
+
+        $this->deleteFromGoogleSafely($appointment);
 
         $appointment->delete();
 
