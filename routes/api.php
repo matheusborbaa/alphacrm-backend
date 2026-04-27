@@ -148,6 +148,18 @@ Route::post(
     [EmpreendimentoImageController::class, 'store']
 )->middleware(['auth:sanctum', 'permission:empreendimentos.update|empreendimentos.manage']);
 
+
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get   ('/empreendimentos/{empreendimento}/tipologias',
+        [EmpreendimentoController::class, 'listTipologias']);
+    Route::post  ('/empreendimentos/{empreendimento}/tipologias',
+        [EmpreendimentoController::class, 'storeTipologia']);
+    Route::put   ('/empreendimentos/{empreendimento}/tipologias/{tipologiaId}',
+        [EmpreendimentoController::class, 'updateTipologia']);
+    Route::delete('/empreendimentos/{empreendimento}/tipologias/{tipologiaId}',
+        [EmpreendimentoController::class, 'destroyTipologia']);
+});
+
 Route::delete(
     '/empreendimento-images/{image}',
     [EmpreendimentoImageController::class, 'destroy']

@@ -252,10 +252,77 @@ public function cities()
     $empreendimento->load([
         'leads.status',
         'images',
-        'fieldValues.definition'
+        'fieldValues.definition',
+        'tipologias',
     ]);
 
     return $empreendimento;
+}
+
+
+public function listTipologias(Empreendimento $empreendimento)
+{
+    return response()->json(
+        $empreendimento->tipologias()->get()
+    );
+}
+
+public function storeTipologia(Request $request, Empreendimento $empreendimento)
+{
+    abort_unless(in_array($request->user()?->role, ['admin', 'gestor'], true), 403);
+
+    $data = $request->validate([
+        'name'         => 'required|string|max:120',
+        'bedrooms'     => 'nullable|integer|min:0|max:20',
+        'suites'       => 'nullable|integer|min:0|max:20',
+        'area_min_m2'  => 'nullable|numeric|min:0',
+        'area_max_m2'  => 'nullable|numeric|min:0',
+        'price_from'   => 'nullable|numeric|min:0',
+        'order'        => 'nullable|integer|min:0',
+    ]);
+
+    $data['empreendimento_id'] = $empreendimento->id;
+    if (!isset($data['order'])) {
+        $data['order'] = ($empreendimento->tipologias()->max('order') ?? -1) + 1;
+    }
+
+    $tip = \App\Models\EmpreendimentoTipologia::create($data);
+
+    return response()->json($tip, 201);
+}
+
+public function updateTipologia(Request $request, Empreendimento $empreendimento, $tipologiaId)
+{
+    abort_unless(in_array($request->user()?->role, ['admin', 'gestor'], true), 403);
+
+    $tip = \App\Models\EmpreendimentoTipologia::where('empreendimento_id', $empreendimento->id)
+        ->where('id', $tipologiaId)
+        ->firstOrFail();
+
+    $data = $request->validate([
+        'name'         => 'sometimes|required|string|max:120',
+        'bedrooms'     => 'sometimes|nullable|integer|min:0|max:20',
+        'suites'       => 'sometimes|nullable|integer|min:0|max:20',
+        'area_min_m2'  => 'sometimes|nullable|numeric|min:0',
+        'area_max_m2'  => 'sometimes|nullable|numeric|min:0',
+        'price_from'   => 'sometimes|nullable|numeric|min:0',
+        'order'        => 'sometimes|integer|min:0',
+    ]);
+
+    $tip->update($data);
+    return response()->json($tip->fresh());
+}
+
+public function destroyTipologia(Request $request, Empreendimento $empreendimento, $tipologiaId)
+{
+    abort_unless(in_array($request->user()?->role, ['admin', 'gestor'], true), 403);
+
+    $tip = \App\Models\EmpreendimentoTipologia::where('empreendimento_id', $empreendimento->id)
+        ->where('id', $tipologiaId)
+        ->firstOrFail();
+
+    $tip->delete();
+    return response()->json(['deleted' => true]);
 }
 
     public function update(Request $request, Empreendimento $empreendimento)

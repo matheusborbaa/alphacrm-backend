@@ -64,6 +64,13 @@ public function fieldValues()
     return $this->hasMany(EmpreendimentoFieldValue::class);
 }
 
+public function tipologias()
+{
+    return $this->hasMany(EmpreendimentoTipologia::class)
+                ->orderBy('order')
+                ->orderBy('id');
+}
+
     public function users()
     {
         return $this->belongsToMany(
