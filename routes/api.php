@@ -450,6 +450,28 @@ Route::middleware('auth:sanctum')->group(function () {
 });
 
 
+Route::middleware(['auth:sanctum', 'permission:academy.manage|settings.system'])->prefix('admin/academy')->group(function () {
+    Route::get   ('/categories',              [\App\Http\Controllers\AcademyAdminController::class, 'indexCategories']);
+    Route::post  ('/categories',              [\App\Http\Controllers\AcademyAdminController::class, 'storeCategory']);
+    Route::put   ('/categories/{category}',   [\App\Http\Controllers\AcademyAdminController::class, 'updateCategory']);
+    Route::delete('/categories/{category}',   [\App\Http\Controllers\AcademyAdminController::class, 'destroyCategory']);
+
+    Route::get   ('/courses',                 [\App\Http\Controllers\AcademyAdminController::class, 'indexCourses']);
+    Route::post  ('/courses',                 [\App\Http\Controllers\AcademyAdminController::class, 'storeCourse']);
+    Route::get   ('/courses/{course}',        [\App\Http\Controllers\AcademyAdminController::class, 'showCourse']);
+    Route::put   ('/courses/{course}',        [\App\Http\Controllers\AcademyAdminController::class, 'updateCourse']);
+    Route::delete('/courses/{course}',        [\App\Http\Controllers\AcademyAdminController::class, 'destroyCourse']);
+    Route::post  ('/courses/{course}/cover',  [\App\Http\Controllers\AcademyAdminController::class, 'uploadCourseCover']);
+
+    Route::post  ('/courses/{course}/lessons',     [\App\Http\Controllers\AcademyAdminController::class, 'storeLesson']);
+    Route::put   ('/lessons/{lesson}',             [\App\Http\Controllers\AcademyAdminController::class, 'updateLesson']);
+    Route::delete('/lessons/{lesson}',             [\App\Http\Controllers\AcademyAdminController::class, 'destroyLesson']);
+    Route::post  ('/lessons/{lesson}/video',       [\App\Http\Controllers\AcademyAdminController::class, 'uploadLessonVideo']);
+    Route::post  ('/lessons/{lesson}/materials',   [\App\Http\Controllers\AcademyAdminController::class, 'uploadMaterial']);
+    Route::delete('/materials/{material}',         [\App\Http\Controllers\AcademyAdminController::class, 'destroyMaterial']);
+});
+
+
 Route::get ('/public/visita/{token}',            [\App\Http\Controllers\PublicVisitController::class, 'show']);
 Route::post('/public/visita/{token}/confirm',    [\App\Http\Controllers\PublicVisitController::class, 'confirm']);
 Route::post('/public/visita/{token}/cancel',     [\App\Http\Controllers\PublicVisitController::class, 'cancel']);

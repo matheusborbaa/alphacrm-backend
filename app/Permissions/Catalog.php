@@ -129,6 +129,17 @@ class Catalog
                 ],
             ],
 
+
+            [
+                'key'   => 'academy',
+                'label' => 'Academy (Treinamentos)',
+                'icon'  => 'graduation-cap',
+                'permissions' => [
+                    ['name' => 'academy.view',   'label' => 'Acessar a Academy e fazer cursos'],
+                    ['name' => 'academy.manage', 'label' => 'Criar e editar cursos / aulas / quiz'],
+                ],
+            ],
+
             [
                 'key'   => 'chat',
                 'label' => 'Chat Interno',
