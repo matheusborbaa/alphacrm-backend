@@ -457,6 +457,11 @@ Route::middleware(['auth:sanctum', 'permission:academy.view|academy.manage'])->p
     Route::post('/lessons/{lesson}/progress',        [\App\Http\Controllers\AcademyController::class, 'updateProgress']);
     Route::post('/lessons/{lesson}/complete',        [\App\Http\Controllers\AcademyController::class, 'markComplete']);
     Route::get ('/my-stats',                         [\App\Http\Controllers\AcademyController::class, 'myStats']);
+
+
+    Route::get ('/courses/{course}/quiz',            [\App\Http\Controllers\AcademyQuizController::class, 'userGetQuiz']);
+    Route::post('/courses/{course}/quiz/submit',     [\App\Http\Controllers\AcademyQuizController::class, 'userSubmitQuiz']);
+    Route::get ('/courses/{course}/quiz/attempts',   [\App\Http\Controllers\AcademyQuizController::class, 'userListAttempts']);
 });
 
 
@@ -479,6 +484,12 @@ Route::middleware(['auth:sanctum', 'permission:academy.manage|settings.system'])
     Route::post  ('/lessons/{lesson}/video',       [\App\Http\Controllers\AcademyAdminController::class, 'uploadLessonVideo']);
     Route::post  ('/lessons/{lesson}/materials',   [\App\Http\Controllers\AcademyAdminController::class, 'uploadMaterial']);
     Route::delete('/materials/{material}',         [\App\Http\Controllers\AcademyAdminController::class, 'destroyMaterial']);
+
+
+    Route::get   ('/courses/{course}/questions',   [\App\Http\Controllers\AcademyQuizController::class, 'adminListQuestions']);
+    Route::post  ('/courses/{course}/questions',   [\App\Http\Controllers\AcademyQuizController::class, 'adminStoreQuestion']);
+    Route::put   ('/questions/{question}',         [\App\Http\Controllers\AcademyQuizController::class, 'adminUpdateQuestion']);
+    Route::delete('/questions/{question}',         [\App\Http\Controllers\AcademyQuizController::class, 'adminDestroyQuestion']);
 });
 
 
