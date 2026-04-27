@@ -249,12 +249,24 @@ public function cities()
 
  public function show(Empreendimento $empreendimento)
 {
-    $empreendimento->load([
-        'leads.status',
-        'images',
-        'fieldValues.definition',
-        'tipologias.fieldValues.definition',
-    ]);
+
+    $base = ['leads.status', 'images', 'fieldValues.definition'];
+
+    try {
+
+        if (\Illuminate\Support\Facades\Schema::hasTable('tipologia_field_values')
+            && \Illuminate\Support\Facades\Schema::hasTable('tipologia_field_definitions')
+            && class_exists(\App\Models\TipologiaFieldValue::class)
+            && class_exists(\App\Models\TipologiaFieldDefinition::class)) {
+            $empreendimento->load(array_merge($base, ['tipologias.fieldValues.definition']));
+        } else {
+            $empreendimento->load(array_merge($base, ['tipologias']));
+        }
+    } catch (\Throwable $e) {
+
+        \Log::warning('[EmpreendimentoController@show] Falha ao carregar tipologias.fieldValues, fallback pra tipologias simples: ' . $e->getMessage());
+        $empreendimento->load(array_merge($base, ['tipologias']));
+    }
 
     return $empreendimento;
 }
@@ -262,9 +274,20 @@ public function cities()
 
 public function listTipologias(Empreendimento $empreendimento)
 {
-    return response()->json(
-        $empreendimento->tipologias()->with('fieldValues.definition')->get()
-    );
+    $query = $empreendimento->tipologias();
+
+    try {
+        if (\Illuminate\Support\Facades\Schema::hasTable('tipologia_field_values')
+            && \Illuminate\Support\Facades\Schema::hasTable('tipologia_field_definitions')
+            && class_exists(\App\Models\TipologiaFieldValue::class)
+            && class_exists(\App\Models\TipologiaFieldDefinition::class)) {
+            $query->with('fieldValues.definition');
+        }
+    } catch (\Throwable $e) {
+        \Log::warning('[EmpreendimentoController@listTipologias] Falha no with(fieldValues): ' . $e->getMessage());
+    }
+
+    return response()->json($query->get());
 }
 
 public function storeTipologia(Request $request, Empreendimento $empreendimento)
