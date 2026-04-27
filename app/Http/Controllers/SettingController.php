@@ -184,13 +184,42 @@ class SettingController extends Controller
             'min'     => 5,
             'max'     => 60,
         ],
+
+
+        'google_client_id' => [
+            'type'    => 'string',
+            'default' => null,
+        ],
+        'google_client_secret' => [
+            'type'      => 'string',
+            'default'   => null,
+            'sensitive' => true,
+        ],
+        'google_redirect_uri' => [
+            'type'    => 'string',
+            'default' => null,
+        ],
+        'google_frontend_callback' => [
+            'type'    => 'string',
+            'default' => null,
+        ],
     ];
 
     public function index()
     {
         $out = [];
         foreach (self::ALLOWED_KEYS as $key => $meta) {
-            $out[$key] = Setting::get($key, $meta['default']);
+            $value = Setting::get($key, $meta['default']);
+
+            if (!empty($meta['sensitive']) && !empty($value)) {
+                $out[$key] = $this->maskSecret($value);
+                $out[$key . '_is_set'] = true;
+            } else {
+                $out[$key] = $value;
+                if (!empty($meta['sensitive'])) {
+                    $out[$key . '_is_set'] = false;
+                }
+            }
         }
         return response()->json($out);
     }
@@ -202,7 +231,22 @@ class SettingController extends Controller
         }
         $meta  = self::ALLOWED_KEYS[$key];
         $value = Setting::get($key, $meta['default']);
+
+        if (!empty($meta['sensitive']) && !empty($value)) {
+            return response()->json([
+                'key'    => $key,
+                'value'  => $this->maskSecret($value),
+                'is_set' => true,
+            ]);
+        }
+
         return response()->json(['key' => $key, 'value' => $value]);
+    }
+
+    private function maskSecret(string $value): string
+    {
+        if (strlen($value) <= 8) return str_repeat('•', max(4, strlen($value)));
+        return str_repeat('•', 8) . substr($value, -4);
     }
 
     public function update(Request $request, string $key)
@@ -215,6 +259,15 @@ class SettingController extends Controller
 
         $meta = self::ALLOWED_KEYS[$key];
         $raw  = $request->input('value');
+
+
+        if (!empty($meta['sensitive'])) {
+            $isMasked = is_string($raw) && (str_starts_with($raw, '••') || str_contains($raw, '••••'));
+            if ($raw === '' || $raw === null || $isMasked) {
+                $existing = Setting::get($key);
+                return response()->json(['key' => $key, 'value' => $existing ? '(unchanged)' : null]);
+            }
+        }
 
         $value = $this->coerce($raw, $meta['type'], $meta);
 

@@ -33,9 +33,31 @@ class GoogleCalendarService
     public function isConfigured(): bool
     {
         return $this->isInstalled()
-            && !empty(config('services.google.client_id'))
-            && !empty(config('services.google.client_secret'))
-            && !empty(config('services.google.redirect_uri'));
+            && !empty($this->getCredential('client_id'))
+            && !empty($this->getCredential('client_secret'))
+            && !empty($this->getCredential('redirect_uri'));
+    }
+
+    /**
+     * Lê credencial do banco (Settings) primeiro, fallback pra .env (services.google.*).
+     * Permite admin gerenciar via UI sem precisar SSH no servidor.
+     */
+    private function getCredential(string $key): ?string
+    {
+        $settingMap = [
+            'client_id'         => 'google_client_id',
+            'client_secret'     => 'google_client_secret',
+            'redirect_uri'      => 'google_redirect_uri',
+            'frontend_callback' => 'google_frontend_callback',
+        ];
+
+        $settingKey = $settingMap[$key] ?? null;
+        if ($settingKey) {
+            $val = \App\Models\Setting::get($settingKey);
+            if (!empty($val)) return (string) $val;
+        }
+
+        return config('services.google.' . $key);
     }
 
     public function isUserConnected(User $user): bool
@@ -414,9 +436,9 @@ class GoogleCalendarService
             if ($lead) $parts[] = "Lead: {$lead->name} (ID #{$lead->id})";
         }
         if ($appt->confirmation_token) {
-            $base = config('services.google.frontend_callback');
+            $base = $this->getCredential('frontend_callback');
 
-            $base = preg_replace('#/perfil\.php.*$#', '', $base);
+            $base = preg_replace('#/(perfil|corretor)\.php.*$#', '', $base ?? '');
             if (!$base) $base = 'https://app.alphacrm.com.br';
             $parts[] = "Link de confirmação para o lead: {$base}/visita.php?t={$appt->confirmation_token}";
         }
@@ -449,9 +471,9 @@ class GoogleCalendarService
     private function newRawClient(): \Google\Client
     {
         $client = new \Google\Client();
-        $client->setClientId(config('services.google.client_id'));
-        $client->setClientSecret(config('services.google.client_secret'));
-        $client->setRedirectUri(config('services.google.redirect_uri'));
+        $client->setClientId($this->getCredential('client_id'));
+        $client->setClientSecret($this->getCredential('client_secret'));
+        $client->setRedirectUri($this->getCredential('redirect_uri'));
         $client->setAccessType('offline');
         $client->setPrompt('consent');
         $client->setIncludeGrantedScopes(true);

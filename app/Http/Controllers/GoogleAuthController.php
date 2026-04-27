@@ -62,7 +62,9 @@ class GoogleAuthController extends Controller
 
     public function callback(Request $request)
     {
-        $frontend = config('services.google.frontend_callback', '/perfil.php');
+
+        $frontend = \App\Models\Setting::get('google_frontend_callback')
+            ?: config('services.google.frontend_callback', '/perfil.php');
 
         $code  = $request->query('code');
         $state = $request->query('state');
