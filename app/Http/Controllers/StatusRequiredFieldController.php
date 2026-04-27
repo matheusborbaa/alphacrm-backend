@@ -266,6 +266,7 @@ class StatusRequiredFieldController extends Controller
             'lead_column'            => ['nullable', 'string', Rule::in(StatusRequiredField::ALLOWED_LEAD_COLUMNS)],
             'custom_field_id'        => 'nullable|exists:custom_fields,id',
             'required'               => 'boolean',
+            'enforce_on_skip'        => 'boolean',
             'require_task'           => 'boolean',
             'require_task_kind'      => ['nullable', 'string', Rule::in(\App\Models\Appointment::validKindSlugs())],
             'require_task_completed' => 'boolean',

@@ -163,6 +163,27 @@ class LeadStatusRequirementValidator
                 $r->_stage_label = $statusesMap->get($r->lead_status_id)?->name;
                 $rules->push($r);
             }
+
+
+            $intermediateSubstatusRules = StatusRequiredField::with(['customField', 'substatus.status'])
+                ->where('required', true)
+                ->where('enforce_on_skip', true)
+                ->whereNotNull('lead_substatus_id')
+
+                ->where(function ($q) use ($targetSubstatusId) {
+                    if ($targetSubstatusId) $q->where('lead_substatus_id', '!=', $targetSubstatusId);
+                })
+                ->whereHas('substatus', function ($q) use ($statusIdsToCheck) {
+                    $q->whereIn('lead_status_id', $statusIdsToCheck);
+                })
+                ->get();
+
+            foreach ($intermediateSubstatusRules as $r) {
+                $sub = $r->substatus;
+                $label = ($sub?->status?->name ? $sub->status->name . ' → ' : '') . ($sub?->name ?? '');
+                $r->_stage_label = $label;
+                $rules->push($r);
+            }
         }
 
         if ($targetSubstatusId) {

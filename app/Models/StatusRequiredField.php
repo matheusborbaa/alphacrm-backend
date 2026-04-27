@@ -15,6 +15,7 @@ class StatusRequiredField extends Model
         'lead_column',
         'custom_field_id',
         'required',
+        'enforce_on_skip',
         'require_task',
         'require_task_kind',
         'require_task_completed',
@@ -22,6 +23,7 @@ class StatusRequiredField extends Model
 
     protected $casts = [
         'required'               => 'boolean',
+        'enforce_on_skip'        => 'boolean',
         'require_task'           => 'boolean',
         'require_task_completed' => 'boolean',
     ];
