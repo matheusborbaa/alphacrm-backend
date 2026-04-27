@@ -34,11 +34,7 @@ class Appointment extends Model
         self::KIND_GENERICA,
     ];
 
-    /**
-     * Slugs válidos pra task_kind: combina os fixos hardcoded acima
-     * (compat com leads/seeds antigos) com os kinds ATIVOS criados
-     * dinamicamente pelo admin via TaskKind.
-     */
+    // Junta os kinds hardcoded (compat com seeds antigos) com os ativos criados pelo admin via TaskKind.
     public static function validKindSlugs(): array
     {
         try {
@@ -124,11 +120,7 @@ class Appointment extends Model
         return $this->belongsTo(Lead::class);
     }
 
-    /**
-     * Filtra appointments cujo lead esteja visível: ou tarefa interna (sem lead),
-     * ou lead que NÃO está soft-deleted. Usar em listagens globais que cruzam
-     * tarefas/agendamentos de vários leads.
-     */
+    // Esconde appointments cujo lead foi soft-deleted. Tarefas internas (sem lead) continuam aparecendo.
     public function scopeWithVisibleLead(Builder $query): Builder
     {
         return $query->where(function ($q) {

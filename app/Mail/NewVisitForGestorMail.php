@@ -11,9 +11,7 @@ use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
 
-/**
- * L8+I1 — Notifica gestor quando alguém do time agenda nova visita.
- */
+// Cópia pro gestor quando alguém do time agenda visita.
 class NewVisitForGestorMail extends Mailable implements ShouldQueue
 {
     use Queueable, SerializesModels;

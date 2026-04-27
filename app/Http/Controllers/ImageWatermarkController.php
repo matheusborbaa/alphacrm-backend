@@ -8,13 +8,7 @@ use App\Services\ImageWatermarkService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 
-/**
- * E8 — Endpoints de gestão da marca d'água.
- *   POST   /admin/settings/image-watermark/logo     — upload do PNG
- *   DELETE /admin/settings/image-watermark/logo     — remove
- *   POST   /admin/empreendimento-images/apply-watermark — aplica nas existentes
- *   GET    /admin/empreendimento-images/watermark-stats — quantas têm/não têm
- */
+// Endpoints de gestão da marca d'água: upload do logo, stats, apply nas existentes em batch.
 class ImageWatermarkController extends Controller
 {
     public function uploadLogo(Request $request)

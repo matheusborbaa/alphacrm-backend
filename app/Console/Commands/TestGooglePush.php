@@ -7,13 +7,7 @@ use App\Models\User;
 use App\Services\GoogleCalendarService;
 use Illuminate\Console\Command;
 
-/**
- * Diagnóstico — testa se uma appointment específica consegue ser pushada pro Google.
- *
- * Uso:
- *   php artisan google:test-push 42       (push da appointment id=42)
- *   php artisan google:test-push --last   (pega a última criada)
- */
+// Diagnóstico de push pro Google. Útil pra debugar quando a sincronização não tá rolando.
 class TestGooglePush extends Command
 {
     protected $signature = 'google:test-push

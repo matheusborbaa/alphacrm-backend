@@ -8,13 +8,7 @@ use App\Models\TipologiaFieldDefinition;
 use App\Models\TipologiaFieldValue;
 use Illuminate\Http\Request;
 
-/**
- * E5.4 — Leitura/escrita dos valores de campos customizados das tipologias.
- *
- * Endpoints:
- *   GET  /admin/tipologias/{tipologia}/fields           — defs ativas + valores atuais
- *   POST /admin/tipologias/{tipologia}/fields           — upsert em lote
- */
+// Lê/grava valores dos campos customizados de uma tipologia. POST faz upsert em lote.
 class TipologiaFieldValueController extends Controller
 {
     public function index(EmpreendimentoTipologia $tipologia)
@@ -55,7 +49,8 @@ class TipologiaFieldValueController extends Controller
         $defIds = collect($data['fields'])->pluck('field_definition_id')->unique()->all();
         $defs   = TipologiaFieldDefinition::whereIn('id', $defIds)->get()->keyBy('id');
 
-
+        // Slugs dessas defs default ainda têm coluna física correspondente. Preenchemos as duas
+        // pra compat com formatTipologiaLine() em lead/kanban que ainda lê das colunas antigas.
         $legacyMap = [
             'bedrooms'    => 'bedrooms',
             'suites'      => 'suites',

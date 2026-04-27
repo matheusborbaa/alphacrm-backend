@@ -8,16 +8,8 @@ use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Spatie\Permission\PermissionRegistrar;
 
-/**
- * Sincroniza o role `admin` com TODAS as permissões do Catalog,
- * sem mexer nos roles `gestor` e `corretor` (preservando customizações).
- *
- * Útil quando uma nova permissão é adicionada ao Catalog e o admin
- * deveria recebê-la automaticamente.
- *
- * Uso:
- *   php artisan permissions:sync-admin
- */
+// Re-sincroniza o role admin com tudo do Catalog. Não toca em gestor/corretor.
+// Roda sempre que adicionar permissão nova no código pra evitar "permissão não existe" depois.
 class SyncAdminPermissions extends Command
 {
     protected $signature   = 'permissions:sync-admin';

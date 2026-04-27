@@ -4,15 +4,8 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
-/**
- * E5.4 — Seeder convertendo as 5 colunas fixas existentes em campos
- * customizados + migrando os valores das tipologias já cadastradas.
- *
- * NÃO derruba as colunas antigas (bedrooms, suites, area_min_m2,
- * area_max_m2, price_from). Manter as colunas é o fallback de
- * rollback rápido se algo der errado em produção. Uma migration
- * futura pode dropar depois de algumas semanas estáveis.
- */
+// Seed que converte as 5 colunas fixas (bedrooms/suites/área/preço) em campos custom + migra os valores.
+// As colunas antigas ficam — não dropei pra ter rollback rápido se der ruim em produção.
 return new class extends Migration
 {
     public function up(): void

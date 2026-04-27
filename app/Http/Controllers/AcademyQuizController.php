@@ -9,20 +9,8 @@ use App\Models\AcademyUserProgress;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
-/**
- * I3 — Quiz da Academy.
- *
- * Admin (sob /admin/academy):
- *   GET    /courses/{course}/questions
- *   POST   /courses/{course}/questions
- *   PUT    /questions/{question}
- *   DELETE /questions/{question}
- *
- * User (sob /academy):
- *   GET  /courses/{course}/quiz             — perguntas (sem revelar correct_index)
- *   POST /courses/{course}/quiz/submit      — submete respostas, calcula nota
- *   GET  /courses/{course}/quiz/attempts    — tentativas anteriores do user
- */
+// Quiz: admin manda perguntas; user faz submit, backend calcula nota e marca passed se >= quiz_min_score.
+// Endpoint user nunca devolve correct_index pra não vazar o gabarito.
 class AcademyQuizController extends Controller
 {
 

@@ -4,13 +4,8 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-/**
- * E5.4 — Campos customizados de tipologia.
- *
- * Espelho de empreendimento_field_definitions. Admin pode cadastrar quantos
- * campos quiser por tipologia (ex: Quartos, Suítes, Vagas, Andar, Pé-direito,
- * Quintal m², Preço a partir de…) com tipo, ícone e unidade.
- */
+// Definições dos campos custom da tipologia. Mesma forma do empreendimento_field_definitions
+// só que aplicado por tipologia (Quartos, Suítes, Vagas, Andar, Pé-direito, etc).
 return new class extends Migration
 {
     public function up(): void

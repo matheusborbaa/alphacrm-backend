@@ -7,17 +7,8 @@ use App\Models\UserGoogleCredential;
 use App\Services\GoogleCalendarService;
 use Illuminate\Console\Command;
 
-/**
- * I1 — Pull incremental do Google Calendar pra cada usuário conectado.
- *
- * Roda agendado a cada 5 minutos (via routes/console.php). Usa syncToken
- * pra puxar só o que mudou desde o último sync (eficiente).
- *
- * Uso:
- *   php artisan google:sync-incoming                    (todos os usuários)
- *   php artisan google:sync-incoming --user=42          (só esse user)
- *   php artisan google:sync-incoming --reset            (zera sync_token, força full)
- */
+// Pull incremental do Calendar pra cada user conectado. syncToken cuida pra só puxar diff.
+// --reset zera o sync_token e força um full sync no próximo run (precisa quando o token expira).
 class SyncGoogleCalendarIncoming extends Command
 {
     protected $signature = 'google:sync-incoming

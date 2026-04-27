@@ -4,19 +4,9 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-/**
- * L8 + I1 — Campos específicos do fluxo de visita/agendamento.
- *
- * Modalidade  → presencial ou online
- * Endereço    → pra visita presencial
- * Atendente   → email/telefone do lead capturados na hora do agendamento
- *               (caso lead seja editado depois, queremos preservar o que foi
- *               combinado naquela visita específica)
- * Confirmação → workflow paralelo ao status: pending → confirmed → completed/no_show/cancelled
- * Token       → URL pública assinada pro lead confirmar/remarcar/cancelar sem login
- * Sync Google → external_event_id + etag pra correlacionar com Google Calendar event
- * Lembretes   → marca quando 24h e 1h antes foram disparados (idempotência)
- */
+// Visit/appointment: campos pra modalidade, endereço, dados do lead snapshotados, confirmation flow,
+// sync com Google Calendar (external_event_id + etag) e lembretes idempotentes.
+// Os dados do lead são copiados pro appointment pra preservar o que foi combinado mesmo se o lead mudar depois.
 return new class extends Migration
 {
     public function up(): void

@@ -7,13 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
-/**
- * CRUD de tipos de tarefa.
- * - GET /task-kinds          → lista pra qualquer usuário autenticado (alimenta selects)
- * - POST /admin/task-kinds   → criar (admin)
- * - PUT  /admin/task-kinds/{kind}    → editar (admin)
- * - DELETE /admin/task-kinds/{kind}  → desativar (soft "delete", admin)
- */
+// CRUD dos tipos de tarefa. Lista é pública (autenticada) pra alimentar selects; mutações exigem admin.
 class TaskKindController extends Controller
 {
 

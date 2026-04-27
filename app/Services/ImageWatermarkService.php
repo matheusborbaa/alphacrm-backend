@@ -6,17 +6,8 @@ use App\Models\Setting;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
-/**
- * E8 — Aplica marca d'água (logo PNG) em imagens do empreendimento.
- *
- * Usa GD nativo do PHP (sem dependência composer extra).
- * Configuração via Settings:
- *   - image_watermark_enabled    (bool)
- *   - image_watermark_logo_path  (string|null) — caminho relativo no disk public
- *   - image_watermark_position   (bottom-right|bottom-left|top-right|top-left|center|tile)
- *   - image_watermark_opacity    (5-100, percentual)
- *   - image_watermark_size_pct   (5-60, percentual da largura da imagem base)
- */
+// Marca d'água nas imagens do empreendimento. GD nativo, sem dep composer.
+// Config vem do Settings (image_watermark_*). Posição pode ser canto, centro ou tile.
 class ImageWatermarkService
 {
     public function isEnabled(): bool

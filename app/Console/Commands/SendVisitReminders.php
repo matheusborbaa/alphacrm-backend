@@ -9,19 +9,8 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
-/**
- * L8+I1 — Dispara lembretes de visita pro corretor.
- *
- * Roda a cada 5 minutos (via routes/console.php). Janelas:
- *   - 24h antes: starts_at entre (now+23h, now+25h) e reminder_sent_24h_at é null
- *   - 1h antes:  starts_at entre (now+30min, now+90min) e reminder_sent_1h_at é null
- *
- * Marca reminder_sent_*_at após enviar, garantindo idempotência (mesmo que
- * o cron rode duplicado, não envia duas vezes).
- *
- * Considera só visitas com confirmation_status pending/confirmed (ignora
- * canceladas/no_show/completed).
- */
+// Dispara lembretes 24h e 1h antes da visita. Roda a cada 5min (routes/console.php).
+// Marca reminder_sent_*_at depois de enviar, então pode rodar várias vezes sem mandar email duplicado.
 class SendVisitReminders extends Command
 {
     protected $signature = 'visits:send-reminders

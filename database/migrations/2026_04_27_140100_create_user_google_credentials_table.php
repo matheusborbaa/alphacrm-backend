@@ -4,20 +4,8 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-/**
- * I1 — Credenciais OAuth Google por usuário.
- *
- * Cada corretor pode conectar a própria conta Google.
- * Tokens guardados criptografados (cast 'encrypted' no model).
- *
- *   access_token       — válido por ~1h, refresh quando expira
- *   refresh_token      — long-lived (anos); usado pra obter novo access
- *   expires_at         — quando o access_token expira
- *   sync_token         — pra polling incremental do Calendar API (sync efficient)
- *   last_synced_at     — última vez que rodou sync bidirecional
- *   last_sync_error    — última falha (pra debug)
- *   email              — email do Google conectado (UI mostra "conectado como")
- */
+// Credenciais OAuth Google por usuário. Tokens são encrypted no model.
+// sync_token é o token incremental do Calendar API — evita refazer full sync a cada polling.
 return new class extends Migration
 {
     public function up(): void

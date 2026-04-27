@@ -9,15 +9,7 @@ use App\Models\AcademyUserProgress;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
-/**
- * I3 — Certificado da Academy.
- *
- * GET /academy/certificates/{course}/download
- *
- * Valida se user é elegível (todas aulas concluídas + quiz passado se houver),
- * cria/reaproveita registro academy_certificates, e renderiza HTML do certificado
- * com auto-print (browser converte em PDF nativo).
- */
+// Devolve o HTML do certificado com auto-print. Não usa lib de PDF — o browser cuida disso e o resultado fica vetorial.
 class AcademyCertificateController extends Controller
 {
     public function download(AcademyCourse $course)

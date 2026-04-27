@@ -4,20 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-/**
- * I3 — Academy.
- *
- * Sistema de cursos internos com vídeos, quiz, materiais e certificado.
- *
- *   academy_categories      — agrupamento de cursos (Vendas, Atendimento, etc)
- *   academy_courses         — curso (título, descrição, capa, categoria)
- *   academy_lessons         — aula dentro do curso (vídeo + descrição)
- *   academy_lesson_materials— PDFs/arquivos anexos a uma aula
- *   academy_quiz_questions  — perguntas múltipla escolha (no nível do curso)
- *   academy_user_progress   — uma row por (user, lesson) com watch_seconds
- *   academy_quiz_attempts   — tentativas de quiz por (user, course)
- *   academy_certificates    — certificados emitidos (user, course, número)
- */
+// Academy: schema completo. Tudo cascade-delete a partir do curso pra não deixar lixo.
 return new class extends Migration
 {
     public function up(): void

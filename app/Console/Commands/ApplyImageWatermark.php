@@ -6,18 +6,8 @@ use App\Models\EmpreendimentoImage;
 use App\Services\ImageWatermarkService;
 use Illuminate\Console\Command;
 
-/**
- * E8 — Aplica marca d'água nas imagens existentes do empreendimento.
- *
- * Por padrão pula imagens que já têm watermark_applied_at.
- * Use --force pra reaplicar em todas (cuidado: empilha logos).
- *
- * Exemplos:
- *   php artisan images:apply-watermark
- *   php artisan images:apply-watermark --chunk=50
- *   php artisan images:apply-watermark --empreendimento=123
- *   php artisan images:apply-watermark --force
- */
+// Aplica watermark nas imagens já cadastradas. Pula as que já têm watermark_applied_at.
+// --force reaplica tudo, mas atenção: empilha logos uns sobre os outros.
 class ApplyImageWatermark extends Command
 {
     protected $signature = 'images:apply-watermark

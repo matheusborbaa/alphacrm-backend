@@ -4,12 +4,8 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-/**
- * E8 — Marca d'água nas imagens.
- * Coluna pra evitar reaplicar marca d'água em uma imagem que já tem
- * (evita "stacking" de logos quando o admin roda o comando retroativo
- * mais de uma vez).
- */
+// Coluna pra marcar quando o watermark foi aplicado. Sem isso, rodar o comando retroativo duas vezes
+// empilha o logo. Com isso, ele pula as que já têm.
 return new class extends Migration
 {
     public function up(): void

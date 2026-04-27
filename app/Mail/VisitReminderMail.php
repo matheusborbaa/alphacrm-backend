@@ -11,13 +11,7 @@ use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
 
-/**
- * L8+I1 — Lembrete de visita pro corretor.
- *
- * Disparado pelo command visits:send-reminders nas janelas:
- *   - 24h antes (kind = '24h')
- *   - 1h antes  (kind = '1h')
- */
+// Lembrete de visita pro corretor. Disparado pelo command visits:send-reminders.
 class VisitReminderMail extends Mailable implements ShouldQueue
 {
     use Queueable, SerializesModels;

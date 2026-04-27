@@ -13,19 +13,7 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
-/**
- * R1 — BI Executivo.
- *
- * Visão consolidada pra dono / gestor: KPIs, comparativo MoM,
- * forecast de comissões, aging de leads, motivos de perda,
- * performance por empreendimento e tipologia, heatmap de chegada de leads.
- *
- * Todos os endpoints aceitam filtros via querystring:
- *   period: current_month | last_month | last_30_days | last_90_days | year_to_date | custom
- *   start_date / end_date (yyyy-mm-dd) — usado quando period=custom
- *   corretor_id (opcional)
- *   empreendimento_id (opcional)
- */
+// BI executivo. Todos os endpoints aceitam ?period=, ?corretor_id=, ?empreendimento_id= etc.
 class BiController extends Controller
 {
 

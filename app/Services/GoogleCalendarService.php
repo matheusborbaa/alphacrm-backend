@@ -9,13 +9,8 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
-/**
- * I1 — Wrapper de integração com Google Calendar + Meet.
- *
- * Tudo blindado contra a ausência do pacote google/apiclient: se o
- * pacote não estiver instalado, isInstalled() retorna false e os outros
- * métodos viram noop, deixando o sistema funcionando normalmente sem sync.
- */
+// Wrapper do Calendar/Meet. Se o pacote google/apiclient não estiver instalado, isInstalled() volta false
+// e o resto vira no-op — o resto do CRM continua funcionando, só sem sync.
 class GoogleCalendarService
 {
     private const SCOPES = [
@@ -38,10 +33,7 @@ class GoogleCalendarService
             && !empty($this->getCredential('redirect_uri'));
     }
 
-    /**
-     * Lê credencial do banco (Settings) primeiro, fallback pra .env (services.google.*).
-     * Permite admin gerenciar via UI sem precisar SSH no servidor.
-     */
+    // Lê do Settings primeiro (admin gerencia via UI), .env como fallback. Backward-compat com setups antigos.
     private function getCredential(string $key): ?string
     {
         $settingMap = [

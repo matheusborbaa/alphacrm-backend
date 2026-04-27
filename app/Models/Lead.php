@@ -72,13 +72,8 @@ class Lead extends Model
         'value'               => 'decimal:2',
     ];
 
-    /**
-     * Normaliza um telefone pra forma canônica usada nas comparações de duplicidade.
-     * - Mantém só dígitos
-     * - Se vier com código de país (Brasil = 55) e o resultado tiver mais de 11 dígitos,
-     *   pega os últimos 11 (DDD + número celular/fixo)
-     * - Retorna null pra strings vazias
-     */
+    // Forma canônica do telefone usada na detecção de duplicidade. Tira tudo que não é dígito
+    // e, se tiver mais de 11, fica com os últimos 11 (descarta o "55" do código do país).
     public static function normalizePhone(?string $value): ?string
     {
         if ($value === null) return null;

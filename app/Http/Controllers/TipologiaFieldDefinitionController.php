@@ -7,11 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
-/**
- * E5.4 — CRUD de definições de campos das tipologias.
- * Espelho de EmpreendimentoFieldDefinitionController. Admin edita em
- * Configurações → Campos da tipologia.
- */
+// CRUD das definições de campos da tipologia. Mesmo padrão do EmpreendimentoFieldDefinitionController.
 class TipologiaFieldDefinitionController extends Controller
 {
     private const ALLOWED_TYPES = ['counter', 'boolean', 'text', 'number', 'number_range', 'select'];

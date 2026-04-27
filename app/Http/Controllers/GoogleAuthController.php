@@ -8,17 +8,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 
-/**
- * I1 — OAuth flow Google.
- *
- * Fluxo:
- *   1. Frontend chama  GET  /admin/google/auth-url  (auth) → recebe URL pra redirecionar
- *   2. Browser vai pro Google, usuário autoriza
- *   3. Google redireciona pra GET /admin/google/callback?code=...&state=...  (sem auth)
- *   4. Backend troca code por tokens, salva, redireciona pro frontend
- *   5. Frontend chama GET /admin/google/status pra mostrar "conectado"
- *   6. Pra desconectar: POST /admin/google/disconnect
- */
+// OAuth Google. Flow padrão: auth-url → Google → callback → tokens salvos no banco.
 class GoogleAuthController extends Controller
 {
     public function __construct(private GoogleCalendarService $google) {}

@@ -4,13 +4,8 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-/**
- * E5 — Tipologias múltiplas por empreendimento.
- * Ex: "Apartamento 2 quartos", "3 quartos com suíte", "Cobertura", "Área Privativa".
- *
- * Estrutura propositalmente flexível — `name` é livre. Os outros campos são
- * opcionais pra rich data (filtros futuros, exibição enriquecida).
- */
+// Tipologias múltiplas por empreendimento ("Apto 2 quartos", "Cobertura", "Área Privativa", etc).
+// Schema flexível — só `name` é obrigatório, o resto é metadata pra filtros e UI rica.
 return new class extends Migration {
     public function up(): void
     {

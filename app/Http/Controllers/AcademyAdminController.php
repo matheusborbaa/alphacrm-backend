@@ -10,17 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
-/**
- * I3 — CRUD admin do Academy.
- *
- * Endpoints (todos restritos a admin/gestor via permission middleware):
- *   /admin/academy/categories      — index/store/update/destroy
- *   /admin/academy/courses         — index/store/show/update/destroy
- *   /admin/academy/lessons         — store/update/destroy (sob curso)
- *   /admin/academy/lessons/{id}/video         — POST upload de vídeo
- *   /admin/academy/lessons/{id}/materials     — POST upload de material
- *   /admin/academy/materials/{id}             — DELETE
- */
+// CRUD do Academy pra admin/gestor. Rotas em /admin/academy/* gateadas pela permission no router.
 class AcademyAdminController extends Controller
 {
 
@@ -148,7 +138,7 @@ class AcademyAdminController extends Controller
 
     public function uploadLessonVideo(Request $request, AcademyLesson $lesson)
     {
-
+        // 512 MB em KB. Lembrar de bater com upload_max_filesize e client_max_body_size do nginx.
         $request->validate([
             'video' => 'required|file|mimes:mp4,webm,mov,m4v|max:512000',
         ]);

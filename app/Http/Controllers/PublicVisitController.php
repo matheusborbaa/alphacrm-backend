@@ -6,11 +6,7 @@ use App\Models\Appointment;
 use App\Models\LeadHistory;
 use Illuminate\Http\Request;
 
-/**
- * L8 — Endpoints públicos pra lead confirmar/cancelar visita via link
- * assinado, sem precisar de login. Token é gerado quando a visita é
- * criada (Appointment::booted) e mandado por email.
- */
+// Lead confirma/cancela visita via link assinado sem login. Token sai do Appointment::booted().
 class PublicVisitController extends Controller
 {
 

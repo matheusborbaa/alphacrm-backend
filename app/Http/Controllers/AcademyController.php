@@ -9,17 +9,7 @@ use App\Models\AcademyUserProgress;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
-/**
- * I3 — Academy (user-facing).
- *
- * Endpoints pra corretor consumir cursos:
- *   GET  /academy/categories                    — categorias com cursos publicados
- *   GET  /academy/courses                       — catálogo (cursos publicados + meu progresso %)
- *   GET  /academy/courses/{course}              — detalhe + lessons + meu progresso por aula
- *   POST /academy/lessons/{lesson}/progress     — upsert progresso (chamado a cada 10s do player)
- *   POST /academy/lessons/{lesson}/complete     — marca como concluída manualmente (botão)
- *   GET  /academy/my-stats                      — stats do user (cursos completos, em andamento)
- */
+// Endpoints que o corretor usa pra consumir cursos. Tracking de progresso vem aqui.
 class AcademyController extends Controller
 {
     public function listCategories()
@@ -153,22 +143,17 @@ class AcademyController extends Controller
         );
 
 
+        // Só sobe — protege contra um payload atrasado zerar o progresso de quem foi mais longe.
         $newWatch = max((int) $progress->watch_seconds, (int) $data['watch_seconds']);
         $progress->watch_seconds = $newWatch;
         if (isset($data['last_position_seconds'])) {
             $progress->last_position_seconds = (int) $data['last_position_seconds'];
         }
 
-
-        $shouldComplete = false;
-        if ($lesson->duration_seconds > 0 && $progress->completed_at === null) {
-            $threshold = (int) ($lesson->duration_seconds * 0.9);
-            if ($newWatch >= $threshold) {
-                $shouldComplete = true;
-            }
-        }
-
-        if ($shouldComplete) {
+        // 90% do vídeo conta como assistido. Acima disso fecha automático.
+        if ($progress->completed_at === null
+            && $lesson->duration_seconds > 0
+            && $newWatch >= (int) ($lesson->duration_seconds * 0.9)) {
             $progress->completed_at = now();
             $progress->completed_via = 'auto';
         }

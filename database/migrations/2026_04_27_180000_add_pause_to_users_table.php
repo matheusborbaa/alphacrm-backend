@@ -4,15 +4,8 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-/**
- * I2 — Sistema de pausa do corretor.
- *
- * Separado de cooldown_until (que é cooldown automático pós-recebimento de lead).
- * Esse aqui é pausa MANUAL do corretor (almoço, reunião, etc).
- *
- *   paused_until   — quando expira a pausa (auto-resume). NULL = não pausado.
- *   pause_reason   — texto livre / preset (almoço, reunião, etc) pra UI/audit.
- */
+// Pausa manual do corretor (almoço, reunião). Separado do cooldown_until pra não misturar
+// com o cooldown automático pós-recebimento de lead.
 return new class extends Migration
 {
     public function up(): void

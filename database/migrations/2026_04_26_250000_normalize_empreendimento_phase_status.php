@@ -3,15 +3,7 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 
-/**
- * Normaliza valores legados da coluna `status` em empreendimentos pros
- * 5 slugs canônicos da timeline de fases (E3):
- *   - breve_lancamento
- *   - lancamento
- *   - em_obras
- *   - obras_avancadas
- *   - pronto_para_morar
- */
+// Normaliza valores antigos de empreendimentos.status pros 5 slugs canônicos da timeline de fases.
 return new class extends Migration {
     public function up(): void
     {
