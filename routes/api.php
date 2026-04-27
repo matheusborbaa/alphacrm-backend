@@ -442,7 +442,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/appointments/{id}/reschedule', [AppointmentController::class, 'reschedule']);
     Route::put('/appointments/{id}/complete',   [AppointmentController::class, 'complete']);
     Route::get('/appointments/{id}',            [AppointmentController::class, 'show']);
+
+    Route::post('/appointments/{appointment}/visit-status', [AppointmentController::class, 'changeVisitStatus']);
 });
+
+
+Route::get ('/public/visita/{token}',            [\App\Http\Controllers\PublicVisitController::class, 'show']);
+Route::post('/public/visita/{token}/confirm',    [\App\Http\Controllers\PublicVisitController::class, 'confirm']);
+Route::post('/public/visita/{token}/cancel',     [\App\Http\Controllers\PublicVisitController::class, 'cancel']);
 
 Route::middleware(['auth:sanctum', 'permission:agenda.view_all|agenda.view_team|agenda.view_own|agenda.create|agenda.update_all|agenda.update_own|agenda.delete|appointments.view_any|appointments.view_own|appointments.manage_any|appointments.manage_own'])->group(function () {
     Route::get('/tasks',                 [TaskController::class, 'index']);

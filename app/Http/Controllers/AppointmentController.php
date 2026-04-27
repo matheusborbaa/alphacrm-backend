@@ -315,12 +315,18 @@ LeadHistory::create([
     public function store(Request $request)
     {
         $data = $request->validate([
-            'title'       => 'required|string',
-            'type'        => 'required|string',
-            'description' => 'nullable|string',
-            'lead_id'     => 'nullable|exists:leads,id',
-            'starts_at'   => 'required|date',
-            'ends_at'     => 'nullable|date|after_or_equal:starts_at',
+            'title'          => 'required|string',
+            'type'           => 'required|string',
+            'description'    => 'nullable|string',
+            'lead_id'        => 'nullable|exists:leads,id',
+            'starts_at'      => 'required|date',
+            'ends_at'        => 'nullable|date|after_or_equal:starts_at',
+
+
+            'modality'       => 'nullable|string|in:presencial,online',
+            'location'       => 'nullable|string|max:1000',
+            'attendee_email' => 'nullable|email|max:191',
+            'attendee_phone' => 'nullable|string|max:32',
         ]);
 
         $appointment = Appointment::create([
@@ -345,18 +351,74 @@ LeadHistory::create([
         abort_if($appointment->user_id !== Auth::id(), 403);
 
         $data = $request->validate([
-            'title'       => 'sometimes|string',
-            'type'        => 'sometimes|string',
-            'description' => 'nullable|string',
-            'lead_id'     => 'nullable|exists:leads,id',
-            'starts_at'   => 'sometimes|date',
-            'ends_at'     => 'nullable|date|after_or_equal:starts_at',
-            'status'      => 'sometimes|string',
+            'title'          => 'sometimes|string',
+            'type'           => 'sometimes|string',
+            'description'    => 'nullable|string',
+            'lead_id'        => 'nullable|exists:leads,id',
+            'starts_at'      => 'sometimes|date',
+            'ends_at'        => 'nullable|date|after_or_equal:starts_at',
+            'status'         => 'sometimes|string',
+
+
+            'modality'       => 'nullable|string|in:presencial,online',
+            'location'       => 'nullable|string|max:1000',
+            'attendee_email' => 'nullable|email|max:191',
+            'attendee_phone' => 'nullable|string|max:32',
         ]);
 
         $appointment->update($data);
 
         return response()->json($appointment);
+    }
+
+
+    public function changeVisitStatus(Request $request, Appointment $appointment)
+    {
+
+        $isOwner   = $appointment->user_id === Auth::id();
+        $isManager = in_array(strtolower((string)(Auth::user()?->role)), ['admin','gestor'], true);
+        abort_unless($isOwner || $isManager, 403, 'Sem permissão pra alterar status desta visita.');
+
+        $data = $request->validate([
+            'confirmation_status' => 'required|string|in:pending,confirmed,completed,no_show,cancelled',
+            'cancellation_reason' => 'nullable|string|max:1000',
+        ]);
+
+        $newStatus = $data['confirmation_status'];
+
+        $update = ['confirmation_status' => $newStatus];
+
+        if ($newStatus === 'cancelled' && !empty($data['cancellation_reason'])) {
+            $update['cancellation_reason'] = $data['cancellation_reason'];
+        }
+
+
+        if ($newStatus === 'completed' && !$appointment->completed_at) {
+            $update['completed_at'] = now();
+            $update['completed_by'] = Auth::id();
+        }
+
+
+        if (in_array($newStatus, ['cancelled', 'no_show'], true) && !$appointment->completed_at) {
+
+            $update['status'] = 'cancelled';
+        }
+
+        $appointment->update($update);
+
+
+        if ($appointment->lead_id) {
+            try {
+                LeadHistory::create([
+                    'lead_id'     => $appointment->lead_id,
+                    'user_id'     => Auth::id(),
+                    'type'        => 'visit_status',
+                    'description' => 'Visita "' . $appointment->title . '" marcada como ' . $newStatus,
+                ]);
+            } catch (\Throwable $e) {  }
+        }
+
+        return response()->json($appointment->fresh());
     }
 
     public function destroy(Appointment $appointment)
