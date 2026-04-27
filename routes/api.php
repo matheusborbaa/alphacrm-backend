@@ -604,6 +604,13 @@ Route::middleware(['auth:sanctum', 'permission:reports.productivity|reports.fina
     Route::get('/task-kind-colors',          [\App\Http\Controllers\TaskKindColorController::class, 'index']);
     Route::put('/task-kind-colors/{kind}',   [\App\Http\Controllers\TaskKindColorController::class, 'update']);
 
+
+    Route::get   ('/task-kinds',                  [\App\Http\Controllers\TaskKindController::class, 'index']);
+    Route::get   ('/admin/task-kinds',            [\App\Http\Controllers\TaskKindController::class, 'indexAll']);
+    Route::post  ('/admin/task-kinds',            [\App\Http\Controllers\TaskKindController::class, 'store']);
+    Route::put   ('/admin/task-kinds/{kind}',     [\App\Http\Controllers\TaskKindController::class, 'update']);
+    Route::delete('/admin/task-kinds/{kind}',     [\App\Http\Controllers\TaskKindController::class, 'destroy']);
+
     Route::get('/commissions',                 [\App\Http\Controllers\CommissionController::class, 'index']);
     Route::get('/commissions/summary',         [\App\Http\Controllers\CommissionController::class, 'summary']);
     Route::get('/commissions/{id}',            [\App\Http\Controllers\CommissionController::class, 'show']);

@@ -87,7 +87,7 @@ class TaskController extends Controller
             'priority'    => 'nullable|in:low,medium,high',
             'reminder_at' => 'nullable|date',
 
-            'task_kind'   => ['nullable', \Illuminate\Validation\Rule::in(\App\Models\Appointment::KINDS)],
+            'task_kind'   => ['nullable', \Illuminate\Validation\Rule::in(\App\Models\Appointment::validKindSlugs())],
 
             'user_id'     => 'nullable|exists:users,id',
 
@@ -156,7 +156,7 @@ class TaskController extends Controller
             'priority'    => 'nullable|in:low,medium,high',
             'reminder_at' => 'nullable|date',
 
-            'task_kind'   => ['nullable', \Illuminate\Validation\Rule::in(\App\Models\Appointment::KINDS)],
+            'task_kind'   => ['nullable', \Illuminate\Validation\Rule::in(\App\Models\Appointment::validKindSlugs())],
             'user_id'     => 'nullable|exists:users,id',
             'scope'       => 'nullable|in:private,company',
         ]);

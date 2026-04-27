@@ -34,6 +34,21 @@ class Appointment extends Model
         self::KIND_GENERICA,
     ];
 
+    /**
+     * Slugs válidos pra task_kind: combina os fixos hardcoded acima
+     * (compat com leads/seeds antigos) com os kinds ATIVOS criados
+     * dinamicamente pelo admin via TaskKind.
+     */
+    public static function validKindSlugs(): array
+    {
+        try {
+            $dynamic = \App\Models\TaskKind::activeSlugs();
+        } catch (\Throwable $e) {
+            $dynamic = [];
+        }
+        return array_values(array_unique(array_merge(self::KINDS, $dynamic)));
+    }
+
     public const PRIORITY_LOW    = 'low';
     public const PRIORITY_MEDIUM = 'medium';
     public const PRIORITY_HIGH   = 'high';

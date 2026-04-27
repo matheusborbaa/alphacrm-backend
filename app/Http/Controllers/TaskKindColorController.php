@@ -21,7 +21,7 @@ class TaskKindColorController extends Controller
             return response()->json(['message' => 'Apenas administradores podem editar cores.'], 403);
         }
 
-        if (!in_array($kind, Appointment::KINDS, true)) {
+        if (!in_array($kind, Appointment::validKindSlugs(), true)) {
             return response()->json(['message' => 'Tipo de tarefa inválido.'], 404);
         }
 
