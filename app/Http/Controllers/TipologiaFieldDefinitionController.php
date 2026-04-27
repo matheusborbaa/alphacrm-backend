@@ -14,7 +14,7 @@ use Illuminate\Validation\Rule;
  */
 class TipologiaFieldDefinitionController extends Controller
 {
-    private const ALLOWED_TYPES = ['counter', 'boolean', 'text', 'number', 'select'];
+    private const ALLOWED_TYPES = ['counter', 'boolean', 'text', 'number', 'number_range', 'select'];
 
     public function index()
     {
