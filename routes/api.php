@@ -450,6 +450,16 @@ Route::middleware('auth:sanctum')->group(function () {
 });
 
 
+Route::middleware(['auth:sanctum', 'permission:academy.view|academy.manage'])->prefix('academy')->group(function () {
+    Route::get ('/categories',                       [\App\Http\Controllers\AcademyController::class, 'listCategories']);
+    Route::get ('/courses',                          [\App\Http\Controllers\AcademyController::class, 'listCourses']);
+    Route::get ('/courses/{course}',                 [\App\Http\Controllers\AcademyController::class, 'showCourse']);
+    Route::post('/lessons/{lesson}/progress',        [\App\Http\Controllers\AcademyController::class, 'updateProgress']);
+    Route::post('/lessons/{lesson}/complete',        [\App\Http\Controllers\AcademyController::class, 'markComplete']);
+    Route::get ('/my-stats',                         [\App\Http\Controllers\AcademyController::class, 'myStats']);
+});
+
+
 Route::middleware(['auth:sanctum', 'permission:academy.manage|settings.system'])->prefix('admin/academy')->group(function () {
     Route::get   ('/categories',              [\App\Http\Controllers\AcademyAdminController::class, 'indexCategories']);
     Route::post  ('/categories',              [\App\Http\Controllers\AcademyAdminController::class, 'storeCategory']);
