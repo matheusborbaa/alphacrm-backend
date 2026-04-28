@@ -490,13 +490,18 @@ class UserController extends Controller
             $payload['paused_until'] = now()->addYear();
         }
 
+
+        // Pausar implica ocupado — fora do rodízio E aparente como ocupado pra equipe.
+        $payload['status_corretor'] = 'ocupado';
+
         $user->update($payload);
 
         return response()->json([
-            'success'      => true,
-            'paused_until' => $user->fresh()->paused_until?->toIso8601String(),
-            'pause_reason' => $reason,
-            'manual'       => $minutes === null,
+            'success'         => true,
+            'paused_until'    => $user->fresh()->paused_until?->toIso8601String(),
+            'pause_reason'    => $reason,
+            'status_corretor' => 'ocupado',
+            'manual'          => $minutes === null,
         ]);
     }
 
@@ -511,7 +516,13 @@ class UserController extends Controller
             return response()->json(['success' => true, 'was_paused' => false]);
         }
 
-        $user->update(['paused_until' => null, 'pause_reason' => null]);
+
+        // Volta pro rodízio = disponível por padrão. Se quiser ficar ocupado depois, troca manual.
+        $user->update([
+            'paused_until'    => null,
+            'pause_reason'    => null,
+            'status_corretor' => 'disponivel',
+        ]);
 
 
         $claimed = null;
