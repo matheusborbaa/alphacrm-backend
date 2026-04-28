@@ -345,6 +345,111 @@ class AcademyAdminController extends Controller
     }
 
 
+
+    // Drill-down: tudo que o usuário fez naquele curso. Inclui aula a aula + tentativa de quiz com gabarito.
+    public function userCourseDetails(Request $request, int $userId, int $courseId)
+    {
+        $user = User::findOrFail($userId);
+        $course = AcademyCourse::with(['category', 'lessons.materials', 'quizQuestions'])->findOrFail($courseId);
+
+        $progressByLesson = AcademyUserProgress::where('user_id', $userId)
+            ->whereIn('lesson_id', $course->lessons->pluck('id'))
+            ->get()
+            ->keyBy('lesson_id');
+
+        $lessonsPayload = $course->lessons->map(function ($l) use ($progressByLesson) {
+            $p = $progressByLesson[$l->id] ?? null;
+            return [
+                'id'                 => $l->id,
+                'title'              => $l->title,
+                'order'              => $l->order,
+                'duration_seconds'   => $l->duration_seconds,
+                'started_at'         => $p?->started_at?->toIso8601String(),
+                'completed_at'       => $p?->completed_at?->toIso8601String(),
+                'completed_via'      => $p?->completed_via,
+                'watch_seconds'      => (int) ($p?->watch_seconds ?? 0),
+                'last_position'      => (int) ($p?->last_position_seconds ?? 0),
+                'last_seen_at'       => $p?->updated_at?->toIso8601String(),
+            ];
+        });
+
+
+        // Tentativas de quiz com gabarito embutido (qual opção foi escolhida vs correta).
+        $questionsById = $course->quizQuestions->keyBy('id');
+
+        $attempts = AcademyQuizAttempt::where('user_id', $userId)
+            ->where('course_id', $courseId)
+            ->orderByDesc('attempted_at')
+            ->get()
+            ->map(function ($a) use ($questionsById) {
+                $detail = collect($a->answers ?? [])->map(function ($ans) use ($questionsById) {
+                    $qid = $ans['question_id'] ?? null;
+                    $q = $qid ? ($questionsById[$qid] ?? null) : null;
+                    if (!$q) {
+                        return [
+                            'question_id'    => $qid,
+                            'question'       => '(pergunta removida)',
+                            'options'        => [],
+                            'chosen_index'   => $ans['choice'] ?? null,
+                            'chosen_text'    => null,
+                            'correct_index'  => null,
+                            'correct_text'   => null,
+                            'is_correct'     => false,
+                        ];
+                    }
+                    $chosen = $ans['choice'] ?? null;
+                    $opts = $q->options ?? [];
+                    return [
+                        'question_id'    => $q->id,
+                        'question'       => $q->question,
+                        'options'        => $opts,
+                        'chosen_index'   => $chosen,
+                        'chosen_text'    => is_int($chosen) ? ($opts[$chosen] ?? null) : null,
+                        'correct_index'  => $q->correct_index,
+                        'correct_text'   => $opts[$q->correct_index] ?? null,
+                        'is_correct'     => is_int($chosen) && $chosen === (int) $q->correct_index,
+                    ];
+                });
+                return [
+                    'id'             => $a->id,
+                    'attempted_at'   => $a->attempted_at?->toIso8601String(),
+                    'score'          => (int) $a->score,
+                    'passed'         => (bool) $a->passed,
+                    'total'          => $detail->count(),
+                    'correct_count'  => $detail->where('is_correct', true)->count(),
+                    'answers'        => $detail->values(),
+                ];
+            });
+
+
+        $cert = AcademyCertificate::where('user_id', $userId)->where('course_id', $courseId)->first();
+
+        return response()->json([
+            'user' => [
+                'id'    => $user->id,
+                'name'  => $user->name,
+                'email' => $user->email,
+            ],
+            'course' => [
+                'id'                  => $course->id,
+                'title'               => $course->title,
+                'description'         => $course->description,
+                'cover_image'         => $course->cover_image,
+                'category'            => $course->category ? ['name' => $course->category->name, 'color' => $course->category->color] : null,
+                'has_quiz'            => (bool) $course->has_quiz,
+                'quiz_min_score'      => (int) $course->quiz_min_score,
+                'certificate_enabled' => (bool) $course->certificate_enabled,
+            ],
+            'lessons'     => $lessonsPayload,
+            'attempts'    => $attempts,
+            'certificate' => $cert ? [
+                'number'    => $cert->certificate_number,
+                'issued_at' => $cert->issued_at?->toIso8601String(),
+            ] : null,
+        ]);
+    }
+
+
     // Snapshot agregado pro topo da tela: contadores rápidos de adesão.
     public function enrollmentsSummary()
     {

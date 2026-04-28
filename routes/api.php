@@ -499,6 +499,7 @@ Route::middleware(['auth:sanctum', 'permission:academy.manage|settings.system'])
 
     Route::get('/enrollments',          [\App\Http\Controllers\AcademyAdminController::class, 'indexEnrollments']);
     Route::get('/enrollments/summary',  [\App\Http\Controllers\AcademyAdminController::class, 'enrollmentsSummary']);
+    Route::get('/users/{user}/courses/{course}/details', [\App\Http\Controllers\AcademyAdminController::class, 'userCourseDetails']);
 });
 
 
