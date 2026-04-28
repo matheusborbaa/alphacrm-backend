@@ -3,11 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Models\AcademyCategory;
+use App\Models\AcademyCertificate;
 use App\Models\AcademyCourse;
 use App\Models\AcademyLesson;
+use App\Models\AcademyQuizAttempt;
 use App\Models\AcademyUserProgress;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 // Endpoints que o corretor usa pra consumir cursos. Tracking de progresso vem aqui.
 class AcademyController extends Controller
@@ -190,6 +193,90 @@ class AcademyController extends Controller
             'completed_at' => $progress->completed_at?->toIso8601String(),
         ]);
     }
+
+
+    // Histórico do próprio usuário pra aba "Academy" no perfil. Devolve todos cursos onde tem progresso.
+    public function myHistory()
+    {
+        $userId = Auth::id();
+
+
+        // Cursos onde o user tem ao menos 1 progresso registrado.
+        $courseIds = DB::table('academy_user_progress as p')
+            ->join('academy_lessons as l', 'l.id', '=', 'p.lesson_id')
+            ->where('p.user_id', $userId)
+            ->distinct()
+            ->pluck('l.course_id')
+            ->all();
+
+        if (empty($courseIds)) {
+            return response()->json([]);
+        }
+
+        $courses = AcademyCourse::with(['category', 'lessons:id,course_id,duration_seconds'])
+            ->whereIn('id', $courseIds)
+            ->get();
+
+        $progressByLesson = AcademyUserProgress::where('user_id', $userId)
+            ->whereIn('lesson_id', $courses->flatMap->lessons->pluck('id'))
+            ->get()
+            ->keyBy('lesson_id');
+
+        $quizByCourse = AcademyQuizAttempt::where('user_id', $userId)
+            ->whereIn('course_id', $courseIds)
+            ->select('course_id', DB::raw('MAX(score) as best_score'), DB::raw('MAX(passed) as any_passed'), DB::raw('COUNT(*) as attempts'))
+            ->groupBy('course_id')
+            ->get()
+            ->keyBy('course_id');
+
+        $certs = AcademyCertificate::where('user_id', $userId)
+            ->whereIn('course_id', $courseIds)
+            ->get()
+            ->keyBy('course_id');
+
+        $payload = $courses->map(function ($c) use ($progressByLesson, $quizByCourse, $certs, $userId) {
+            $totalLessons = $c->lessons->count();
+            $done = 0; $startedAt = null; $lastAct = null;
+            foreach ($c->lessons as $l) {
+                $p = $progressByLesson[$l->id] ?? null;
+                if ($p) {
+                    if ($p->completed_at) $done++;
+                    if (!$startedAt || ($p->started_at && $p->started_at < $startedAt)) $startedAt = $p->started_at;
+                    if (!$lastAct || ($p->updated_at && $p->updated_at > $lastAct)) $lastAct = $p->updated_at;
+                }
+            }
+            $pct = $totalLessons > 0 ? (int) round(($done / $totalLessons) * 100) : 0;
+            $allDone = $totalLessons > 0 && $done >= $totalLessons;
+            $qb = $quizByCourse[$c->id] ?? null;
+            $ct = $certs[$c->id] ?? null;
+
+            return [
+                'course_id'              => $c->id,
+                'title'                  => $c->title,
+                'description'            => $c->description,
+                'cover_image'            => $c->cover_image,
+                'category'               => $c->category ? ['name' => $c->category->name, 'color' => $c->category->color] : null,
+                'lessons_total'          => $totalLessons,
+                'lessons_completed'      => $done,
+                'progress_pct'           => $pct,
+                'is_completed'           => $allDone,
+                'started_at'             => $startedAt?->toIso8601String(),
+                'last_activity_at'       => $lastAct?->toIso8601String(),
+                'has_quiz'               => (bool) $c->has_quiz,
+                'quiz_min_score'         => (int) $c->quiz_min_score,
+                'best_quiz_score'        => $qb ? (int) $qb->best_score : null,
+                'quiz_passed'            => $qb ? (bool) $qb->any_passed : false,
+                'quiz_attempts'          => $qb ? (int) $qb->attempts : 0,
+                'certificate_enabled'    => (bool) $c->certificate_enabled,
+                'has_certificate'        => $ct !== null,
+                'certificate_number'     => $ct?->certificate_number,
+                'certificate_issued_at'  => $ct?->issued_at?->toIso8601String(),
+            ];
+        })->sortByDesc('last_activity_at')->values();
+
+        return response()->json($payload);
+    }
+
 
     public function myStats()
     {

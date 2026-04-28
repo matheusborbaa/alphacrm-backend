@@ -457,6 +457,7 @@ Route::middleware(['auth:sanctum', 'permission:academy.view|academy.manage'])->p
     Route::post('/lessons/{lesson}/progress',        [\App\Http\Controllers\AcademyController::class, 'updateProgress']);
     Route::post('/lessons/{lesson}/complete',        [\App\Http\Controllers\AcademyController::class, 'markComplete']);
     Route::get ('/my-stats',                         [\App\Http\Controllers\AcademyController::class, 'myStats']);
+    Route::get ('/my-history',                       [\App\Http\Controllers\AcademyController::class, 'myHistory']);
 
 
     Route::get ('/courses/{course}/quiz',            [\App\Http\Controllers\AcademyQuizController::class, 'userGetQuiz']);
@@ -494,6 +495,10 @@ Route::middleware(['auth:sanctum', 'permission:academy.manage|settings.system'])
     Route::post  ('/courses/{course}/questions',   [\App\Http\Controllers\AcademyQuizController::class, 'adminStoreQuestion']);
     Route::put   ('/questions/{question}',         [\App\Http\Controllers\AcademyQuizController::class, 'adminUpdateQuestion']);
     Route::delete('/questions/{question}',         [\App\Http\Controllers\AcademyQuizController::class, 'adminDestroyQuestion']);
+
+
+    Route::get('/enrollments',          [\App\Http\Controllers\AcademyAdminController::class, 'indexEnrollments']);
+    Route::get('/enrollments/summary',  [\App\Http\Controllers\AcademyAdminController::class, 'enrollmentsSummary']);
 });
 
 

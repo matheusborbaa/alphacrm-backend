@@ -3,10 +3,15 @@
 namespace App\Http\Controllers;
 
 use App\Models\AcademyCategory;
+use App\Models\AcademyCertificate;
 use App\Models\AcademyCourse;
 use App\Models\AcademyLesson;
 use App\Models\AcademyLessonMaterial;
+use App\Models\AcademyQuizAttempt;
+use App\Models\AcademyUserProgress;
+use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -210,6 +215,150 @@ class AcademyAdminController extends Controller
         }
         $material->delete();
         return response()->json(['success' => true]);
+    }
+
+
+
+    // Histórico geral. Lista pares (user, curso) onde o user tem qualquer progresso, com agregados.
+    // Filtros: course_id, user_id, status (in_progress|completed|certified), q (busca em nome/email).
+    public function indexEnrollments(Request $request)
+    {
+        $courseId = $request->filled('course_id') ? (int) $request->course_id : null;
+        $userId   = $request->filled('user_id')   ? (int) $request->user_id   : null;
+        $status   = $request->input('status');
+        $q        = trim((string) $request->input('q', ''));
+
+
+        // Base: agrega progresso por (user_id, course_id) via join lessons → user_progress.
+        $base = DB::table('academy_user_progress as p')
+            ->join('academy_lessons as l', 'l.id', '=', 'p.lesson_id')
+            ->join('academy_courses as c', 'c.id', '=', 'l.course_id')
+            ->join('users as u', 'u.id', '=', 'p.user_id')
+            ->leftJoin('academy_categories as cat', 'cat.id', '=', 'c.category_id')
+            ->select(
+                'u.id as user_id',
+                'u.name as user_name',
+                'u.email as user_email',
+                'c.id as course_id',
+                'c.title as course_title',
+                'c.has_quiz',
+                'c.quiz_min_score',
+                'c.certificate_enabled',
+                'cat.name as category_name',
+                'cat.color as category_color',
+                DB::raw('MIN(p.started_at) as started_at'),
+                DB::raw('MAX(p.updated_at) as last_activity_at'),
+                DB::raw('COUNT(DISTINCT p.lesson_id) as lessons_started'),
+                DB::raw('SUM(CASE WHEN p.completed_at IS NOT NULL THEN 1 ELSE 0 END) as lessons_completed')
+            )
+            ->groupBy(
+                'u.id', 'u.name', 'u.email',
+                'c.id', 'c.title', 'c.has_quiz', 'c.quiz_min_score', 'c.certificate_enabled',
+                'cat.name', 'cat.color'
+            );
+
+        if ($courseId) $base->where('c.id', $courseId);
+        if ($userId)   $base->where('u.id', $userId);
+        if ($q !== '') {
+            $base->where(function ($w) use ($q) {
+                $w->where('u.name', 'like', "%{$q}%")
+                  ->orWhere('u.email', 'like', "%{$q}%")
+                  ->orWhere('c.title', 'like', "%{$q}%");
+            });
+        }
+
+        $rows = $base->orderByDesc(DB::raw('MAX(p.updated_at)'))->get();
+
+
+        // Total de aulas por curso pra calcular % e flag de concluído.
+        $courseIds = $rows->pluck('course_id')->unique()->all();
+        $totalsByCourse = DB::table('academy_lessons')
+            ->select('course_id', DB::raw('COUNT(*) as total'))
+            ->whereIn('course_id', $courseIds)
+            ->groupBy('course_id')
+            ->pluck('total', 'course_id')
+            ->all();
+
+
+        // Melhor tentativa de quiz por (user, course).
+        $quizBest = AcademyQuizAttempt::whereIn('course_id', $courseIds)
+            ->select('user_id', 'course_id', DB::raw('MAX(score) as best_score'), DB::raw('MAX(passed) as any_passed'))
+            ->groupBy('user_id', 'course_id')
+            ->get()
+            ->keyBy(fn($r) => $r->user_id . '_' . $r->course_id);
+
+
+        // Certificados emitidos.
+        $certs = AcademyCertificate::whereIn('course_id', $courseIds)
+            ->get()
+            ->keyBy(fn($c) => $c->user_id . '_' . $c->course_id);
+
+        $payload = $rows->map(function ($r) use ($totalsByCourse, $quizBest, $certs) {
+            $totalLessons = (int) ($totalsByCourse[$r->course_id] ?? 0);
+            $done = (int) $r->lessons_completed;
+            $allDone = $totalLessons > 0 && $done >= $totalLessons;
+            $key = $r->user_id . '_' . $r->course_id;
+            $qb = $quizBest[$key] ?? null;
+            $ct = $certs[$key] ?? null;
+
+            $isCertified = $ct !== null;
+            $status = $isCertified ? 'certified'
+                : ($allDone ? ($r->has_quiz && !($qb && $qb->any_passed) ? 'completed' : 'completed') : 'in_progress');
+
+            return [
+                'user_id'                => (int) $r->user_id,
+                'user_name'              => $r->user_name,
+                'user_email'             => $r->user_email,
+                'course_id'              => (int) $r->course_id,
+                'course_title'           => $r->course_title,
+                'category_name'          => $r->category_name,
+                'category_color'         => $r->category_color,
+                'started_at'             => $r->started_at,
+                'last_activity_at'       => $r->last_activity_at,
+                'lessons_total'          => $totalLessons,
+                'lessons_completed'      => $done,
+                'progress_pct'           => $totalLessons > 0 ? (int) round(($done / $totalLessons) * 100) : 0,
+                'is_completed'           => $allDone,
+                'has_quiz'               => (bool) $r->has_quiz,
+                'quiz_min_score'         => (int) $r->quiz_min_score,
+                'best_quiz_score'        => $qb ? (int) $qb->best_score : null,
+                'quiz_passed'            => $qb ? (bool) $qb->any_passed : false,
+                'certificate_enabled'    => (bool) $r->certificate_enabled,
+                'has_certificate'        => $isCertified,
+                'certificate_number'     => $ct?->certificate_number,
+                'certificate_issued_at'  => $ct?->issued_at?->toIso8601String(),
+                'status'                 => $status,
+            ];
+        });
+
+
+        // Filtra por status no lado do PHP (mais simples que reescrever o group-by).
+        if ($status === 'in_progress') {
+            $payload = $payload->filter(fn($r) => !$r['is_completed']);
+        } elseif ($status === 'completed') {
+            $payload = $payload->filter(fn($r) => $r['is_completed'] && !$r['has_certificate']);
+        } elseif ($status === 'certified') {
+            $payload = $payload->filter(fn($r) => $r['has_certificate']);
+        }
+
+        return response()->json($payload->values());
+    }
+
+
+    // Snapshot agregado pro topo da tela: contadores rápidos de adesão.
+    public function enrollmentsSummary()
+    {
+        $totalCourses = AcademyCourse::where('published', true)->count();
+        $usersWithProgress = DB::table('academy_user_progress')->distinct('user_id')->count('user_id');
+        $totalCertificates = AcademyCertificate::count();
+        $totalCompletions = DB::table('academy_user_progress')->whereNotNull('completed_at')->count();
+
+        return response()->json([
+            'published_courses'     => $totalCourses,
+            'users_with_progress'   => $usersWithProgress,
+            'lessons_completed'     => $totalCompletions,
+            'certificates_issued'   => $totalCertificates,
+        ]);
     }
 
 
