@@ -48,7 +48,14 @@ class DashboardController extends Controller
         },
     ])
     ->orderBy('order')
-    ->get(['id', 'name', 'color_hex']);
+    ->get()
+    ->map(fn ($s) => [
+        'id'        => (int) $s->id,
+        'name'      => $s->name,
+        'color_hex' => $s->color_hex,
+        'order'     => (int) $s->order,
+        'total'     => (int) ($s->total ?? 0),
+    ]);
 
     return response()->json($funnel);
 }
