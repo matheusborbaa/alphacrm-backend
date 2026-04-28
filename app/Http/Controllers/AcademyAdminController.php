@@ -101,6 +101,21 @@ class AcademyAdminController extends Controller
         ]);
     }
 
+    public function uploadCourseBanner(Request $request, AcademyCourse $course)
+    {
+        $request->validate(['banner' => 'required|image|max:4096']);
+        $path = $request->file('banner')->store('academy/banners', 'public');
+
+        if ($course->cover_banner && Storage::disk('public')->exists($course->cover_banner)) {
+            try { Storage::disk('public')->delete($course->cover_banner); } catch (\Throwable $e) {}
+        }
+        $course->update(['cover_banner' => $path]);
+        return response()->json([
+            'cover_banner'     => $path,
+            'cover_banner_url' => Storage::url($path),
+        ]);
+    }
+
 
     public function storeLesson(Request $request, AcademyCourse $course)
     {

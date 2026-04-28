@@ -480,6 +480,7 @@ Route::middleware(['auth:sanctum', 'permission:academy.manage|settings.system'])
     Route::put   ('/courses/{course}',        [\App\Http\Controllers\AcademyAdminController::class, 'updateCourse']);
     Route::delete('/courses/{course}',        [\App\Http\Controllers\AcademyAdminController::class, 'destroyCourse']);
     Route::post  ('/courses/{course}/cover',  [\App\Http\Controllers\AcademyAdminController::class, 'uploadCourseCover']);
+    Route::post  ('/courses/{course}/banner', [\App\Http\Controllers\AcademyAdminController::class, 'uploadCourseBanner']);
 
     Route::post  ('/courses/{course}/lessons',     [\App\Http\Controllers\AcademyAdminController::class, 'storeLesson']);
     Route::put   ('/lessons/{lesson}',             [\App\Http\Controllers\AcademyAdminController::class, 'updateLesson']);

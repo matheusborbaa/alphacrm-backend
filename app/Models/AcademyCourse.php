@@ -8,7 +8,7 @@ class AcademyCourse extends Model
 {
     protected $table = 'academy_courses';
     protected $fillable = [
-        'category_id', 'title', 'description', 'cover_image',
+        'category_id', 'title', 'description', 'cover_image', 'cover_banner',
         'published', 'order', 'has_quiz', 'quiz_min_score',
         'certificate_enabled',
     ];
