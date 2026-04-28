@@ -61,6 +61,7 @@ class DashboardHomeController extends Controller
             $previousTotal = $total;
 
             return [
+                'id'             => (int) $status->id,
                 'name'           => $status->name,
                 'order'          => (int) $status->order,
                 'color_hex'      => $status->color_hex,
