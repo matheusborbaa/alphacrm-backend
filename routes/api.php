@@ -450,7 +450,7 @@ Route::middleware('auth:sanctum')->group(function () {
 });
 
 
-Route::middleware(['auth:sanctum', 'permission:academy.view|academy.manage'])->prefix('academy')->group(function () {
+Route::middleware(['auth:sanctum', 'academy.enabled', 'permission:academy.view|academy.manage'])->prefix('academy')->group(function () {
     Route::get ('/categories',                       [\App\Http\Controllers\AcademyController::class, 'listCategories']);
     Route::get ('/courses',                          [\App\Http\Controllers\AcademyController::class, 'listCourses']);
     Route::get ('/courses/{course}',                 [\App\Http\Controllers\AcademyController::class, 'showCourse']);
@@ -469,7 +469,7 @@ Route::middleware(['auth:sanctum', 'permission:academy.view|academy.manage'])->p
 });
 
 
-Route::middleware(['auth:sanctum', 'permission:academy.manage|settings.system'])->prefix('admin/academy')->group(function () {
+Route::middleware(['auth:sanctum', 'academy.enabled', 'permission:academy.manage|settings.system'])->prefix('admin/academy')->group(function () {
     Route::get   ('/categories',              [\App\Http\Controllers\AcademyAdminController::class, 'indexCategories']);
     Route::post  ('/categories',              [\App\Http\Controllers\AcademyAdminController::class, 'storeCategory']);
     Route::put   ('/categories/{category}',   [\App\Http\Controllers\AcademyAdminController::class, 'updateCategory']);

@@ -40,6 +40,8 @@ return Application::configure(basePath: dirname(__DIR__))
 
         'corretor.area.enabled' => \App\Http\Middleware\EnsureCorretorAreaEnabled::class,
 
+        'academy.enabled' => \App\Http\Middleware\EnsureAcademyEnabled::class,
+
         'fresh-auth' => \App\Http\Middleware\EnsureFreshAuthentication::class,
 
         'permission' => \Spatie\Permission\Middleware\PermissionMiddleware::class,

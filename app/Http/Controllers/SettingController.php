@@ -99,6 +99,11 @@ class SettingController extends Controller
             'default' => true,
         ],
 
+        'academy_enabled' => [
+            'type'    => 'bool',
+            'default' => true,
+        ],
+
         'corretor_auto_offline_minutes' => [
             'type'    => 'int',
             'default' => 60,
