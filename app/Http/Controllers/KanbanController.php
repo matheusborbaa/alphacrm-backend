@@ -108,6 +108,50 @@ class KanbanController extends Controller
     $customValues = $data['custom_field_values'] ?? [];
     unset($data['custom_field_values']);
 
+
+    if ($data['status_id'] && $data['status_id'] != $lead->status_id) {
+        $targetStatus = \App\Models\LeadStatus::find($data['status_id']);
+        $targetName   = $targetStatus ? strtolower(trim($targetStatus->name)) : '';
+
+        $blockManual = (bool) \App\Models\Setting::get('agendamento_block_manual_visita', true);
+        $isViaAction = $request->boolean('_via_appointment_action');
+
+        if ($blockManual && !$isViaAction && $targetName === 'visita') {
+            return response()->json([
+                'message' => 'A etapa "Visita" só pode ser ativada concluindo a tarefa de agendamento (Visita Realizada ou Reunião Realizada).',
+                'code'    => 'visit_stage_locked',
+            ], 422);
+        }
+
+        if ($targetName === 'agendamento') {
+            $hasOpenAppt = \App\Models\Appointment::where('lead_id', $lead->id)
+                ->where('task_kind', \App\Models\Appointment::KIND_AGENDAMENTO)
+                ->whereNull('completed_at')
+                ->whereNotIn('confirmation_status', [
+                    \App\Models\Appointment::CONFIRM_CANCELLED,
+                    \App\Models\Appointment::CONFIRM_REAGENDADA,
+                ])
+                ->exists();
+
+            if (!$hasOpenAppt && !$request->boolean('_skip_appointment_modal')) {
+                return response()->json([
+                    'message'                    => 'Pra mover esse lead pra Agendamento, preencha os dados da visita.',
+                    'code'                       => 'requires_appointment_modal',
+                    'requires_appointment_modal' => true,
+                    'lead_id'                    => $lead->id,
+                    'target_status_id'           => (int) $data['status_id'],
+                    'prefill'                    => [
+                        'lead_name'         => $lead->name,
+                        'lead_phone'        => $lead->phone,
+                        'lead_email'        => $lead->email,
+                        'empreendimento_id' => $lead->empreendimento_id,
+                        'user_id'           => $lead->assigned_user_id ?? auth()->id(),
+                    ],
+                ], 422);
+            }
+        }
+    }
+
     $validator->validate(
         $lead,
         $data['status_id'] ?? null,
