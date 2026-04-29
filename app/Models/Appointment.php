@@ -57,11 +57,34 @@ class Appointment extends Model
     public const MODALITY_PRESENCIAL = 'presencial';
     public const MODALITY_ONLINE     = 'online';
 
-    public const CONFIRM_PENDING   = 'pending';
-    public const CONFIRM_CONFIRMED = 'confirmed';
-    public const CONFIRM_COMPLETED = 'completed';
-    public const CONFIRM_NO_SHOW   = 'no_show';
-    public const CONFIRM_CANCELLED = 'cancelled';
+    public const CONFIRM_PENDING            = 'pending';
+    public const CONFIRM_CONFIRMED          = 'confirmed';
+    public const CONFIRM_COMPLETED          = 'completed';
+    public const CONFIRM_NO_SHOW            = 'no_show';
+    public const CONFIRM_CANCELLED          = 'cancelled';
+
+    public const CONFIRM_CONCLUIDA_VISITA   = 'concluida_visita';
+    public const CONFIRM_CONCLUIDA_REUNIAO  = 'concluida_reuniao';
+    public const CONFIRM_REAGENDADA         = 'reagendada';
+
+
+    public static function visitFinalStates(): array
+    {
+        return [self::CONFIRM_CONCLUIDA_VISITA, self::CONFIRM_CONCLUIDA_REUNIAO];
+    }
+
+
+    public static function isFinalConfirmStatus(?string $s): bool
+    {
+        return in_array($s, [
+            self::CONFIRM_CONCLUIDA_VISITA,
+            self::CONFIRM_CONCLUIDA_REUNIAO,
+            self::CONFIRM_NO_SHOW,
+            self::CONFIRM_CANCELLED,
+            self::CONFIRM_REAGENDADA,
+            self::CONFIRM_COMPLETED,
+        ], true);
+    }
 
     protected $fillable = [
         'title',
@@ -86,6 +109,9 @@ class Appointment extends Model
         'confirmation_token',
         'lead_confirmed_at',
         'cancellation_reason',
+        'visit_observations',
+        'visit_doc_path',
+        'previous_appointment_id',
         'meeting_url',
         'external_event_id',
         'external_event_etag',
@@ -222,5 +248,23 @@ class Appointment extends Model
     public function isVisitOnline(): bool
     {
         return $this->modality === self::MODALITY_ONLINE;
+    }
+
+
+    public function participants()
+    {
+        return $this->hasMany(AppointmentParticipant::class);
+    }
+
+
+    public function previousAppointment()
+    {
+        return $this->belongsTo(Appointment::class, 'previous_appointment_id');
+    }
+
+
+    public function nextAppointment()
+    {
+        return $this->hasOne(Appointment::class, 'previous_appointment_id');
     }
 }

@@ -104,6 +104,44 @@ class SettingController extends Controller
             'default' => true,
         ],
 
+
+        'agendamento_etapa_apos_visita' => [
+            'type'    => 'int_or_null',
+            'default' => null,
+        ],
+        'agendamento_etapa_apos_reuniao' => [
+            'type'    => 'int_or_null',
+            'default' => null,
+        ],
+        'agendamento_no_show_followup_days' => [
+            'type'    => 'int',
+            'default' => 1,
+            'min'     => 0,
+            'max'     => 30,
+        ],
+        'agendamento_no_show_followup_hour' => [
+            'type'    => 'int',
+            'default' => 9,
+            'min'     => 0,
+            'max'     => 23,
+        ],
+        'agendamento_no_show_followup_skip_weekends' => [
+            'type'    => 'bool',
+            'default' => true,
+        ],
+        'agendamento_no_show_followup_title_template' => [
+            'type'    => 'string',
+            'default' => 'Follow-up: visita não realizada com {lead_name}',
+        ],
+        'agendamento_no_show_followup_desc_template' => [
+            'type'    => 'string',
+            'default' => 'Lead não compareceu à visita do dia {visit_date}. Entre em contato para entender o motivo e tentar reagendar.',
+        ],
+        'agendamento_block_manual_visita' => [
+            'type'    => 'bool',
+            'default' => true,
+        ],
+
         'corretor_auto_offline_minutes' => [
             'type'    => 'int',
             'default' => 60,

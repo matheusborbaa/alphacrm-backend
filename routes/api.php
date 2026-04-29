@@ -447,6 +447,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/appointments/{id}',            [AppointmentController::class, 'show']);
 
     Route::post('/appointments/{appointment}/visit-status', [AppointmentController::class, 'changeVisitStatus']);
+
+
+    Route::post('/agendamentos/{appointment}/visit-realized', [\App\Http\Controllers\AgendamentoActionController::class, 'visitRealized']);
+    Route::post('/agendamentos/{appointment}/meeting-done',   [\App\Http\Controllers\AgendamentoActionController::class, 'meetingDone']);
+    Route::post('/agendamentos/{appointment}/canceled',       [\App\Http\Controllers\AgendamentoActionController::class, 'canceled']);
+    Route::post('/agendamentos/{appointment}/rescheduled',    [\App\Http\Controllers\AgendamentoActionController::class, 'rescheduled']);
+    Route::post('/agendamentos/{appointment}/no-show',        [\App\Http\Controllers\AgendamentoActionController::class, 'noShow']);
 });
 
 
@@ -717,6 +724,7 @@ Route::middleware(['auth:sanctum', 'permission:reports.productivity|reports.fina
     Route::get('/bi/tipologia-analysis',        [\App\Http\Controllers\BiController::class, 'tipologiaAnalysis']);
     Route::get('/bi/lead-heatmap',              [\App\Http\Controllers\BiController::class, 'leadHeatmap']);
     Route::get('/bi/top-ranking',               [\App\Http\Controllers\BiController::class, 'topRanking']);
+    Route::get('/bi/agendamento-metrics',       [\App\Http\Controllers\BiController::class, 'agendamentoMetrics']);
 
     Route::get('/reports/export/{tipo}/{formato}',
         [\App\Http\Controllers\RelatoriosExportController::class, 'export'])

@@ -97,6 +97,72 @@ class BiController extends Controller
     }
 
 
+
+    // Métricas das tarefas de Agendamento centralizado: comparecimento, no-show, reagendamento e conversão pós-visita.
+    public function agendamentoMetrics(Request $request)
+    {
+        [$start, $end] = $this->resolvePeriod($request);
+
+        $base = Appointment::where('task_kind', Appointment::KIND_AGENDAMENTO)
+            ->whereBetween('starts_at', [$start, $end]);
+
+        if ($request->filled('corretor_id')) {
+            $base->where('user_id', (int) $request->corretor_id);
+        }
+
+        $total = (clone $base)->count();
+
+        $realized = (clone $base)->whereIn('confirmation_status', [
+            Appointment::CONFIRM_CONCLUIDA_VISITA,
+            Appointment::CONFIRM_CONCLUIDA_REUNIAO,
+        ])->count();
+
+        $noShow      = (clone $base)->where('confirmation_status', Appointment::CONFIRM_NO_SHOW)->count();
+        $rescheduled = (clone $base)->where('confirmation_status', Appointment::CONFIRM_REAGENDADA)->count();
+        $cancelled   = (clone $base)->where('confirmation_status', Appointment::CONFIRM_CANCELLED)->count();
+
+        $pct = fn ($n) => $total > 0 ? round(($n / $total) * 100, 1) : 0.0;
+
+
+        $vendidoStatusId = LeadStatus::whereRaw('LOWER(name) = ?', ['venda'])->value('id');
+        $sales = 0;
+        if ($vendidoStatusId) {
+
+            $leadIdsVisitados = (clone $base)
+                ->whereIn('confirmation_status', [
+                    Appointment::CONFIRM_CONCLUIDA_VISITA,
+                    Appointment::CONFIRM_CONCLUIDA_REUNIAO,
+                ])
+                ->whereNotNull('lead_id')
+                ->pluck('lead_id')
+                ->unique();
+
+            if ($leadIdsVisitados->isNotEmpty()) {
+                $sales = Lead::whereIn('id', $leadIdsVisitados)
+                    ->where('status_id', $vendidoStatusId)
+                    ->count();
+            }
+        }
+        $convPosVisita = $realized > 0 ? round(($sales / $realized) * 100, 1) : 0.0;
+
+        return response()->json([
+            'period_start'         => $start->toDateString(),
+            'period_end'           => $end->toDateString(),
+            'total_agendamentos'   => $total,
+            'visitas_realizadas'   => $realized,
+            'no_show'              => $noShow,
+            'reagendados'          => $rescheduled,
+            'cancelados'           => $cancelled,
+            'taxa_comparecimento'  => $pct($realized),
+            'taxa_no_show'         => $pct($noShow),
+            'taxa_reagendamento'   => $pct($rescheduled),
+            'taxa_cancelamento'    => $pct($cancelled),
+            'vendas_pos_visita'    => $sales,
+            'taxa_conversao_pos_visita' => $convPosVisita,
+        ]);
+    }
+
+
     public function overview(Request $request)
     {
         [$start, $end] = $this->resolvePeriod($request);
