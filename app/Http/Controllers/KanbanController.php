@@ -116,11 +116,33 @@ class KanbanController extends Controller
         $blockManual = (bool) \App\Models\Setting::get('agendamento_block_manual_visita', true);
         $isViaAction = $request->boolean('_via_appointment_action');
 
-        if ($blockManual && !$isViaAction && $targetName === 'visita') {
-            return response()->json([
-                'message' => 'A etapa "Visita" só pode ser ativada concluindo a tarefa de agendamento (Visita Realizada ou Reunião Realizada).',
-                'code'    => 'visit_stage_locked',
-            ], 422);
+
+        // Bloqueia avanço pra Visita ou qualquer etapa posterior sem visita realizada.
+        // Descarte fica liberado pra qualquer caso (lead pode ser descartado a qualquer momento).
+        if ($blockManual && !$isViaAction && $targetStatus && !$targetStatus->is_discard) {
+            $visitaStatus = \App\Models\LeadStatus::whereRaw('LOWER(name) = ?', ['visita'])->first();
+
+            if ($visitaStatus && (int) $targetStatus->order >= (int) $visitaStatus->order) {
+                $hasRealizedVisit = \App\Models\Appointment::where('lead_id', $lead->id)
+                    ->where('task_kind', \App\Models\Appointment::KIND_AGENDAMENTO)
+                    ->whereIn('confirmation_status', [
+                        \App\Models\Appointment::CONFIRM_CONCLUIDA_VISITA,
+                        \App\Models\Appointment::CONFIRM_CONCLUIDA_REUNIAO,
+                    ])
+                    ->exists();
+
+                if (!$hasRealizedVisit) {
+                    $msg = $targetName === 'visita'
+                        ? 'A etapa "Visita" só pode ser ativada concluindo a tarefa de agendamento (Visita Realizada ou Reunião Realizada).'
+                        : "A etapa \"{$targetStatus->name}\" só pode ser alcançada após uma visita realizada. Use o botão \"Visita Realizada\" ou \"Reunião Realizada\" na tarefa de agendamento.";
+
+                    return response()->json([
+                        'message'             => $msg,
+                        'code'                => 'visit_stage_locked',
+                        'target_status_name'  => $targetStatus->name,
+                    ], 422);
+                }
+            }
         }
 
         if ($targetName === 'agendamento') {
