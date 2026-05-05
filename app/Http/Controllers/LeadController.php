@@ -1265,11 +1265,26 @@ $lead->load([
         $statusChanged = false;
         $subChanged    = false;
 
+
+        // Nunca REGREDIR: se o lead já está numa etapa posterior à configurada (ex: já tá em Visita
+        // mas o setting é Em Atendimento), só registra o contato sem mexer na etapa.
         if ($toStatusId && $toStatusId !== $oldStatusId) {
-            $update['status_id']         = $toStatusId;
-            $update['status_changed_at'] = now();
-            $statusChanged = true;
+            $oldOrder = $oldStatusId
+                ? (int) (\App\Models\LeadStatus::find($oldStatusId)?->order ?? 0)
+                : 0;
+            $toOrder = (int) (\App\Models\LeadStatus::find($toStatusId)?->order ?? 0);
+
+            if ($toOrder > $oldOrder) {
+                $update['status_id']         = $toStatusId;
+                $update['status_changed_at'] = now();
+                $statusChanged = true;
+            } else {
+
+                $toStatusId = null;
+                $toSubId = null;
+            }
         }
+
         if ($toSubId !== null && $toSubId !== $oldSubId) {
             $update['lead_substatus_id'] = $toSubId;
             $subChanged = true;
