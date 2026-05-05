@@ -51,6 +51,7 @@ class Lead extends Model
         'assigned_at',
         'sla_deadline_at',
         'sla_status',
+        'first_contact_at',
         'manychat_id',
         'channel',
         'channel_id',
@@ -67,6 +68,7 @@ class Lead extends Model
     protected $casts = [
         'assigned_at'         => 'datetime',
         'sla_deadline_at'     => 'datetime',
+        'first_contact_at'    => 'datetime',
         'last_interaction_at' => 'datetime',
         'status_changed_at'   => 'datetime',
         'value'               => 'decimal:2',

@@ -1276,6 +1276,7 @@ $lead->load([
         }
 
         $update['last_interaction_at'] = now();
+        $update['first_contact_at']    = now();
 
         $lead->update($update);
 

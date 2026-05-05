@@ -98,6 +98,73 @@ class BiController extends Controller
 
 
 
+
+    // Métricas de SLA do primeiro contato: % cumprido, tempo médio até contato, ranking de velocidade.
+    public function firstContactMetrics(Request $request)
+    {
+        [$start, $end] = $this->resolvePeriod($request);
+
+        $base = Lead::whereBetween('created_at', [$start, $end]);
+        if ($request->filled('corretor_id')) {
+            $base->where('assigned_user_id', (int) $request->corretor_id);
+        }
+
+        $total      = (clone $base)->count();
+        $registered = (clone $base)->whereNotNull('first_contact_at')->count();
+        $pending    = (clone $base)->whereNull('first_contact_at')->where('sla_status', 'pending')->count();
+        $expired    = (clone $base)->whereNull('first_contact_at')->where('sla_status', 'expired')->count();
+
+        $pctRegistered = $total > 0 ? round(($registered / $total) * 100, 1) : 0.0;
+        $pctSlaMet     = $total > 0 ? round(((clone $base)->where('sla_status', 'met')->count() / $total) * 100, 1) : 0.0;
+        $pctExpired    = $total > 0 ? round(($expired / $total) * 100, 1) : 0.0;
+
+
+        $avgRow = (clone $base)
+            ->whereNotNull('first_contact_at')
+            ->whereNotNull('assigned_at')
+            ->selectRaw('AVG(TIMESTAMPDIFF(MINUTE, assigned_at, first_contact_at)) as avg_min, MAX(TIMESTAMPDIFF(MINUTE, assigned_at, first_contact_at)) as max_min')
+            ->first();
+
+        $avgMin = $avgRow && $avgRow->avg_min !== null ? (int) round((float) $avgRow->avg_min) : null;
+        $maxMin = $avgRow && $avgRow->max_min !== null ? (int) round((float) $avgRow->max_min) : null;
+
+
+        $ranking = (clone $base)
+            ->whereNotNull('first_contact_at')
+            ->whereNotNull('assigned_at')
+            ->whereNotNull('assigned_user_id')
+            ->select('assigned_user_id', DB::raw('COUNT(*) as total'), DB::raw('AVG(TIMESTAMPDIFF(MINUTE, assigned_at, first_contact_at)) as avg_min'))
+            ->groupBy('assigned_user_id')
+            ->orderBy('avg_min', 'asc')
+            ->limit(10)
+            ->get()
+            ->map(function ($row) {
+                $u = User::find($row->assigned_user_id);
+                return [
+                    'user_id'   => (int) $row->assigned_user_id,
+                    'user_name' => $u ? $u->name : '(removido)',
+                    'total'     => (int) $row->total,
+                    'avg_min'   => (int) round((float) $row->avg_min),
+                ];
+            });
+
+        return response()->json([
+            'period_start'         => $start->toDateString(),
+            'period_end'           => $end->toDateString(),
+            'total_leads'          => $total,
+            'registered'           => $registered,
+            'pending'              => $pending,
+            'expired'              => $expired,
+            'pct_registered'       => $pctRegistered,
+            'pct_sla_met'          => $pctSlaMet,
+            'pct_sla_expired'      => $pctExpired,
+            'avg_minutes_to_first_contact' => $avgMin,
+            'max_minutes_to_first_contact' => $maxMin,
+            'ranking_fastest'      => $ranking,
+        ]);
+    }
+
+
     // Métricas das tarefas de Agendamento centralizado: comparecimento, no-show, reagendamento e conversão pós-visita.
     public function agendamentoMetrics(Request $request)
     {

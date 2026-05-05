@@ -725,6 +725,7 @@ Route::middleware(['auth:sanctum', 'permission:reports.productivity|reports.fina
     Route::get('/bi/lead-heatmap',              [\App\Http\Controllers\BiController::class, 'leadHeatmap']);
     Route::get('/bi/top-ranking',               [\App\Http\Controllers\BiController::class, 'topRanking']);
     Route::get('/bi/agendamento-metrics',       [\App\Http\Controllers\BiController::class, 'agendamentoMetrics']);
+    Route::get('/bi/first-contact-metrics',     [\App\Http\Controllers\BiController::class, 'firstContactMetrics']);
 
     Route::get('/reports/export/{tipo}/{formato}',
         [\App\Http\Controllers\RelatoriosExportController::class, 'export'])
