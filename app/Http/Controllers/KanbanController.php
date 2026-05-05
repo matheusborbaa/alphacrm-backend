@@ -45,7 +45,7 @@ class KanbanController extends Controller
         $q->orderBy('order');
     }])
     ->orderBy('order')
-    ->get(['id', 'name', 'order', 'color_hex']);
+    ->get(['id', 'name', 'order', 'color_hex', 'is_terminal', 'is_discard']);
 
     $leadsQuery = Lead::with([
             'corretor:id,name',
@@ -83,6 +83,8 @@ class KanbanController extends Controller
             'name'                     => $status->name,
             'order'                    => $status->order,
             'color_hex'                => $status->color_hex,
+            'is_terminal'              => (bool) $status->is_terminal,
+            'is_discard'               => (bool) $status->is_discard,
             'substatuses'              => $substatuses,
             'leads_without_substatus'  => $leadsBySub->get(null, collect())->values(),
         ];
