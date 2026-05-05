@@ -1235,6 +1235,16 @@ $lead->load([
             ], 409);
         }
 
+
+        $obsRequired = (bool) \App\Models\Setting::get('first_contact_observation_required', true);
+        $rules = [
+            'contact_type' => 'sometimes|nullable|string|in:whatsapp,ligacao,email,visita,outro',
+            'observation'  => ($obsRequired ? 'required' : 'sometimes|nullable') . '|string|min:3|max:5000',
+        ];
+        $payload = $request->validate($rules);
+        $contactType = $payload['contact_type'] ?? null;
+        $observation = $payload['observation'] ?? null;
+
         $toStatusId = \App\Models\Setting::get('lead_after_first_contact_status_id', null);
         $toSubId    = \App\Models\Setting::get('lead_after_first_contact_substatus_id', null);
         $toStatusId = is_numeric($toStatusId) ? (int) $toStatusId : null;
@@ -1270,14 +1280,40 @@ $lead->load([
         $lead->update($update);
 
         try {
+
+            $typeLabels = [
+                'whatsapp' => 'WhatsApp',
+                'ligacao'  => 'Ligação',
+                'email'    => 'E-mail',
+                'visita'   => 'Visita presencial',
+                'outro'    => 'Outro',
+            ];
+            $typeLabel = $contactType ? ($typeLabels[$contactType] ?? $contactType) : null;
+
+            $desc = 'Primeiro contato registrado — SLA cumprido';
+            if ($typeLabel) $desc .= " · via {$typeLabel}";
+            if ($observation) $desc .= "\n\n{$observation}";
+
             LeadHistory::create([
                 'lead_id'     => $lead->id,
                 'user_id'     => $user->id,
                 'type'        => 'first_contact',
                 'from'        => null,
-                'to'          => null,
-                'description' => 'Primeiro contato registrado — SLA cumprido',
+                'to'          => $typeLabel,
+                'description' => $desc,
             ]);
+
+
+            $linkedSlug = \App\Models\Setting::get('first_contact_linked_custom_field_slug', null);
+            if ($linkedSlug && $observation) {
+                $cf = \App\Models\CustomField::where('slug', $linkedSlug)->first();
+                if ($cf) {
+                    \App\Models\LeadCustomFieldValue::updateOrCreate(
+                        ['lead_id' => $lead->id, 'custom_field_id' => $cf->id],
+                        ['value'   => $observation]
+                    );
+                }
+            }
 
             if ($statusChanged) {
                 $fromName = $oldStatusId

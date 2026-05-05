@@ -142,6 +142,16 @@ class SettingController extends Controller
             'default' => true,
         ],
 
+
+        'first_contact_observation_required' => [
+            'type'    => 'bool',
+            'default' => true,
+        ],
+        'first_contact_linked_custom_field_slug' => [
+            'type'    => 'string',
+            'default' => null,
+        ],
+
         'corretor_auto_offline_minutes' => [
             'type'    => 'int',
             'default' => 60,
