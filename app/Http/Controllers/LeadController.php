@@ -96,6 +96,21 @@ public function update(Request $request, Lead $lead, LeadStatusRequirementValida
         $targetName   = $targetStatus ? strtolower(trim($targetStatus->name)) : '';
 
 
+        // Sem primeiro contato registrado, qualquer mudança de status (exceto descarte) é bloqueada.
+        // O endpoint /leads/{id}/first-contact não passa por aqui — ele atualiza o lead direto.
+        $sla = strtolower((string) ($lead->sla_status ?? 'pending'));
+        $needsFirstContact = in_array($sla, ['pending', 'expired'], true);
+        if ($needsFirstContact && $targetStatus && !$targetStatus->is_discard) {
+            return response()->json([
+                'message'              => 'Você ainda não registrou o primeiro contato com este lead. Registre antes de mover para outra etapa.',
+                'code'                 => 'first_contact_required',
+                'lead_id'              => $lead->id,
+                'sla_status'           => $sla,
+                'target_status_name'   => $targetStatus->name,
+            ], 422);
+        }
+
+
         $blockManual = (bool) \App\Models\Setting::get('agendamento_block_manual_visita', true);
         $isViaAction = $request->boolean('_via_appointment_action');
 
