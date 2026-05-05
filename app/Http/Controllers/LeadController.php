@@ -1278,14 +1278,26 @@ $lead->load([
                 $update['status_id']         = $toStatusId;
                 $update['status_changed_at'] = now();
                 $statusChanged = true;
+
+
+                // Garante que o lead_substatus_id seja válido pro novo status. Senão zera —
+                // evita o lead ficar órfão no kanban (substatus do status antigo).
+                if ($toSubId) {
+                    $update['lead_substatus_id'] = $toSubId;
+                    $subChanged = true;
+                } else {
+
+                    $update['lead_substatus_id'] = null;
+                    if ($oldSubId !== null) $subChanged = true;
+                    $toSubId = null;
+                }
             } else {
 
                 $toStatusId = null;
                 $toSubId = null;
             }
-        }
+        } elseif ($toSubId !== null && $toSubId !== $oldSubId) {
 
-        if ($toSubId !== null && $toSubId !== $oldSubId) {
             $update['lead_substatus_id'] = $toSubId;
             $subChanged = true;
         }

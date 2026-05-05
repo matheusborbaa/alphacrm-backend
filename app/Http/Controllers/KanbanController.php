@@ -201,7 +201,21 @@ class KanbanController extends Controller
         ->max('position');
 
     $newStatusId    = $data['status_id'];
-    $newSubstatusId = $data['lead_substatus_id'] ?? $lead->lead_substatus_id;
+    $newSubstatusId = array_key_exists('lead_substatus_id', $data)
+        ? $data['lead_substatus_id']
+        : $lead->lead_substatus_id;
+
+    $statusChanged = (int) $newStatusId !== (int) $lead->status_id;
+
+
+    // Se mudou status mas o substatus antigo não pertence ao novo, zera pra evitar
+    // lead órfão no kanban (status X + substatus do status Y).
+    if ($statusChanged && $newSubstatusId) {
+        $sub = \App\Models\LeadSubstatus::find($newSubstatusId);
+        if (!$sub || (int) $sub->lead_status_id !== (int) $newStatusId) {
+            $newSubstatusId = null;
+        }
+    }
 
     $updatePayload = [
         'status_id'         => $newStatusId,
@@ -209,7 +223,7 @@ class KanbanController extends Controller
         'position'          => ($lastPosition ?? 0) + 1,
     ];
 
-    if ($newStatusId !== $lead->status_id) {
+    if ($statusChanged) {
         $updatePayload['status_changed_at'] = now();
     }
 
