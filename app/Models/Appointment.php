@@ -34,7 +34,7 @@ class Appointment extends Model
         self::KIND_GENERICA,
     ];
 
-    // Junta os kinds hardcoded (compat com seeds antigos) com os ativos criados pelo admin via TaskKind.
+    // Hardcoded + dinâmicos (TaskKind). Mantém compat com seeds antigos sem perder o que o admin cadastrou.
     public static function validKindSlugs(): array
     {
         try {
@@ -146,7 +146,7 @@ class Appointment extends Model
         return $this->belongsTo(Lead::class);
     }
 
-    // Esconde appointments cujo lead foi soft-deleted. Tarefas internas (sem lead) continuam aparecendo.
+    // Esconde appointments com lead soft-deleted. Tarefas sem lead (internas) continuam visíveis.
     public function scopeWithVisibleLead(Builder $query): Builder
     {
         return $query->where(function ($q) {

@@ -15,9 +15,8 @@ use Illuminate\Support\Facades\Storage;
 use Carbon\Carbon;
 
 
-// Centraliza as 5 ações de fechamento de uma tarefa de agendamento.
-// Cada ação atualiza confirmation_status, faz a transição do lead conforme settings,
-// gera follow-up automático em no-show, cria nova tarefa em reagendamento.
+// Fechamento da tarefa de agendamento (5 ações). Cada ação seta confirmation_status,
+// move o lead conforme settings, e em no-show cria follow-up automático.
 class AgendamentoActionController extends Controller
 {
 
@@ -222,8 +221,8 @@ class AgendamentoActionController extends Controller
         }
     }
 
-    // Move o lead pra etapa configurada (ou pelo nome fallback). Marca _via_appointment_action
-    // pra contornar o bloqueio de transição manual no LeadController.
+    // Bypassa o bloqueio de transição manual: aqui a mudança é consequência da ação na tarefa,
+    // não do usuário arrastando o card no kanban.
     private function moveLeadToConfiguredStage(Appointment $appointment, string $settingKey, string $fallbackName, string $logMessage): void
     {
         $lead = $appointment->lead;

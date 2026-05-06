@@ -96,8 +96,8 @@ public function update(Request $request, Lead $lead, LeadStatusRequirementValida
         $targetName   = $targetStatus ? strtolower(trim($targetStatus->name)) : '';
 
 
-        // Sem primeiro contato registrado, qualquer mudança de status (exceto descarte) é bloqueada.
-        // O endpoint /leads/{id}/first-contact não passa por aqui — ele atualiza o lead direto.
+        // Sem primeiro contato registrado nada se move (exceto descarte).
+        // O endpoint /leads/{id}/first-contact tem caminho próprio, não cai aqui.
         $sla = strtolower((string) ($lead->sla_status ?? 'pending'));
         $needsFirstContact = in_array($sla, ['pending', 'expired'], true);
         if ($needsFirstContact && $targetStatus && !$targetStatus->is_discard) {
@@ -115,8 +115,8 @@ public function update(Request $request, Lead $lead, LeadStatusRequirementValida
         $isViaAction = $request->boolean('_via_appointment_action');
 
 
-        // Bloqueia avanço pra Visita ou qualquer etapa posterior (Pasta, Em Negociação, Venda) sem visita realizada.
-        // Etapas de descarte (Lead Descartado/Perdido) ficam liberadas.
+        // Sem visita concluída, trava avanço pra Visita ou qualquer etapa depois (Pasta/Negociação/Venda).
+        // Descarte/perda passam livre.
         if ($blockManual && !$isViaAction && $targetStatus && !$targetStatus->is_discard) {
             $visitaStatus = \App\Models\LeadStatus::whereRaw('LOWER(name) = ?', ['visita'])->first();
 
@@ -1266,8 +1266,7 @@ $lead->load([
         $subChanged    = false;
 
 
-        // Nunca REGREDIR: se o lead já está numa etapa posterior à configurada (ex: já tá em Visita
-        // mas o setting é Em Atendimento), só registra o contato sem mexer na etapa.
+        // Nunca regride: se o lead já passou da etapa configurada, só registra o contato.
         if ($toStatusId && $toStatusId !== $oldStatusId) {
             $oldOrder = $oldStatusId
                 ? (int) (\App\Models\LeadStatus::find($oldStatusId)?->order ?? 0)
@@ -1280,8 +1279,7 @@ $lead->load([
                 $statusChanged = true;
 
 
-                // Garante que o lead_substatus_id seja válido pro novo status. Senão zera —
-                // evita o lead ficar órfão no kanban (substatus do status antigo).
+                // Anula sub se não pertence ao novo status — senão card some do kanban.
                 if ($toSubId) {
                     $update['lead_substatus_id'] = $toSubId;
                     $subChanged = true;

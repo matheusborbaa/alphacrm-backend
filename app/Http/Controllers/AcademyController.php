@@ -12,7 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
-// Endpoints que o corretor usa pra consumir cursos. Tracking de progresso vem aqui.
+// Endpoints do aluno (consumo de cursos + tracking de progresso).
 class AcademyController extends Controller
 {
     public function listCategories()
@@ -146,14 +146,14 @@ class AcademyController extends Controller
         );
 
 
-        // Só sobe — protege contra um payload atrasado zerar o progresso de quem foi mais longe.
+        // Só sobe — payload atrasado não pode zerar progresso já registrado.
         $newWatch = max((int) $progress->watch_seconds, (int) $data['watch_seconds']);
         $progress->watch_seconds = $newWatch;
         if (isset($data['last_position_seconds'])) {
             $progress->last_position_seconds = (int) $data['last_position_seconds'];
         }
 
-        // 90% do vídeo conta como assistido. Acima disso fecha automático.
+        // 90% já fecha — gente raramente assiste créditos finais.
         if ($progress->completed_at === null
             && $lesson->duration_seconds > 0
             && $newWatch >= (int) ($lesson->duration_seconds * 0.9)) {
@@ -195,13 +195,11 @@ class AcademyController extends Controller
     }
 
 
-    // Histórico do próprio usuário pra aba "Academy" no perfil. Devolve todos cursos onde tem progresso.
+    // Histórico do próprio user pra aba "Academy" no perfil.
     public function myHistory()
     {
         $userId = Auth::id();
 
-
-        // Cursos onde o user tem ao menos 1 progresso registrado.
         $courseIds = DB::table('academy_user_progress as p')
             ->join('academy_lessons as l', 'l.id', '=', 'p.lesson_id')
             ->where('p.user_id', $userId)

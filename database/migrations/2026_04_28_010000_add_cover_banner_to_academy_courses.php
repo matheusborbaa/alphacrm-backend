@@ -4,8 +4,8 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-// Banner horizontal (faixa fina ~80px de altura) que aparece no topo da página do curso.
-// Separado de cover_image (thumb quadrado do catálogo) porque a proporção é totalmente diferente.
+// Banner horizontal (~80px) do header do curso. Separado de cover_image (thumb quadrado do catálogo)
+// porque a proporção não bate — não dá pra reaproveitar o mesmo arquivo.
 return new class extends Migration {
     public function up(): void
     {

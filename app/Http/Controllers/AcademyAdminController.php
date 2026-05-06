@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
-// CRUD do Academy pra admin/gestor. Rotas em /admin/academy/* gateadas pela permission no router.
+// CRUD do Academy pra admin/gestor. Permissão é resolvida nas rotas /admin/academy/*.
 class AcademyAdminController extends Controller
 {
 
@@ -158,7 +158,7 @@ class AcademyAdminController extends Controller
 
     public function uploadLessonVideo(Request $request, AcademyLesson $lesson)
     {
-        // 512 MB em KB. Lembrar de bater com upload_max_filesize e client_max_body_size do nginx.
+        // 512MB. Bater com upload_max_filesize do PHP e client_max_body_size do nginx.
         $request->validate([
             'video' => 'required|file|mimes:mp4,webm,mov,m4v|max:512000',
         ]);
@@ -219,8 +219,7 @@ class AcademyAdminController extends Controller
 
 
 
-    // Histórico geral. Lista pares (user, curso) onde o user tem qualquer progresso, com agregados.
-    // Filtros: course_id, user_id, status (in_progress|completed|certified), q (busca em nome/email).
+    // Pares (user, curso) com agregados. Filtros: course_id, user_id, status, q.
     public function indexEnrollments(Request $request)
     {
         $courseId = $request->filled('course_id') ? (int) $request->course_id : null;
@@ -229,7 +228,6 @@ class AcademyAdminController extends Controller
         $q        = trim((string) $request->input('q', ''));
 
 
-        // Base: agrega progresso por (user_id, course_id) via join lessons → user_progress.
         $base = DB::table('academy_user_progress as p')
             ->join('academy_lessons as l', 'l.id', '=', 'p.lesson_id')
             ->join('academy_courses as c', 'c.id', '=', 'l.course_id')
@@ -270,7 +268,6 @@ class AcademyAdminController extends Controller
         $rows = $base->orderByDesc(DB::raw('MAX(p.updated_at)'))->get();
 
 
-        // Total de aulas por curso pra calcular % e flag de concluído.
         $courseIds = $rows->pluck('course_id')->unique()->all();
         $totalsByCourse = DB::table('academy_lessons')
             ->select('course_id', DB::raw('COUNT(*) as total'))
@@ -280,7 +277,6 @@ class AcademyAdminController extends Controller
             ->all();
 
 
-        // Melhor tentativa de quiz por (user, course).
         $quizBest = AcademyQuizAttempt::whereIn('course_id', $courseIds)
             ->select('user_id', 'course_id', DB::raw('MAX(score) as best_score'), DB::raw('MAX(passed) as any_passed'))
             ->groupBy('user_id', 'course_id')
@@ -288,7 +284,6 @@ class AcademyAdminController extends Controller
             ->keyBy(fn($r) => $r->user_id . '_' . $r->course_id);
 
 
-        // Certificados emitidos.
         $certs = AcademyCertificate::whereIn('course_id', $courseIds)
             ->get()
             ->keyBy(fn($c) => $c->user_id . '_' . $c->course_id);
@@ -332,7 +327,7 @@ class AcademyAdminController extends Controller
         });
 
 
-        // Filtra por status no lado do PHP (mais simples que reescrever o group-by).
+        // Filtra status em PHP — reescrever o group-by pra isso não compensa.
         if ($status === 'in_progress') {
             $payload = $payload->filter(fn($r) => !$r['is_completed']);
         } elseif ($status === 'completed') {
@@ -346,7 +341,7 @@ class AcademyAdminController extends Controller
 
 
 
-    // Drill-down: tudo que o usuário fez naquele curso. Inclui aula a aula + tentativa de quiz com gabarito.
+    // Drill-down do progresso de um user num curso (aulas + tentativas de quiz com gabarito).
     public function userCourseDetails(Request $request, int $userId, int $courseId)
     {
         $user = User::findOrFail($userId);
@@ -374,7 +369,6 @@ class AcademyAdminController extends Controller
         });
 
 
-        // Tentativas de quiz com gabarito embutido (qual opção foi escolhida vs correta).
         $questionsById = $course->quizQuestions->keyBy('id');
 
         $attempts = AcademyQuizAttempt::where('user_id', $userId)
@@ -450,7 +444,7 @@ class AcademyAdminController extends Controller
     }
 
 
-    // Snapshot agregado pro topo da tela: contadores rápidos de adesão.
+    // Contadores pro header da tela de enrollments.
     public function enrollmentsSummary()
     {
         $totalCourses = AcademyCourse::where('published', true)->count();

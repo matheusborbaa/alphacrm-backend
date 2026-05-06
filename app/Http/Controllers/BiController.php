@@ -13,7 +13,7 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
-// BI executivo. Todos os endpoints aceitam ?period=, ?corretor_id=, ?empreendimento_id= etc.
+// BI executivo. Filtros padrão por query: period, corretor_id, empreendimento_id.
 class BiController extends Controller
 {
 
@@ -99,7 +99,7 @@ class BiController extends Controller
 
 
 
-    // Métricas de SLA do primeiro contato: % cumprido, tempo médio até contato, ranking de velocidade.
+    // SLA do primeiro contato + ranking de velocidade por corretor.
     public function firstContactMetrics(Request $request)
     {
         [$start, $end] = $this->resolvePeriod($request);
@@ -165,7 +165,7 @@ class BiController extends Controller
     }
 
 
-    // Métricas das tarefas de Agendamento centralizado: comparecimento, no-show, reagendamento e conversão pós-visita.
+    // Comparecimento, no-show, reagendamento e conversão pós-visita das tarefas de agendamento.
     public function agendamentoMetrics(Request $request)
     {
         [$start, $end] = $this->resolvePeriod($request);

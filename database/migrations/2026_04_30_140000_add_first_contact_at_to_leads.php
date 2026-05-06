@@ -6,8 +6,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
 
 
-// Coluna nativa pra timestamp do primeiro contato. Antes só tinha sla_status enum;
-// agora dá pra calcular tempo médio até o primeiro contato, ranking de velocidade etc.
+// Antes só tinha o enum sla_status; com o timestamp dá pra medir tempo médio e fazer ranking.
 return new class extends Migration {
     public function up(): void
     {
@@ -17,8 +16,7 @@ return new class extends Migration {
         });
 
 
-        // Backfill: leads que já têm sla_status='met' ganham um first_contact_at aproximado
-        // baseado em LeadHistory tipo first_contact (ou last_interaction_at como fallback).
+        // Backfill aproximado pra quem já estava com sla_status=met. Histórico > last_interaction > updated.
         try {
             DB::statement("
                 UPDATE leads l

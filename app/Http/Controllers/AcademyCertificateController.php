@@ -9,7 +9,7 @@ use App\Models\AcademyUserProgress;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
-// Devolve o HTML do certificado com auto-print. Não usa lib de PDF — o browser cuida disso e o resultado fica vetorial.
+// Renderiza HTML com auto-print no lugar de gerar PDF — sai vetorial e poupa dependência de lib.
 class AcademyCertificateController extends Controller
 {
     public function download(AcademyCourse $course)

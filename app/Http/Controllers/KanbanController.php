@@ -132,8 +132,8 @@ class KanbanController extends Controller
         $isViaAction = $request->boolean('_via_appointment_action');
 
 
-        // Bloqueia avanço pra Visita ou qualquer etapa posterior sem visita realizada.
-        // Descarte fica liberado pra qualquer caso (lead pode ser descartado a qualquer momento).
+        // Sem visita concluída, bloqueia avanço pra Visita ou qualquer etapa depois dela.
+        // Descarte sempre passa — lead pode ser descartado a qualquer momento.
         if ($blockManual && !$isViaAction && $targetStatus && !$targetStatus->is_discard) {
             $visitaStatus = \App\Models\LeadStatus::whereRaw('LOWER(name) = ?', ['visita'])->first();
 
@@ -208,8 +208,7 @@ class KanbanController extends Controller
     $statusChanged = (int) $newStatusId !== (int) $lead->status_id;
 
 
-    // Se mudou status mas o substatus antigo não pertence ao novo, zera pra evitar
-    // lead órfão no kanban (status X + substatus do status Y).
+    // Anula sub se não pertence ao novo status — evita lead sumir do kanban (combinação inválida).
     if ($statusChanged && $newSubstatusId) {
         $sub = \App\Models\LeadSubstatus::find($newSubstatusId);
         if (!$sub || (int) $sub->lead_status_id !== (int) $newStatusId) {

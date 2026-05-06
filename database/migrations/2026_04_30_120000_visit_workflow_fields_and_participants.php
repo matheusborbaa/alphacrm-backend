@@ -5,9 +5,8 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 
-// Centraliza tudo de agendamento/visita numa única tarefa task_kind=agendamento.
-// Adiciona campos pra observações de visita realizada + ficha + linkagem de reagendamento.
-// Cria tabela de participantes (gerente, outro corretor, parceiro) que recebem notif e calendar.
+// Unifica visita/agendamento em task_kind=agendamento. Adiciona campos de fechamento
+// (observações, ficha, link de reagendamento) e tabela de participantes pra notif/calendar.
 return new class extends Migration {
     public function up(): void
     {

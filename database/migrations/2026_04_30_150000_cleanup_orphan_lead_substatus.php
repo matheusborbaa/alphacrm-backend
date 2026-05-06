@@ -4,10 +4,9 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 
 
-// Cleanup: leads com lead_substatus_id apontando pra um substatus que NÃO pertence ao status atual.
-// Esse cenário fazia o card sumir do kanban (combinação status+substatus inválida).
-// O bug foi corrigido nos controllers (LeadController::firstContact + KanbanController::move),
-// essa migration só limpa o que ficou órfão antes do fix.
+// One-shot: zera lead_substatus_id órfão (sub não pertence ao status atual).
+// O bug ficava sumindo card do kanban; corrigido em LeadController::firstContact
+// e KanbanController::move — esta migration só faz a faxina do que ficou pra trás.
 return new class extends Migration {
     public function up(): void
     {
