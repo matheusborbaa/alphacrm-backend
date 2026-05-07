@@ -1238,17 +1238,29 @@ $lead->load([
 
         $obsRequired = (bool) \App\Models\Setting::get('first_contact_observation_required', true);
         $rules = [
-            'contact_type' => 'sometimes|nullable|string|in:whatsapp,ligacao,email,visita,outro',
-            'observation'  => ($obsRequired ? 'required' : 'sometimes|nullable') . '|string|min:3|max:5000',
+            'contact_type'        => 'sometimes|nullable|string|in:whatsapp,ligacao,email,visita,outro',
+            'observation'         => ($obsRequired ? 'required' : 'sometimes|nullable') . '|string|min:3|max:5000',
+            'target_status_id'    => 'sometimes|nullable|integer|exists:lead_status,id',
+            'target_substatus_id' => 'sometimes|nullable|integer|exists:lead_substatus,id',
         ];
         $payload = $request->validate($rules);
         $contactType = $payload['contact_type'] ?? null;
         $observation = $payload['observation'] ?? null;
 
-        $toStatusId = \App\Models\Setting::get('lead_after_first_contact_status_id', null);
-        $toSubId    = \App\Models\Setting::get('lead_after_first_contact_substatus_id', null);
-        $toStatusId = is_numeric($toStatusId) ? (int) $toStatusId : null;
-        $toSubId    = is_numeric($toSubId)    ? (int) $toSubId    : null;
+        // Override do payload tem prioridade sobre o default das settings — corretor escolhe na hora pra
+        // não cair sempre em "Em Atendimento > Sem Etapa".
+        $overrideStatus = array_key_exists('target_status_id', $payload) ? $payload['target_status_id'] : null;
+        $overrideSub    = array_key_exists('target_substatus_id', $payload) ? $payload['target_substatus_id'] : null;
+
+        if ($overrideStatus !== null) {
+            $toStatusId = (int) $overrideStatus;
+            $toSubId    = $overrideSub !== null ? (int) $overrideSub : null;
+        } else {
+            $toStatusId = \App\Models\Setting::get('lead_after_first_contact_status_id', null);
+            $toSubId    = \App\Models\Setting::get('lead_after_first_contact_substatus_id', null);
+            $toStatusId = is_numeric($toStatusId) ? (int) $toStatusId : null;
+            $toSubId    = is_numeric($toSubId)    ? (int) $toSubId    : null;
+        }
 
         $oldStatusId = $lead->status_id;
         $oldSubId    = $lead->lead_substatus_id;
