@@ -317,7 +317,9 @@ class TaskController extends Controller
 
     public function complete(int $id)
     {
-        $task = Appointment::tasks()->findOrFail($id);
+        // Aceita qualquer Appointment (task/visit/meeting/call). Antes só tasks() — quebrava no botão
+        // "concluir" do widget Home > Próximas Tarefas que mostra todos os tipos.
+        $task = Appointment::findOrFail($id);
         $this->authorizeComplete($task);
 
         if ($task->isCompleted()) {
@@ -346,7 +348,7 @@ class TaskController extends Controller
 
     public function reopen(int $id)
     {
-        $task = Appointment::tasks()->findOrFail($id);
+        $task = Appointment::findOrFail($id);
         $this->authorizeComplete($task);
 
         if (!$task->isCompleted()) {
