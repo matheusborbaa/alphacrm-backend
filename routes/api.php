@@ -557,6 +557,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::get('/leads/{lead}/reveal', [LeadController::class, 'reveal']);
     Route::put('/leads/editar/{lead}', [LeadController::class, 'update']);
+    // Alias REST padrão — alguns lugares no front (modais, kanban) chamam direto /leads/{id}.
+    Route::put('/leads/{lead}',         [LeadController::class, 'update']);
+    Route::patch('/leads/{lead}',       [LeadController::class, 'update']);
     Route::delete('/leads/{lead}', [LeadController::class, 'destroy']);
 
 
