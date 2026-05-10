@@ -8,6 +8,18 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class LeadDocument extends Model
 {
+    public const GROUP_CLIENTE    = 'cliente';
+    public const GROUP_NEGOCIACAO = 'negociacao';
+    public const GROUP_CONTRATO   = 'contrato';
+    public const GROUP_OUTROS     = 'outros';
+
+    public const GROUPS = [
+        self::GROUP_CLIENTE,
+        self::GROUP_NEGOCIACAO,
+        self::GROUP_CONTRATO,
+        self::GROUP_OUTROS,
+    ];
+
     protected $fillable = [
         'lead_id',
         'uploader_user_id',
@@ -16,6 +28,7 @@ class LeadDocument extends Model
         'mime_type',
         'size_bytes',
         'category',
+        'document_group',
         'description',
         'deletion_requested_by',
         'deletion_requested_at',

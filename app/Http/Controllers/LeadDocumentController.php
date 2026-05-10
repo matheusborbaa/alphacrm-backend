@@ -192,9 +192,10 @@ class LeadDocumentController extends Controller
 
         try {
             $request->validate([
-                'file'        => 'required|file|max:' . (self::MAX_UPLOAD_BYTES / 1024),
-                'category'    => 'nullable|string|max:50',
-                'description' => 'nullable|string|max:500',
+                'file'           => 'required|file|max:' . (self::MAX_UPLOAD_BYTES / 1024),
+                'category'       => 'nullable|string|max:50',
+                'document_group' => ['nullable', 'string', \Illuminate\Validation\Rule::in(LeadDocument::GROUPS)],
+                'description'    => 'nullable|string|max:500',
             ]);
         } catch (\Illuminate\Validation\ValidationException $e) {
 
@@ -276,12 +277,30 @@ class LeadDocumentController extends Controller
             'mime_type'        => $mime,
             'size_bytes'       => $file->getSize() ?: 0,
             'category'         => $request->input('category'),
+            'document_group'   => $request->input('document_group') ?: LeadDocument::GROUP_OUTROS,
             'description'      => $request->input('description'),
         ]);
 
         $this->logHistory($lead, 'document_upload', $doc->original_name);
 
         return response()->json($this->present($doc->fresh(['uploader:id,name'])), 201);
+    }
+
+    // Reclassificar grupo do documento sem precisar reupload (útil pra arrumar lixo do backfill).
+    public function updateGroup(Request $request, Lead $lead, LeadDocument $document)
+    {
+        $this->authorize('update', $lead);
+        $this->ensureDocBelongsToLead($lead, $document);
+
+        $data = $request->validate([
+            'document_group' => ['required', 'string', \Illuminate\Validation\Rule::in(LeadDocument::GROUPS)],
+            'category'       => 'sometimes|nullable|string|max:50',
+            'description'    => 'sometimes|nullable|string|max:500',
+        ]);
+
+        $document->update($data);
+
+        return response()->json($this->present($document->fresh(['uploader:id,name'])));
     }
 
     public function download(Request $request, Lead $lead, LeadDocument $document): StreamedResponse
@@ -729,6 +748,7 @@ class LeadDocumentController extends Controller
             'mime_type'      => $d->mime_type,
             'size_bytes'     => (int) $d->size_bytes,
             'category'       => $d->category,
+            'document_group' => $d->document_group ?: LeadDocument::GROUP_OUTROS,
             'description'    => $d->description,
             'uploader'       => $d->relationLoaded('uploader') && $d->uploader ? [
                 'id'   => $d->uploader->id,

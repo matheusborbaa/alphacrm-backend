@@ -605,6 +605,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::get   ('/leads/{lead}/documents',                                  [LeadDocumentController::class, 'index']);
     Route::post  ('/leads/{lead}/documents',                                  [LeadDocumentController::class, 'store']);
+    Route::patch ('/leads/{lead}/documents/{document}',                       [LeadDocumentController::class, 'updateGroup']);
     Route::get   ('/leads/{lead}/documents/{document}/download',              [LeadDocumentController::class, 'download']);
     Route::get   ('/leads/{lead}/documents/{document}/preview',               [LeadDocumentController::class, 'preview']);
     Route::post  ('/leads/{lead}/documents/{document}/request-deletion',      [LeadDocumentController::class, 'requestDeletion']);
