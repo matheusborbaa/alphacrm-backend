@@ -342,14 +342,38 @@ Route::get('/dashboard/atividades', function (Request $request) {
 
     [$start, $end] = \App\Support\DashboardPeriod::resolve($request);
 
-    $base = \App\Models\Appointment::whereBetween('starts_at', [$start, $end])
-        ->where('status', 'completed');
+    $user = $request->user();
+
+    // Antes filtrava por type=ligacao (sempre 0 — type é task/visit/call). O kind é o que diferencia.
+    // Conta o que foi concluído na janela (completed_at), não criado/agendado.
+    $base = \App\Models\Appointment::whereBetween('completed_at', [$start, $end])
+        ->whereNotNull('completed_at');
+
+    // Corretor só vê o que ele mesmo realizou. Gestor/admin vê do time inteiro.
+    if ($user && strcasecmp((string) $user->role, 'corretor') === 0) {
+        $base->where('user_id', $user->id);
+    }
+
+    $countByKind = function ($kind) use ($base) {
+        return (clone $base)->where('task_kind', $kind)->count();
+    };
+
+    // KIND_VISITA + KIND_AGENDAMENTO + KIND_REUNIAO contam como "visita" (rótulo do dashboard).
+    $visitaCount = (clone $base)->whereIn('task_kind', [
+        \App\Models\Appointment::KIND_VISITA,
+        \App\Models\Appointment::KIND_AGENDAMENTO,
+        \App\Models\Appointment::KIND_REUNIAO,
+    ])->count();
 
     return response()->json([
-        'ligacao' => (clone $base)->where('type', 'ligacao')->count(),
-        'whatsapp' => (clone $base)->where('type', 'whatsapp')->count(),
-        'email' => (clone $base)->where('type', 'email')->count(),
-        'visita' => (clone $base)->where('type', 'visit')->count(),
+        'ligacao'     => $countByKind(\App\Models\Appointment::KIND_LIGACAO),
+        'whatsapp'    => $countByKind(\App\Models\Appointment::KIND_WHATSAPP),
+        'email'       => $countByKind(\App\Models\Appointment::KIND_EMAIL),
+        'followup'    => $countByKind(\App\Models\Appointment::KIND_FOLLOWUP),
+        'agendamento' => $countByKind(\App\Models\Appointment::KIND_AGENDAMENTO),
+        'reuniao'     => $countByKind(\App\Models\Appointment::KIND_REUNIAO),
+        'anotacao'    => $countByKind(\App\Models\Appointment::KIND_ANOTACAO),
+        'visita'      => $visitaCount,
     ]);
 })->middleware('auth:sanctum');
 
